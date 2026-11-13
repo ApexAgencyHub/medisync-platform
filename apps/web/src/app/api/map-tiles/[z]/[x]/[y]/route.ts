@@ -78,34 +78,48 @@ export async function GET(
       ? 0
       : Math.max(0, Math.min(worldTiles - 1, parsedY));
 
-  const upstreamUrl = `https://basemaps.cartocdn.com/rastertiles/voyager/${safeZ}/${safeX}/${safeY}.png`;
+  const tileSources: Array<{ origin: string; url: string }> = [
+    {
+      origin: "openstreetmap",
+      url: `https://tile.openstreetmap.org/${safeZ}/${safeX}/${safeY}.png`,
+    },
+    {
+      origin: "esri-world-street",
+      url: `https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/${safeZ}/${safeY}/${safeX}`,
+    },
+  ];
 
-  try {
-    const upstream = await fetch(upstreamUrl, {
-      signal: AbortSignal.timeout(TILE_TIMEOUT_MS),
-      headers: {
-        "User-Agent": "MediSyncGlobal/1.0 (https://medisync.local)",
-        Accept: "image/png,image/webp,image/*;q=0.8",
-      },
-      next: { revalidate: 86400 },
-    });
+  for (const source of tileSources) {
+    try {
+      const upstream = await fetch(source.url, {
+        signal: AbortSignal.timeout(TILE_TIMEOUT_MS),
+        headers: {
+          "User-Agent":
+            "MediSyncGlobal/1.0 (+https://github.com/ApexAgencyHub/medisync-platform)",
+          Referer: "https://github.com/ApexAgencyHub/medisync-platform",
+          Accept: "image/png,image/jpeg,image/webp,image/*;q=0.8",
+        },
+        next: { revalidate: 86400 },
+      });
 
-    const contentType = upstream.headers.get("content-type") ?? "";
-    if (upstream.ok && contentType.startsWith("image/")) {
-      const buffer = await upstream.arrayBuffer();
-      if (buffer.byteLength > 0) {
-        return new Response(buffer, {
-          status: 200,
-          headers: {
-            "Content-Type": contentType,
-            "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800",
-            "X-Tile-Origin": "carto-voyager",
-          },
-        });
+      const contentType = upstream.headers.get("content-type") ?? "";
+      if (upstream.ok && contentType.startsWith("image/")) {
+        const buffer = await upstream.arrayBuffer();
+        if (buffer.byteLength > 0) {
+          return new Response(buffer, {
+            status: 200,
+            headers: {
+              "Content-Type": contentType,
+              "Cache-Control":
+                "public, max-age=86400, stale-while-revalidate=604800",
+              "X-Tile-Origin": source.origin,
+            },
+          });
+        }
       }
+    } catch {
+      // Offline or blocked upstream falls through to next source / vector fallback.
     }
-  } catch {
-    // Offline or blocked upstream falls through to deterministic Clinical Trust street tile.
   }
 
   const svgTile = buildFallbackStreetTileSvg(safeZ, safeX, safeY);
