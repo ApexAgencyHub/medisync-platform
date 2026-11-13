@@ -7,4 +7,4 @@ export {
   type AuthTokenClaims,
 } from "./auth-crypto.js";
 export { authenticateRequest } from "./guard.js";
-export { appendAuditLog, DuplicateConflictError } from "./store.js";
+export { appendAuditLog, DuplicateConflictError, findUserById } from "./store.js";

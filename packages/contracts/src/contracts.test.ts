@@ -6,6 +6,8 @@ import {
   CreateDispatchRequestSchema,
   CreateDisputeSchema,
   CreateFacilitySchema,
+  CreatePharmacyOrderSchema,
+  CreatePharmacyProductSchema,
   CreateScheduleSchema,
   DriverPingSchema,
   FacilityListQuerySchema,
@@ -14,9 +16,11 @@ import {
   NearbyDriversQuerySchema,
   PresignClinicalUploadSchema,
   RegisterUserSchema,
+  RequestVerificationCodeSchema,
   SlotsQuerySchema,
   UpdateUserRoleSchema,
   UserRoleSchema,
+  VerifyAccountCodeSchema,
 } from "./index.js";
 
 describe("@medisync/contracts", () => {
@@ -223,5 +227,43 @@ describe("@medisync/contracts", () => {
       countryCode: "MA",
     });
     expect(roleUpdate.role).toBe("CLINIC_STAFF");
+  });
+
+  it("validates pharmacy catalog, cart checkout & account recovery codes", () => {
+    const product = CreatePharmacyProductSchema.parse({
+      sku: "MA-AMOX-500",
+      name: "Amoxicillin 500mg",
+      category: "PRESCRIPTION_RX",
+      requiresPrescription: true,
+      priceMinor: 4500,
+      stockQty: 25,
+    });
+    expect(product.requiresPrescription).toBe(true);
+
+    const order = CreatePharmacyOrderSchema.parse({
+      facilityId: "44444444-4444-4444-8444-444444444444",
+      items: [
+        {
+          productId: "55555555-5555-4555-8555-555555555555",
+          quantity: 2,
+        },
+      ],
+      fulfillmentMode: "COURIER_DELIVERY",
+      deliveryAddress: "145 Boulevard d'Anfa, Casablanca",
+    });
+    expect(order.fulfillmentMode).toBe("COURIER_DELIVERY");
+
+    const otpReq = RequestVerificationCodeSchema.parse({
+      email: "patient.ma@medisync.global",
+      purpose: "VERIFY_EMAIL",
+    });
+    expect(otpReq.purpose).toBe("VERIFY_EMAIL");
+
+    const invalidOtp = VerifyAccountCodeSchema.safeParse({
+      email: "patient.ma@medisync.global",
+      purpose: "VERIFY_EMAIL",
+      code: "abc",
+    });
+    expect(invalidOtp.success).toBe(false);
   });
 });

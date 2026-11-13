@@ -1,12 +1,20 @@
 import {
+  AuthenticatedUserSchema,
   AuthResponseSchema,
   FacilitiesListResponseSchema,
   FacilityResponseSchema,
+  RequestVerificationCodeResponseSchema,
+  type AuthenticatedUser,
   type AuthResponse,
   type CreateFacilityInput,
   type FacilitySummary,
   type LoginInput,
   type RegisterUserInput,
+  type RequestVerificationCodeInput,
+  type RequestVerificationCodeResponse,
+  type ResetPasswordWithCodeInput,
+  type UpdateProfileInput,
+  type VerifyAccountCodeInput,
 } from "@medisync/contracts";
 import { requestTyped, type ApiResult } from "@/shared/api/http-client";
 
@@ -96,5 +104,99 @@ export async function verifyFacilityStatus(
       body: JSON.stringify({ status }),
     },
     FacilityResponseSchema,
+  );
+}
+
+const UserWrappedSchema = AuthenticatedUserSchema.transform((user) => ({ user }));
+const UserWrapperResponseSchema = {
+  safeParse(data: unknown) {
+    if (typeof data !== "object" || data === null || !("user" in data)) {
+      return { success: false as const };
+    }
+    const inner = AuthenticatedUserSchema.safeParse(
+      (data as { user: unknown }).user,
+    );
+    return inner.success
+      ? { success: true as const, data: { user: inner.data } }
+      : { success: false as const };
+  },
+};
+void UserWrappedSchema;
+
+const ResetDoneResponseSchema = {
+  safeParse(data: unknown) {
+    if (
+      typeof data === "object" &&
+      data !== null &&
+      "reset" in data &&
+      (data as { reset: unknown }).reset === true
+    ) {
+      return { success: true as const, data: { reset: true } };
+    }
+    return { success: false as const };
+  },
+};
+
+export async function requestVerificationCode(
+  apiBaseUrl: string,
+  input: RequestVerificationCodeInput,
+): Promise<ApiResult<RequestVerificationCodeResponse>> {
+  return requestTyped(
+    `${apiBaseUrl}/v1/auth/verification/request`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+    RequestVerificationCodeResponseSchema,
+  );
+}
+
+export async function confirmVerificationCode(
+  apiBaseUrl: string,
+  input: VerifyAccountCodeInput,
+): Promise<ApiResult<{ user: AuthenticatedUser }>> {
+  return requestTyped(
+    `${apiBaseUrl}/v1/auth/verification/confirm`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+    UserWrapperResponseSchema,
+  );
+}
+
+export async function resetPasswordWithCode(
+  apiBaseUrl: string,
+  input: ResetPasswordWithCodeInput,
+): Promise<ApiResult<{ reset: boolean }>> {
+  return requestTyped(
+    `${apiBaseUrl}/v1/auth/password-reset`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+    ResetDoneResponseSchema,
+  );
+}
+
+export async function updateUserProfile(
+  apiBaseUrl: string,
+  token: string,
+  input: UpdateProfileInput,
+): Promise<ApiResult<{ user: AuthenticatedUser }>> {
+  return requestTyped(
+    `${apiBaseUrl}/v1/auth/profile`,
+    {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(input),
+    },
+    UserWrapperResponseSchema,
   );
 }

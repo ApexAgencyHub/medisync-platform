@@ -151,7 +151,30 @@ for (const vp of VIEWPORTS) {
       false,
     );
 
-    // Navigate from /clinical to Slice 5 Master Operations & Compliance Center (/admin)
+    // Navigate from /clinical to Slice 8 Pharmacy Storefront (/pharmacy)
+    await page.getByRole("link", { name: "Pharmacy", exact: true }).click();
+    await expect(
+      page.getByRole("heading", {
+        name: /Online Pharmacy Catalog & Courier Checkout/i,
+      }),
+    ).toBeVisible();
+    await expect(page.locator("#pharma-search")).toBeVisible();
+    await expect(page.locator("#pharma-facility-filter")).toBeVisible();
+
+    // Verify EN / FR / AR bilingual toggle updates document dir="rtl" cleanly then resets to EN
+    await page.getByRole("button", { name: "AR", exact: true }).click();
+    const htmlDir = await page.evaluate(() => document.documentElement.dir);
+    expect(htmlDir).toBe("rtl");
+    await page.getByRole("button", { name: "EN", exact: true }).click();
+
+    const hasOverflowPharmacy = await page.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth,
+    );
+    expect(hasOverflowPharmacy, "Horizontal scroll overflow on /pharmacy").toBe(
+      false,
+    );
+
+    // Navigate from /pharmacy to Slice 5 Master Operations & Compliance Center (/admin)
     await page.getByRole("link", { name: "Admin", exact: true }).click();
     await expect(
       page.getByRole("heading", {

@@ -133,6 +133,9 @@ export async function registerFoundationRoutes(
       countryCode: stored.countryCode,
       facilityId: stored.facilityId,
       avatarUrl: stored.avatarUrl,
+      emailVerified: stored.emailVerified,
+      phone: stored.phone,
+      phoneVerified: stored.phoneVerified,
       createdAtIso: stored.createdAtIso,
     };
 
