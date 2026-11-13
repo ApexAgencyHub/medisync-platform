@@ -413,12 +413,12 @@ export function ViewportVectorMap({
               onClick={() => onSelectFacility(facility.id)}
               aria-label={`${facility.name} (${facility.kind})`}
               style={{ left: `${px}px`, top: `${py}px` }}
-              className={`absolute z-10 -translate-x-1/2 -translate-y-1/2 flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold shadow-md transition-transform hover:scale-105 active:scale-95 ${
+              className={`absolute -translate-x-1/2 -translate-y-1/2 flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold shadow-md transition-transform hover:z-30 hover:scale-105 active:scale-95 ${
                 cfg.bg
-              } ${isSelected ? "ring-2 ring-slate-900 ring-offset-2" : ""}`}
+              } ${isSelected ? "z-25 scale-105 ring-2 ring-slate-900 ring-offset-2" : "z-10"}`}
             >
               <Icon className="h-3 w-3 shrink-0" aria-hidden="true" />
-              <span className="max-w-[104px] truncate">{facility.name}</span>
+              <span className="max-w-[92px] truncate">{facility.name}</span>
               <span
                 className={`h-2 w-2 rounded-full ${
                   facility.openStatus === "OPEN"
@@ -472,7 +472,7 @@ export function ViewportVectorMap({
 
         {/* Subtle Tile Attribution */}
         <div className="pointer-events-none absolute bottom-2 left-2.5 z-10 rounded-md bg-white/85 px-2 py-0.5 text-[10px] font-medium text-slate-600 shadow-xs">
-          © OpenStreetMap · CARTO
+          © OpenStreetMap · Esri
         </div>
       </div>
     </div>
