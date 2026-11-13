@@ -24,6 +24,7 @@ import {
   readStoredSession,
   writeStoredSession,
 } from "@/shared/auth/session-storage";
+import { useLocale } from "@/shared/i18n/locale-store";
 import {
   CheckCircle2,
   KeyRound,
@@ -67,6 +68,7 @@ const SECTOR_FILTER_OPTIONS: ReadonlyArray<{
 ];
 
 export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
+  const { t } = useLocale();
   const defaultCode = packs[0]?.code ?? "INTL";
   const [selectedCountry, setSelectedCountry] = useState<string>(defaultCode);
   const [viewport, setViewport] = useState<ViewportBox>(() =>
@@ -312,7 +314,7 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
     setBusy(false);
     setBanner({
       tone: "success",
-      text: `Loaded ${vpRes.data.facilities.length} verified facility pin(s) inside PostGIS bounding box (${vpRes.data.queryMs}ms).`,
+      text: `Loaded ${vpRes.data.facilities.length} verified medical center(s) in this map view (${vpRes.data.queryMs}ms).`,
     });
   }
 
@@ -370,7 +372,7 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
     setBusy(false);
     setBanner({
       tone: "success",
-      text: `Signed in as ${user.fullName} (${user.role} · ${user.countryCode}). Connecting Redis Pub/Sub SSE stream.`,
+      text: `Signed in as ${user.fullName} (${user.role} · ${user.countryCode}). Connecting live dispatch updates.`,
     });
   }
 
@@ -429,7 +431,7 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
 
     setBanner({
       tone: "success",
-      text: `Redis Geo updated for ${res.data.driver.status} (${res.data.driver.lat.toFixed(4)}, ${res.data.driver.lng.toFixed(4)}).`,
+      text: `Live GPS updated for ${res.data.driver.status} (${res.data.driver.lat.toFixed(4)}, ${res.data.driver.lng.toFixed(4)}).`,
     });
   }
 
@@ -470,18 +472,23 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <p className="font-mono-tabular text-xs font-semibold uppercase tracking-wider text-teal-800">
-              PostGIS Spatial Discovery · Redis Geo Telemetry · SSE Broadcast
+              {t("map.eyebrow")}
             </p>
             <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">
-              Live Medical Map & Dispatch Console
+              {t("map.heading")}
             </h1>
             {activePack ? (
               <p className="mt-1 text-sm text-slate-600">
-                CountryPack <strong className="text-slate-900">{activePack.name}</strong> ·
-                Emergency Dispatch{" "}
-                <span className="font-mono-tabular font-semibold text-red-700">
+                <strong className="text-slate-900">
+                  <bdi dir="auto">{activePack.name}</bdi>
+                </strong>{" "}
+                · {t("home.hotlineLabel")}{" "}
+                <bdi
+                  dir="ltr"
+                  className="font-mono-tabular font-semibold text-red-700"
+                >
                   {activePack.emergencyHotlines.ambulance}
-                </span>
+                </bdi>
               </p>
             ) : null}
           </div>
@@ -535,7 +542,7 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
               onChange={(e) => setOpenNowOnly(e.target.checked)}
               className="h-4 w-4 rounded border-slate-300 text-teal-800"
             />
-            <span>Open Now Only</span>
+            <span>{t("map.openNowOnly")}</span>
           </label>
         </div>
       </section>
@@ -561,7 +568,7 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
       ) : null}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-        {/* Left: Interactive PostGIS Map + Facility Results */}
+        {/* Left: Interactive Street Map + Facility Results */}
         <section className="min-w-0 space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs sm:p-5 lg:col-span-7">
           <ViewportVectorMap
             countryCode={selectedCountry}
@@ -579,6 +586,7 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
             }
             onReset={() => setViewport(getPresetForCountry(selectedCountry))}
             onSearchViewport={() => void handleSearchViewport()}
+            onViewportChange={setViewport}
           />
 
           {(() => {
@@ -633,7 +641,7 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
               <p className="text-sm text-slate-500">
                 {apiOnline
                   ? "No verified medical centers matched these bounds or filters."
-                  : "Click Query PostGIS Viewport once API storage is online to inspect verified medical centers."}
+                  : "Click Search This Area once online to inspect verified medical centers."}
               </p>
             ) : (
               <ul className="space-y-2">
@@ -719,8 +727,7 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
             ) : (
               <form onSubmit={handleQuickSignIn} className="mt-3 space-y-3">
                 <p className="text-xs text-slate-600">
-                  Sign in below to stream Redis Geo ambulances over SSE and create or accept
-                  dispatch requests, or{" "}
+                  Sign in below to view live units and coordinate urgent medical transport, or{" "}
                   <Link href="/portal" className="font-semibold text-teal-800 underline">
                     register on the Clinical Portal
                   </Link>
@@ -761,7 +768,7 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
               <div className="flex items-center gap-2">
                 <Navigation className="h-4 w-4 text-teal-800" aria-hidden="true" />
                 <h2 className="text-base font-semibold text-slate-900">
-                  Driver GPS Beacon (Redis Geo)
+                  {t("map.driverBeaconTitle")}
                 </h2>
               </div>
               <form onSubmit={handleDriverPingSubmit} className="mt-3 space-y-3">

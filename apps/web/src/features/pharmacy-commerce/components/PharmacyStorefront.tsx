@@ -465,7 +465,7 @@ export function PharmacyStorefront({
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <p className="font-mono-tabular text-xs font-semibold uppercase tracking-wider text-teal-800">
-              Verified Pharmacy Marketplace · {currencyCode}
+              {t("pharma.eyebrow")} · {currencyCode}
             </p>
             <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">
               {t("pharma.heading")}

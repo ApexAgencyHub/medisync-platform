@@ -33,6 +33,7 @@ import {
   fetchDirectoryFacilities,
   fetchDirectoryPatients,
 } from "@/shared/api/directory-client";
+import { useLocale } from "@/shared/i18n/locale-store";
 import { EntityPicker } from "@/shared/ui/EntityPicker";
 import { QrPrescriptionCard } from "@/shared/ui/QrPrescriptionCard";
 import {
@@ -78,6 +79,7 @@ export function ClinicalWorkspace({
   packs,
   apiBaseUrl,
 }: ClinicalWorkspaceProps) {
+  const { t } = useLocale();
   const defaultCode = packs[0]?.code ?? "INTL";
   const [selectedCountry, setSelectedCountry] = useState<string>(defaultCode);
   const [activeTab, setActiveTab] = useState<ClinicalTab>("doctor");
@@ -464,7 +466,7 @@ export function ClinicalWorkspace({
     setSelectedUploadFile(null);
     setBanner({
       tone: "success",
-      text: `Uploaded & cryptographically verified ${res.confirmed.mediaObject.fileName} in MinIO S3 storage.`,
+      text: `Uploaded & verified diagnostic file ${res.confirmed.mediaObject.fileName}.`,
     });
     await refreshClinicalData(sessionToken, selectedCountry);
   }
@@ -497,15 +499,13 @@ export function ClinicalWorkspace({
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0 space-y-1">
             <p className="font-mono-tabular text-xs font-semibold uppercase tracking-wider text-teal-800">
-              Slice 4 · EHR Notes, QR Pharmacy & Diagnostic Labs
+              {t("clinical.eyebrow")}
             </p>
             <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-              Clinical Care, QR E-Prescriptions & Direct S3 Labs
+              {t("clinical.heading")}
             </h1>
             <p className="text-sm text-slate-600">
-              Role-isolated SOAP records, HMAC-signed pharmacy QR verification, and
-              zero-proxy AWS4 presigned upload URLs in{" "}
-              {activePack?.name ?? selectedCountry}.
+              {t("clinical.subtitle")} ({activePack?.name ?? selectedCountry})
             </p>
           </div>
 
@@ -554,7 +554,7 @@ export function ClinicalWorkspace({
             }
           >
             <ClipboardList className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>SOAP Notes & E-Rx</span>
+            <span>{t("clinical.tabDoctor")}</span>
           </button>
 
           <button
@@ -569,7 +569,7 @@ export function ClinicalWorkspace({
             }
           >
             <QrCode className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>Pharmacy QR Dispense</span>
+            <span>{t("clinical.tabPharmacy")}</span>
           </button>
 
           <button
@@ -584,7 +584,7 @@ export function ClinicalWorkspace({
             }
           >
             <FlaskConical className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>Diagnostic Labs & S3 Media</span>
+            <span>{t("clinical.tabLabs")}</span>
           </button>
         </div>
 
@@ -706,7 +706,7 @@ export function ClinicalWorkspace({
                       disabled={busy || !sessionToken}
                       className="min-h-[38px] rounded-lg bg-teal-800 px-4 py-2 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-60"
                     >
-                      Save Signed SOAP Visit Note
+                      {t("clinical.saveNote")}
                     </button>
                   </div>
                 </form>
@@ -771,7 +771,7 @@ export function ClinicalWorkspace({
                       className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
                     >
                       <Pill className="h-3.5 w-3.5" aria-hidden="true" />
-                      <span>Issue HMAC-Signed QR Prescription</span>
+                      <span>{t("clinical.issueRx")}</span>
                     </button>
                   </div>
                 </form>
@@ -933,7 +933,7 @@ export function ClinicalWorkspace({
             <div className="space-y-6">
               <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
                 <h2 className="border-b border-slate-200 pb-3 text-base font-bold text-slate-900">
-                  Diagnostic Lab Orders & AWS4-HMAC-SHA256 Direct S3 Upload
+                  {t("clinical.labsHeading")}
                 </h2>
 
                 <form
@@ -1023,7 +1023,7 @@ export function ClinicalWorkspace({
                       className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg bg-teal-800 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-teal-900 active:scale-95 disabled:opacity-60"
                     >
                       <FileUp className="h-3.5 w-3.5" aria-hidden="true" />
-                      <span>Upload Binary to MinIO S3 Vault</span>
+                      <span>{t("clinical.uploadScanBtn")}</span>
                     </button>
                   </div>
                 </form>
