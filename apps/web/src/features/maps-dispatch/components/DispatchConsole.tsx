@@ -17,6 +17,9 @@ import {
 } from "@medisync/contracts";
 import { loginUser } from "@/features/auth-portal";
 import {
+  checkBackendOnline,
+} from "@/shared/api/directory-client";
+import {
   clearStoredSession,
   readStoredSession,
   writeStoredSession,
@@ -86,6 +89,7 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
   const [redisQueryMs, setRedisQueryMs] = useState<number | null>(null);
   const [dispatches, setDispatches] = useState<DispatchRequestSummary[]>([]);
   const [streamConnected, setStreamConnected] = useState(false);
+  const [apiOnline, setApiOnline] = useState(false);
 
   const [busy, setBusy] = useState(false);
   const [banner, setBanner] = useState<{
@@ -117,7 +121,68 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
       setSelectedCountry(stored.user.countryCode);
       setViewport(getPresetForCountry(stored.user.countryCode));
     }
+
+    let cancelled = false;
+    checkBackendOnline().then((online) => {
+      if (!cancelled) {
+        setApiOnline(online);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  // Automatically load PostGIS viewport pins + drivers whenever backend is online
+  useEffect(() => {
+    if (!apiOnline) return;
+    let active = true;
+    const kindParam =
+      sectorFilter === "ALL"
+        ? undefined
+        : FacilityKindSchema.parse(sectorFilter);
+
+    queryViewportFacilities(apiBaseUrl, selectedCountry, viewport, {
+      ...(kindParam ? { kind: kindParam } : {}),
+      ...(openNowOnly ? { openNow: true } : {}),
+    }).then((vpRes) => {
+      if (!active || !vpRes.ok) return;
+      setFacilities(vpRes.data.facilities);
+      setPostgisQueryMs(vpRes.data.queryMs);
+      if (vpRes.data.facilities[0] && !selectedFacilityId) {
+        setSelectedFacilityId(vpRes.data.facilities[0].id);
+      }
+    });
+
+    if (sessionToken && currentUser) {
+      const center = getViewportCenter(viewport);
+      queryNearbyDrivers(apiBaseUrl, sessionToken, {
+        countryCode:
+          currentUser.role === "OPS_ADMIN" ? selectedCountry : currentUser.countryCode,
+        lat: center.lat,
+        lng: center.lng,
+        radiusKm: 30,
+      }).then((drvRes) => {
+        if (!active || !drvRes.ok) return;
+        setDrivers(drvRes.data.drivers);
+        setRedisQueryMs(drvRes.data.queryMs);
+      });
+    }
+
+    return () => {
+      active = false;
+    };
+  }, [
+    apiOnline,
+    apiBaseUrl,
+    selectedCountry,
+    viewport,
+    sectorFilter,
+    openNowOnly,
+    sessionToken,
+    currentUser,
+    selectedFacilityId,
+  ]);
 
   // Live Server-Sent Events Subscription (zero setInterval polling)
   useEffect(() => {
@@ -516,23 +581,70 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
             onSearchViewport={() => void handleSearchViewport()}
           />
 
+          {(() => {
+            const activeFacility =
+              facilities.find((f) => f.id === selectedFacilityId) ?? null;
+            if (!activeFacility) return null;
+            return (
+              <div className="rounded-xl border border-teal-200 bg-teal-50/70 p-3.5 text-xs">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="space-y-0.5">
+                    <p className="font-bold text-teal-950">
+                      {activeFacility.name}
+                    </p>
+                    <p className="text-slate-700">{activeFacility.address}</p>
+                    <p className="font-mono-tabular text-[11px] text-teal-900">
+                      {activeFacility.kind} · {activeFacility.openStatus}
+                      {activeFacility.is24_7 ? " · 24/7" : ""}
+                      {activeFacility.specialties.length > 0
+                        ? ` · ${activeFacility.specialties.slice(0, 3).join(", ")}`
+                        : ""}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPickupAddress(activeFacility.address);
+                        setPickupLat(String(activeFacility.lat));
+                        setPickupLng(String(activeFacility.lng));
+                      }}
+                      className="rounded-lg border border-teal-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-teal-900 hover:bg-teal-100"
+                    >
+                      Set Pickup Coordinates
+                    </button>
+                    <Link
+                      href={`/booking?country=${encodeURIComponent(activeFacility.countryCode)}&facilityId=${encodeURIComponent(activeFacility.id)}`}
+                      className="rounded-lg bg-teal-800 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-teal-900"
+                    >
+                      Book Visit →
+                    </Link>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           <div className="space-y-2">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-700">
               Viewport Facility Results ({facilities.length})
             </h2>
             {facilities.length === 0 ? (
               <p className="text-sm text-slate-500">
-                Run a viewport query to inspect verified medical centers inside the current envelope.
+                {apiOnline
+                  ? "No verified medical centers matched these bounds or filters."
+                  : "Click Query PostGIS Viewport once API storage is online to inspect verified medical centers."}
               </p>
             ) : (
               <ul className="space-y-2">
                 {facilities.map((fac) => (
                   <li
                     key={fac.id}
-                    className={`rounded-xl border p-3 text-sm transition-colors ${
+                    onClick={() => setSelectedFacilityId(fac.id)}
+                    className={`cursor-pointer rounded-xl border p-3 text-sm transition-colors ${
                       fac.id === selectedFacilityId
                         ? "border-teal-700 bg-teal-50/40"
-                        : "border-slate-200 bg-slate-50"
+                        : "border-slate-200 bg-slate-50 hover:border-teal-400"
                     }`}
                   >
                     <div className="flex items-start justify-between gap-2">

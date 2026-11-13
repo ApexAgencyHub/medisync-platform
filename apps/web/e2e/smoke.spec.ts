@@ -123,6 +123,7 @@ for (const vp of VIEWPORTS) {
         name: /Clinical Care, QR E-Prescriptions & Direct S3 Labs/i,
       }),
     ).toBeVisible();
+    await expect(page.locator("select#clin-patient-uuid")).toBeVisible();
 
     await page
       .getByRole("tab", { name: /Pharmacy QR Dispense/i })
@@ -138,6 +139,7 @@ for (const vp of VIEWPORTS) {
       page.getByLabel(/Allowed Clinical MIME/i),
     ).toContainText("application/pdf");
     await expect(page.locator("#s3-clinical-file")).toBeAttached();
+    await expect(page.locator("select#clin-lab-facility")).toBeVisible();
     await expect(
       page.getByRole("button", { name: /Upload Binary to MinIO S3 Vault/i }),
     ).toBeVisible();
@@ -163,6 +165,7 @@ for (const vp of VIEWPORTS) {
     await expect(
       page.getByRole("heading", { name: /File Governance or SLA Dispute/i }),
     ).toBeVisible();
+    await expect(page.locator("select#admin-dispute-target")).toBeVisible();
     await page.getByRole("tab", { name: /Audit Trail/i }).click();
     await expect(
       page.getByRole("heading", { name: /Filterable Immutable Audit Stream/i }),

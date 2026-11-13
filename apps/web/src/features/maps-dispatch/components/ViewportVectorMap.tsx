@@ -103,8 +103,8 @@ export function ViewportVectorMap({
         </div>
       </div>
 
-      {/* Interactive WGS84 Vector Viewport Canvas */}
-      <div className="relative h-80 w-full overflow-hidden rounded-2xl border border-slate-200 bg-slate-100/70 sm:h-96">
+        {/* Interactive WGS84 Topographic Street & Water Vector Canvas */}
+      <div className="relative h-80 w-full overflow-hidden rounded-2xl border border-slate-200 bg-[#f1f5f4] sm:h-96">
         <svg
           aria-hidden="true"
           className="pointer-events-none absolute inset-0 h-full w-full"
@@ -120,11 +120,54 @@ export function ViewportVectorMap({
                 d="M 48 0 L 0 0 0 48"
                 fill="none"
                 stroke="#cbd5e1"
-                strokeWidth="0.8"
+                strokeWidth="0.7"
+              />
+              <rect
+                x="6"
+                y="6"
+                width="16"
+                height="14"
+                rx="2"
+                fill="#e2e8f0"
+                fillOpacity="0.45"
+              />
+              <rect
+                x="26"
+                y="24"
+                width="16"
+                height="16"
+                rx="2"
+                fill="#e2e8f0"
+                fillOpacity="0.45"
               />
             </pattern>
           </defs>
           <rect width="100%" height="100%" fill="url(#medisync-geo-grid)" />
+          {/* Topographic green zones & river/coastline contours */}
+          <path
+            d={
+              countryCode === "MA"
+                ? "M -10 110 Q 180 55 420 75 T 880 35 L 880 0 L -10 0 Z"
+                : countryCode === "FR"
+                  ? "M -10 210 Q 220 140 460 195 T 900 165"
+                  : countryCode === "US"
+                    ? "M 50 -10 Q 25 180 65 400"
+                    : "M 520 -10 Q 600 120 740 160 T 920 240 L 920 -10 Z"
+            }
+            fill={countryCode === "FR" || countryCode === "US" ? "none" : "#bae6fd"}
+            fillOpacity={countryCode === "FR" || countryCode === "US" ? undefined : "0.35"}
+            stroke="#38bdf8"
+            strokeOpacity="0.55"
+            strokeWidth={countryCode === "FR" || countryCode === "US" ? "18" : "2"}
+          />
+          {/* Arterial avenues */}
+          <path
+            d="M 0 180 L 900 95 M 160 0 L 540 420 M 440 0 L 290 420"
+            fill="none"
+            stroke="#ffffff"
+            strokeWidth="5"
+            strokeOpacity="0.85"
+          />
           <line
             x1="50%"
             y1="0"

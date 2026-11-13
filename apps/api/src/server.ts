@@ -9,6 +9,10 @@ import { registerBookingRoutes } from "./features/booking/index.js";
 import { registerClinicalRoutes } from "./features/clinical-pharmacy-labs/index.js";
 import { registerAdminOpsRoutes } from "./features/admin-ops/index.js";
 import { registerMediaCertificationRoutes } from "./features/media-certifications/index.js";
+import {
+  registerDirectoryRoutes,
+  seedRealisticWorld,
+} from "./features/directory/index.js";
 import { createDbPool } from "./shared/db/pool.js";
 import { runMigrations } from "./shared/db/migrate.js";
 import { createRedisClient } from "./shared/redis/client.js";
@@ -27,6 +31,7 @@ export interface BuildServerOptions {
   pool?: Pool;
   redis?: Redis;
   runDbMigrations?: boolean;
+  seedDemoWorld?: boolean;
 }
 
 export async function buildApiServer(
@@ -93,6 +98,15 @@ export async function buildApiServer(
     authSecret: options.authSecret,
     s3Config,
   });
+  await registerDirectoryRoutes(app, {
+    pool,
+    authSecret: options.authSecret,
+    s3Config,
+  });
+
+  if (options.seedDemoWorld) {
+    await seedRealisticWorld(pool, redis, options.authSecret);
+  }
 
   if (ownsPool || ownsRedis) {
     app.addHook("onClose", async () => {

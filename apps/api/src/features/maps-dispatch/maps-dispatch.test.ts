@@ -342,20 +342,20 @@ describe("api slice 2 maps-dispatch: PostGIS viewport, Redis Geo drivers & SSE s
       payload: { lat: 48.8566, lng: 2.3522, status: "AVAILABLE" },
     });
 
-    // Two MA drivers ping Casablanca (~0.8km vs ~4km from patient center 33.5731, -7.5898)
+    // Two MA drivers ping Marrakech (~0.5km vs ~4.9km from patient center 31.6295, -7.9811, isolated from Casablanca seeded traffic)
     await app.inject({
       method: "POST",
       url: "/v1/dispatch/drivers/ping",
       headers: { authorization: `Bearer ${driverFar.token}` },
-      payload: { lat: 33.605, lng: -7.55, headingDeg: 90, status: "AVAILABLE" },
+      payload: { lat: 31.662, lng: -7.945, headingDeg: 90, status: "AVAILABLE" },
     });
     await app.inject({
       method: "POST",
       url: "/v1/dispatch/drivers/ping",
       headers: { authorization: `Bearer ${driverNear.token}` },
       payload: {
-        lat: 33.578,
-        lng: -7.592,
+        lat: 31.634,
+        lng: -7.983,
         headingDeg: 180,
         status: "AVAILABLE",
       },
@@ -383,7 +383,7 @@ describe("api slice 2 maps-dispatch: PostGIS viewport, Redis Geo drivers & SSE s
 
     const nearbyRes = await app.inject({
       method: "GET",
-      url: "/v1/dispatch/drivers/nearby?lat=33.5731&lng=-7.5898&radiusKm=20",
+      url: "/v1/dispatch/drivers/nearby?lat=31.6295&lng=-7.9811&radiusKm=20",
       headers: { authorization: `Bearer ${patientMa.token}` },
     });
     expect(nearbyRes.statusCode).toBe(200);
@@ -400,11 +400,11 @@ describe("api slice 2 maps-dispatch: PostGIS viewport, Redis Geo drivers & SSE s
       method: "POST",
       url: "/v1/dispatch/drivers/ping",
       headers: { authorization: `Bearer ${driverFar.token}` },
-      payload: { lat: 33.605, lng: -7.55, status: "OFF_DUTY" },
+      payload: { lat: 31.662, lng: -7.945, status: "OFF_DUTY" },
     });
     const afterOffDuty = await app.inject({
       method: "GET",
-      url: "/v1/dispatch/drivers/nearby?lat=33.5731&lng=-7.5898&radiusKm=20",
+      url: "/v1/dispatch/drivers/nearby?lat=31.6295&lng=-7.9811&radiusKm=20",
       headers: { authorization: `Bearer ${patientMa.token}` },
     });
     expect(
@@ -419,9 +419,9 @@ describe("api slice 2 maps-dispatch: PostGIS viewport, Redis Geo drivers & SSE s
       url: "/v1/dispatch/requests",
       headers: { authorization: `Bearer ${patientMa.token}` },
       payload: {
-        pickupLat: 33.5731,
-        pickupLng: -7.5898,
-        pickupAddress: "145 Boulevard d'Anfa, Casablanca",
+        pickupLat: 31.6295,
+        pickupLng: -7.9811,
+        pickupAddress: "Gueliz Avenue Mohammed V, Marrakech",
         urgency: "EMERGENCY",
         notes: "Chest pain rapid transport",
       },
