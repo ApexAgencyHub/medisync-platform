@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   CountryPackSchema,
+  CreateDispatchRequestSchema,
   CreateFacilitySchema,
   DriverPingSchema,
   FacilityListQuerySchema,
   FacilityViewportQuerySchema,
+  NearbyDriversQuerySchema,
   RegisterUserSchema,
   UserRoleSchema,
 } from "./index.js";
@@ -99,5 +101,38 @@ describe("@medisync/contracts", () => {
       limit: 200,
     });
     expect(facilityListTooHigh.success).toBe(false);
+  });
+
+  it("validates bounding-box ordering and Redis Geo / dispatch contracts", () => {
+    const invertedBbox = FacilityViewportQuerySchema.safeParse({
+      countryCode: "MA",
+      minLng: -7.4,
+      minLat: 33.7,
+      maxLng: -7.7,
+      maxLat: 33.4,
+    });
+    expect(invertedBbox.success).toBe(false);
+
+    const nearbyValid = NearbyDriversQuerySchema.parse({
+      lat: 33.5731,
+      lng: -7.5898,
+    });
+    expect(nearbyValid.radiusKm).toBe(15);
+    expect(nearbyValid.limit).toBe(20);
+
+    const nearbyTooFar = NearbyDriversQuerySchema.safeParse({
+      lat: 33.5731,
+      lng: -7.5898,
+      radiusKm: 500,
+    });
+    expect(nearbyTooFar.success).toBe(false);
+
+    const dispatch = CreateDispatchRequestSchema.parse({
+      pickupLat: 33.5731,
+      pickupLng: -7.5898,
+      pickupAddress: "Boulevard d'Anfa, Casablanca",
+      urgency: "EMERGENCY",
+    });
+    expect(dispatch.urgency).toBe("EMERGENCY");
   });
 });

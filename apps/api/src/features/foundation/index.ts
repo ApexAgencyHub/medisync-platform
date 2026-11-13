@@ -4,5 +4,7 @@ export {
   signAuthToken,
   verifyAuthToken,
   verifyPassword,
+  type AuthTokenClaims,
 } from "./auth-crypto.js";
-export { appendAuditLog } from "./store.js";
+export { authenticateRequest } from "./guard.js";
+export { appendAuditLog, DuplicateConflictError } from "./store.js";

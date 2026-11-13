@@ -6,6 +6,7 @@ const ApiEnvSchema = z.object({
   HOST: z.string().min(1).default("127.0.0.1"),
   DEFAULT_COUNTRY_CODE: z.string().regex(/^[A-Z]{2,4}$/).default("INTL"),
   DATABASE_URL: z.string().url(),
+  REDIS_URL: z.string().url().default("redis://127.0.0.1:6380"),
   AUTH_SECRET: z.string().min(32),
   CORS_ORIGINS: z
     .string()

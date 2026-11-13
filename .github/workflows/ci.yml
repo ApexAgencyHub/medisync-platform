@@ -31,8 +31,19 @@ jobs:
           --health-timeout=5s
           --health-retries=10
 
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+
     env:
       DATABASE_URL: postgresql://medisync:medisync_dev_password@127.0.0.1:5433/medisync
+      REDIS_URL: redis://127.0.0.1:6380
       AUTH_SECRET: medisync-ci-ephemeral-test-secret-minimum-32-chars
 
     steps:
