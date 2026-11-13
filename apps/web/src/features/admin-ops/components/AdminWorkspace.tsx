@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   DispatchStatusSchema,
   DisputeCategorySchema,
@@ -34,6 +34,8 @@ import {
   reviewUserMediaDocument,
   type PreviewableMediaItem,
 } from "@/features/media-certifications";
+import { checkBackendOnline } from "@/shared/api/directory-client";
+import { EntityPicker } from "@/shared/ui/EntityPicker";
 import {
   clearStoredSession,
   readStoredSession,
@@ -121,6 +123,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
   const [previewMedia, setPreviewMedia] = useState<PreviewableMediaItem | null>(
     null,
   );
+  const [apiOnline, setApiOnline] = useState(false);
 
   // User Role Governance Editor State
   const [roleDrafts, setRoleDrafts] = useState<Record<string, UserRole>>({});
@@ -182,7 +185,36 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
         stored.user.role === "OPS_ADMIN" ? "ALL" : stored.user.countryCode,
       );
     }
+
+    let cancelled = false;
+    checkBackendOnline().then((online) => {
+      if (!cancelled) setApiOnline(online);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  useEffect(() => {
+    if (!apiOnline || !sessionToken || !currentUser) return;
+    void refreshGovernanceData(sessionToken, currentUser, selectedScope);
+  }, [apiOnline, sessionToken, currentUser, selectedScope]);
+
+  const disputeResourceOptions = useMemo(
+    () => [
+      ...facilities.map((f) => ({
+        id: f.id,
+        label: `Facility: ${f.name}`,
+        sublabel: `${f.kind} · ${f.licenseNumber}`,
+      })),
+      ...dispatches.map((d) => ({
+        id: d.id,
+        label: `Dispatch: ${d.pickupAddress}`,
+        sublabel: `${d.urgency} · ${d.status}`,
+      })),
+    ],
+    [facilities, dispatches],
+  );
 
   async function refreshGovernanceData(
     token: string,
@@ -1504,16 +1536,15 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                     </select>
                   </label>
 
-                  <label className="block space-y-1 text-xs font-medium text-slate-700">
-                    <span>Target Resource ID (optional)</span>
-                    <input
-                      type="text"
-                      value={disputeTargetId}
-                      onChange={(e) => setDisputeTargetId(e.target.value)}
-                      placeholder="UUID or reference code"
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-sm text-slate-900"
-                    />
-                  </label>
+                  <EntityPicker
+                    id="admin-dispute-target"
+                    label="Affected Facility or Dispatch (Optional)"
+                    placeholder="Filter by facility or dispatch..."
+                    emptyLabel="General platform incident"
+                    options={disputeResourceOptions}
+                    value={disputeTargetId}
+                    onChange={setDisputeTargetId}
+                  />
                 </div>
 
                 <label className="block space-y-1 text-xs font-medium text-slate-700">

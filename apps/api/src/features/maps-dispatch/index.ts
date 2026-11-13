@@ -1,2 +1,5 @@
 export { registerMapsDispatchRoutes } from "./routes.js";
-export { publishDispatchUpdate } from "./redis-geo.js";
+export {
+  publishDispatchUpdate,
+  upsertDriverLocation,
+} from "./redis-geo.js";

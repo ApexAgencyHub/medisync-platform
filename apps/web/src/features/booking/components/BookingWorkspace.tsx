@@ -1,6 +1,11 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+} from "react";
 import {
   CreateScheduleSchema,
   LoginSchema,
@@ -10,11 +15,19 @@ import {
   type AuthenticatedUser,
   type AvailableSlot,
   type CountryPack,
+  type DirectoryDoctorSummary,
+  type DirectoryFacilitySummary,
   type DoctorScheduleSummary,
   type FacilitySummary,
   type VisitMode,
 } from "@medisync/contracts";
 import { listFacilities, loginUser } from "@/features/auth-portal";
+import {
+  checkBackendOnline,
+  fetchDirectoryDoctors,
+  fetchDirectoryFacilities,
+} from "@/shared/api/directory-client";
+import { EntityPicker } from "@/shared/ui/EntityPicker";
 import {
   clearStoredSession,
   readStoredSession,
@@ -97,7 +110,15 @@ export function BookingWorkspace({
   const [slots, setSlots] = useState<AvailableSlot[]>([]);
   const [schedules, setSchedules] = useState<DoctorScheduleSummary[]>([]);
   const [facilities, setFacilities] = useState<FacilitySummary[]>([]);
+  const [directoryFacilities, setDirectoryFacilities] = useState<
+    DirectoryFacilitySummary[]
+  >([]);
+  const [directoryDoctors, setDirectoryDoctors] = useState<
+    DirectoryDoctorSummary[]
+  >([]);
+  const [facilityFilterId, setFacilityFilterId] = useState<string>("");
   const [appointments, setAppointments] = useState<AppointmentSummary[]>([]);
+  const [apiOnline, setApiOnline] = useState(false);
 
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<AuthenticatedUser | null>(
@@ -136,10 +157,111 @@ export function BookingWorkspace({
       setCurrentUser(stored.user);
       setSelectedCountry(stored.user.countryCode);
       if (stored.user.role === "DOCTOR") {
-        setSchedDoctorId(stored.user.id);
+        setSchedDoctorId(resOrStoredId(stored.user.id));
       }
     }
-  }, []);
+
+    if (typeof window !== "undefined") {
+      const qs = new URLSearchParams(window.location.search);
+      const qCountry = qs.get("country");
+      const qFacility = qs.get("facilityId");
+      if (qCountry && packs.some((p) => p.code === qCountry.toUpperCase())) {
+        setSelectedCountry(qCountry.toUpperCase());
+      }
+      if (qFacility) {
+        setFacilityFilterId(qFacility);
+        setSchedFacilityId(qFacility);
+      }
+    }
+
+    let cancelled = false;
+    checkBackendOnline().then((online) => {
+      if (!cancelled) setApiOnline(online);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [packs]);
+
+  function resOrStoredId(id: string): string {
+    return id;
+  }
+
+  useEffect(() => {
+    if (!apiOnline) return;
+    let active = true;
+
+    Promise.all([
+      fetchAvailableSlots(apiBaseUrl, {
+        date: selectedDate,
+        countryCode: selectedCountry,
+        ...(facilityFilterId ? { facilityId: facilityFilterId } : {}),
+        ...(specialtyFilter.trim() ? { specialty: specialtyFilter.trim() } : {}),
+        ...(visitModeFilter !== "ALL" ? { visitMode: visitModeFilter } : {}),
+        includeBooked,
+      }),
+      fetchSchedules(apiBaseUrl, { countryCode: selectedCountry }),
+      fetchDirectoryDoctors(apiBaseUrl, { countryCode: selectedCountry }),
+      fetchDirectoryFacilities(apiBaseUrl, { countryCode: selectedCountry }),
+    ]).then(([slotsRes, schedRes, docsRes, facsRes]) => {
+      if (!active) return;
+      if (slotsRes.ok) setSlots(slotsRes.data.slots);
+      if (schedRes.ok) setSchedules(schedRes.data.schedules);
+      if (docsRes.ok) {
+        setDirectoryDoctors(docsRes.doctors);
+        if (!schedDoctorId && docsRes.doctors[0]) {
+          setSchedDoctorId(docsRes.doctors[0].id);
+        }
+      }
+      if (facsRes.ok) {
+        setDirectoryFacilities(facsRes.facilities);
+        if (!schedFacilityId && facsRes.facilities[0]) {
+          setSchedFacilityId(facsRes.facilities[0].id);
+        }
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [
+    apiOnline,
+    apiBaseUrl,
+    selectedCountry,
+    selectedDate,
+    facilityFilterId,
+    specialtyFilter,
+    visitModeFilter,
+    includeBooked,
+    schedDoctorId,
+    schedFacilityId,
+  ]);
+
+  const doctorPickerOptions = useMemo(
+    () =>
+      directoryDoctors.map((doc) => ({
+        id: doc.id,
+        label: doc.fullName,
+        sublabel: `${doc.specialty}${doc.facilityName ? ` · ${doc.facilityName}` : ""}`,
+      })),
+    [directoryDoctors],
+  );
+
+  const facilityPickerOptions = useMemo(() => {
+    const merged =
+      facilities.length > 0
+        ? facilities.map((fac) => ({
+            id: fac.id,
+            label: fac.name,
+            sublabel: `${fac.kind} · ${fac.verificationStatus}`,
+          }))
+        : directoryFacilities.map((fac) => ({
+            id: fac.id,
+            label: fac.name,
+            sublabel: `${fac.kind} · ${fac.openStatus}`,
+          }));
+    return merged;
+  }, [facilities, directoryFacilities]);
 
   async function handleSearchSlots() {
     setBusy(true);
@@ -884,48 +1006,28 @@ export function BookingWorkspace({
                     </div>
                   </div>
                 ) : (
-                  <div>
-                    <label className="block font-semibold text-slate-700">
-                      Doctor User UUID
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={schedDoctorId}
-                      onChange={(e) => setSchedDoctorId(e.target.value)}
-                      placeholder="Doctor account UUID"
-                      className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 font-mono-tabular"
-                    />
-                  </div>
+                  <EntityPicker
+                    id="booking-doctor-picker"
+                    label="Doctor"
+                    placeholder="Filter doctor by name or specialty..."
+                    emptyLabel="No doctors indexed in selected CountryPack"
+                    options={doctorPickerOptions}
+                    value={schedDoctorId}
+                    onChange={setSchedDoctorId}
+                    required
+                  />
                 )}
 
-                <div>
-                  <label className="block font-semibold text-slate-700">
-                    Facility
-                  </label>
-                  {facilities.length > 0 ? (
-                    <select
-                      value={schedFacilityId}
-                      onChange={(e) => setSchedFacilityId(e.target.value)}
-                      className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2"
-                    >
-                      {facilities.map((fac) => (
-                        <option key={fac.id} value={fac.id}>
-                          {fac.name} ({fac.kind})
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      type="text"
-                      required
-                      placeholder="Facility UUID"
-                      value={schedFacilityId}
-                      onChange={(e) => setSchedFacilityId(e.target.value)}
-                      className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 font-mono-tabular"
-                    />
-                  )}
-                </div>
+                <EntityPicker
+                  id="booking-facility-picker"
+                  label="Facility"
+                  placeholder="Filter hospital or clinic by name..."
+                  emptyLabel="No verified facilities in selected CountryPack"
+                  options={facilityPickerOptions}
+                  value={schedFacilityId}
+                  onChange={setSchedFacilityId}
+                  required
+                />
 
                 <div className="grid grid-cols-2 gap-2">
                   <div>

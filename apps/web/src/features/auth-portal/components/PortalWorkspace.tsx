@@ -19,6 +19,7 @@ import {
   UserMediaCategorySchema,
   type AuthenticatedUser,
   type CountryPack,
+  type DemoPersonaSummary,
   type FacilityKind,
   type FacilityMediaDocument,
   type FacilitySummary,
@@ -27,6 +28,10 @@ import {
   type UserMediaDocument,
 } from "@medisync/contracts";
 import { validateFacilityLicense } from "@medisync/country-packs";
+import {
+  checkBackendOnline,
+  fetchDemoPersonas,
+} from "@/shared/api/directory-client";
 import {
   FileUploadDropzone,
   MediaPreviewModal,
@@ -93,6 +98,7 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<AuthenticatedUser | null>(null);
   const [facilities, setFacilities] = useState<FacilitySummary[]>([]);
+  const [demoPersonas, setDemoPersonas] = useState<DemoPersonaSummary[]>([]);
 
   useEffect(() => {
     const stored = readStoredSession();
@@ -100,9 +106,22 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
       setSessionToken(stored.token);
       setCurrentUser(stored.user);
       setSelectedCountry(stored.user.countryCode);
-      void refreshMyUserMedia(stored.token);
     }
-  }, []);
+
+    let cancelled = false;
+    checkBackendOnline().then((online) => {
+      if (!online || cancelled) return;
+      if (stored) {
+        void refreshMyUserMedia(stored.token);
+      }
+      fetchDemoPersonas(apiBaseUrl).then((list) => {
+        if (!cancelled) setDemoPersonas(list);
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBaseUrl]);
 
   const [busy, setBusy] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{
@@ -321,12 +340,8 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
     });
   }
 
-  async function handleLoginSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const parsed = LoginSchema.safeParse({
-      email: loginEmail,
-      password: loginPassword,
-    });
+  async function executeLogin(email: string, password: string) {
+    const parsed = LoginSchema.safeParse({ email, password });
     if (!parsed.success) {
       setStatusMessage({
         tone: "error",
@@ -363,6 +378,11 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
       refreshScopedFacilities(res.data.token, res.data.user.countryCode),
       refreshMyUserMedia(res.data.token),
     ]);
+  }
+
+  async function handleLoginSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await executeLogin(loginEmail, loginPassword);
   }
 
   async function handleRegisterSubmit(event: FormEvent<HTMLFormElement>) {
@@ -738,6 +758,55 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
               >
                 {busy ? "Verifying Credentials..." : "Sign In to MediSync"}
               </button>
+
+              {demoPersonas.length > 0 ? (
+                <div className="space-y-2.5 border-t border-slate-100 pt-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-600">
+                      1-Click Demo Personas ({selectedCountry})
+                    </p>
+                    <span className="font-mono-tabular text-[11px] text-slate-500">
+                      Instant RBAC Switch
+                    </span>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {demoPersonas
+                      .filter(
+                        (p) =>
+                          p.countryCode === selectedCountry ||
+                          p.role === "OPS_ADMIN",
+                      )
+                      .map((persona) => (
+                        <button
+                          key={persona.id}
+                          type="button"
+                          disabled={busy}
+                          onClick={() => {
+                            setLoginEmail(persona.email);
+                            setLoginPassword(persona.demoPassword);
+                            void executeLogin(
+                              persona.email,
+                              persona.demoPassword,
+                            );
+                          }}
+                          className="rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-left transition-colors hover:border-teal-700 hover:bg-teal-50/50 disabled:opacity-60"
+                        >
+                          <div className="flex items-center justify-between gap-1.5">
+                            <span className="truncate text-xs font-semibold text-slate-900">
+                              {persona.fullName}
+                            </span>
+                            <span className="shrink-0 rounded bg-white px-1.5 py-0.5 font-mono-tabular text-[10px] font-bold text-teal-900 border border-teal-200">
+                              {persona.role}
+                            </span>
+                          </div>
+                          <p className="mt-0.5 truncate text-[11px] text-slate-600">
+                            {persona.headline}
+                          </p>
+                        </button>
+                      ))}
+                  </div>
+                </div>
+              ) : null}
             </form>
           ) : null}
 

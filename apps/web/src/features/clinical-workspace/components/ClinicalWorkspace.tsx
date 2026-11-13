@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   ALLOWED_MEDIA_MIME_TYPES,
   ClinicalMediaMimeTypeSchema,
@@ -11,6 +11,8 @@ import {
   type ClinicalMediaMimeType,
   type ClinicalMediaObjectSummary,
   type CountryPack,
+  type DirectoryFacilitySummary,
+  type DirectoryPatientSummary,
   type LabOrderSummary,
   type LabUrgency,
   type PresignedUploadResponse,
@@ -26,6 +28,13 @@ import {
   uploadClinicalMediaEndToEnd,
   type PreviewableMediaItem,
 } from "@/features/media-certifications";
+import {
+  checkBackendOnline,
+  fetchDirectoryFacilities,
+  fetchDirectoryPatients,
+} from "@/shared/api/directory-client";
+import { EntityPicker } from "@/shared/ui/EntityPicker";
+import { QrPrescriptionCard } from "@/shared/ui/QrPrescriptionCard";
 import {
   clearStoredSession,
   readStoredSession,
@@ -123,6 +132,13 @@ export function ClinicalWorkspace({
   const [previewMedia, setPreviewMedia] = useState<PreviewableMediaItem | null>(
     null,
   );
+  const [directoryPatients, setDirectoryPatients] = useState<
+    DirectoryPatientSummary[]
+  >([]);
+  const [directoryLabs, setDirectoryLabs] = useState<
+    DirectoryFacilitySummary[]
+  >([]);
+  const [apiOnline, setApiOnline] = useState(false);
 
   const [busy, setBusy] = useState(false);
   const [banner, setBanner] = useState<{
@@ -143,21 +159,91 @@ export function ClinicalWorkspace({
         setPatientUuid(stored.user.id);
       }
     }
+
+    let cancelled = false;
+    checkBackendOnline().then((online) => {
+      if (!cancelled) setApiOnline(online);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   async function refreshClinicalData(token: string, countryCode: string) {
-    const [notesRes, rxRes, labsRes, mediaRes] = await Promise.all([
-      fetchVisitNotes(apiBaseUrl, token, countryCode),
-      fetchPrescriptions(apiBaseUrl, token, countryCode),
-      fetchLabOrders(apiBaseUrl, token, countryCode),
-      fetchClinicalMedia(apiBaseUrl, token, countryCode),
-    ]);
+    const [notesRes, rxRes, labsRes, mediaRes, patDirRes, labFacRes] =
+      await Promise.all([
+        fetchVisitNotes(apiBaseUrl, token, countryCode),
+        fetchPrescriptions(apiBaseUrl, token, countryCode),
+        fetchLabOrders(apiBaseUrl, token, countryCode),
+        fetchClinicalMedia(apiBaseUrl, token, countryCode),
+        fetchDirectoryPatients(apiBaseUrl, token, { countryCode }),
+        fetchDirectoryFacilities(apiBaseUrl, {
+          countryCode,
+          kind: "DIAGNOSTIC_LAB",
+        }),
+      ]);
 
     if (notesRes.ok) setVisitNotes(notesRes.data.visitNotes);
     if (rxRes.ok) setPrescriptions(rxRes.data.prescriptions);
     if (labsRes.ok) setLabOrders(labsRes.data.labOrders);
     if (mediaRes.ok) setMediaObjects(mediaRes.data.mediaObjects);
+    if (patDirRes.ok) {
+      setDirectoryPatients(patDirRes.patients);
+      if (!patientUuid && patDirRes.patients[0]) {
+        setPatientUuid(patDirRes.patients[0].id);
+      }
+    }
+    if (labFacRes.ok) {
+      setDirectoryLabs(labFacRes.facilities);
+      if (!labFacilityId && labFacRes.facilities[0]) {
+        setLabFacilityId(labFacRes.facilities[0].id);
+      }
+    }
   }
+
+  useEffect(() => {
+    if (!apiOnline) return;
+    let active = true;
+
+    fetchDirectoryFacilities(apiBaseUrl, {
+      countryCode: selectedCountry,
+      kind: "DIAGNOSTIC_LAB",
+    }).then((res) => {
+      if (!active || !res.ok) return;
+      setDirectoryLabs(res.facilities);
+      if (res.facilities[0]) {
+        setLabFacilityId((prev) => prev || res.facilities[0]!.id);
+      }
+    });
+
+    if (sessionToken) {
+      void refreshClinicalData(sessionToken, selectedCountry);
+    }
+
+    return () => {
+      active = false;
+    };
+  }, [apiOnline, apiBaseUrl, selectedCountry, sessionToken]);
+
+  const patientPickerOptions = useMemo(
+    () =>
+      directoryPatients.map((p) => ({
+        id: p.id,
+        label: p.fullName,
+        sublabel: `${p.email} · ${p.countryCode}`,
+      })),
+    [directoryPatients],
+  );
+
+  const labFacilityPickerOptions = useMemo(
+    () =>
+      directoryLabs.map((f) => ({
+        id: f.id,
+        label: f.name,
+        sublabel: `${f.licenseNumber} · ${f.address}`,
+      })),
+    [directoryLabs],
+  );
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -531,22 +617,16 @@ export function ClinicalWorkspace({
                 </h2>
 
                 <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div>
-                    <label
-                      htmlFor="clin-patient-uuid"
-                      className="block text-xs font-semibold text-slate-700"
-                    >
-                      Patient Account UUID
-                    </label>
-                    <input
-                      id="clin-patient-uuid"
-                      type="text"
-                      placeholder="UUID of patient"
-                      value={patientUuid}
-                      onChange={(e) => setPatientUuid(e.target.value)}
-                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-mono-tabular text-xs"
-                    />
-                  </div>
+                  <EntityPicker
+                    id="clin-patient-uuid"
+                    label="Patient"
+                    placeholder="Filter patient by name or email..."
+                    emptyLabel="Sign in to browse in-country patients"
+                    options={patientPickerOptions}
+                    value={patientUuid}
+                    onChange={setPatientUuid}
+                    disabled={currentUser?.role === "PATIENT"}
+                  />
                   <div>
                     <label
                       htmlFor="clin-icd10"
@@ -730,6 +810,26 @@ export function ClinicalWorkspace({
                   </ul>
                 )}
               </section>
+
+              {prescriptions.length > 0 ? (
+                <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
+                  <h3 className="text-sm font-bold text-slate-900">
+                    Scannable E-Prescriptions &amp; QR Codes ({prescriptions.length})
+                  </h3>
+                  <div className="mt-3 space-y-2.5">
+                    {prescriptions.map((rx) => (
+                      <QrPrescriptionCard
+                        key={rx.id}
+                        prescription={rx}
+                        onUseForDispense={(token) => {
+                          setQrInput(token);
+                          setActiveTab("pharmacy");
+                        }}
+                      />
+                    ))}
+                  </div>
+                </section>
+              ) : null}
             </div>
           ) : null}
 
@@ -816,31 +916,15 @@ export function ClinicalWorkspace({
                 <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600">
                   Recent Prescriptions ({prescriptions.length})
                 </h3>
-                <ul className="mt-2 space-y-2">
+                <div className="mt-2 space-y-2.5">
                   {prescriptions.map((rx) => (
-                    <li
+                    <QrPrescriptionCard
                       key={rx.id}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs"
-                    >
-                      <span>
-                        <strong>{rx.patientName}</strong> ·{" "}
-                        {rx.medications.map((m) => m.name).join(", ")}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono-tabular font-semibold">
-                          {rx.status}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setQrInput(rx.qrToken)}
-                          className="rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700"
-                        >
-                          Load QR
-                        </button>
-                      </div>
-                    </li>
+                      prescription={rx}
+                      onUseForDispense={(token) => setQrInput(token)}
+                    />
                   ))}
-                </ul>
+                </div>
               </div>
             </section>
           ) : null}
@@ -957,16 +1041,15 @@ export function ClinicalWorkspace({
                   className="mt-5 grid grid-cols-1 gap-3 border-t border-slate-200 pt-4 sm:grid-cols-3"
                 >
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700">
-                      Lab Facility UUID
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="Diagnostic Lab UUID"
+                    <EntityPicker
+                      id="clin-lab-facility"
+                      label="Diagnostic Lab"
+                      placeholder="Filter lab by name or city..."
+                      emptyLabel="No verified diagnostic labs in CountryPack"
+                      options={labFacilityPickerOptions}
                       value={labFacilityId}
-                      onChange={(e) => setLabFacilityId(e.target.value)}
-                      className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 font-mono-tabular text-xs"
+                      onChange={setLabFacilityId}
+                      required
                     />
                   </div>
                   <div>

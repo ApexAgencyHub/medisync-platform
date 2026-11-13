@@ -19,6 +19,8 @@ const server = await buildApiServer({
     expiresInSeconds: env.S3_PRESIGN_EXPIRES_SECONDS,
   },
   runDbMigrations: true,
+  seedDemoWorld:
+    env.NODE_ENV !== "production" || process.env.ENABLE_DEMO_SEED === "true",
 });
 
 await server.listen({ port: env.PORT, host: env.HOST });
