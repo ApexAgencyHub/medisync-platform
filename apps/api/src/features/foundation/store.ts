@@ -12,12 +12,38 @@ import {
   type UserRole,
   type VerificationStatus,
 } from "@medisync/contracts";
+import {
+  createSigV4PresignedUrl,
+  type S3PresignConfig,
+} from "../../shared/storage/s3-presign.js";
 
 const UserRowSchema = AuthenticatedUserSchema.extend({
   passwordHash: z.string(),
+  avatarObjectKey: z.string().nullable().optional(),
 });
 
 export type StoredUserRecord = z.infer<typeof UserRowSchema>;
+
+function hydrateUserAvatar(
+  row: Record<string, unknown>,
+  s3Config?: S3PresignConfig,
+): Record<string, unknown> {
+  const objectKey =
+    typeof row.avatarObjectKey === "string" && row.avatarObjectKey.length > 0
+      ? row.avatarObjectKey
+      : null;
+  return {
+    ...row,
+    avatarUrl:
+      objectKey && s3Config
+        ? createSigV4PresignedUrl({
+            config: s3Config,
+            method: "GET",
+            objectKey,
+          })
+        : null,
+  };
+}
 
 const AuditRowSchema = z.object({
   eventId: z.string().uuid(),
@@ -89,6 +115,7 @@ export async function insertUser(
 export async function findUserByEmail(
   pool: Pool,
   email: string,
+  s3Config?: S3PresignConfig,
 ): Promise<StoredUserRecord | null> {
   const res = await pool.query(
     `SELECT
@@ -99,6 +126,7 @@ export async function findUserByEmail(
        role,
        country_code AS "countryCode",
        facility_id AS "facilityId",
+       avatar_object_key AS "avatarObjectKey",
        to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"
      FROM users
      WHERE email = $1
@@ -106,12 +134,15 @@ export async function findUserByEmail(
     [email.trim().toLowerCase()],
   );
   if (res.rowCount === 0) return null;
-  return UserRowSchema.parse(res.rows[0]);
+  return UserRowSchema.parse(
+    hydrateUserAvatar(res.rows[0] as Record<string, unknown>, s3Config),
+  );
 }
 
 export async function findUserById(
   pool: Pool,
   userId: string,
+  s3Config?: S3PresignConfig,
 ): Promise<AuthenticatedUser | null> {
   const res = await pool.query(
     `SELECT
@@ -121,6 +152,7 @@ export async function findUserById(
        role,
        country_code AS "countryCode",
        facility_id AS "facilityId",
+       avatar_object_key AS "avatarObjectKey",
        to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"
      FROM users
      WHERE id = $1
@@ -128,7 +160,9 @@ export async function findUserById(
     [userId],
   );
   if (res.rowCount === 0) return null;
-  return AuthenticatedUserSchema.parse(res.rows[0]);
+  return AuthenticatedUserSchema.parse(
+    hydrateUserAvatar(res.rows[0] as Record<string, unknown>, s3Config),
+  );
 }
 
 export async function insertFacility(

@@ -7,26 +7,49 @@ import {
   writeStoredSession,
 } from "@/shared/auth/session-storage";
 import {
+  ALLOWED_AVATAR_MIME_TYPES,
+  ALLOWED_CERTIFICATION_MIME_TYPES,
+  CertificationMimeTypeSchema,
   CreateFacilitySchema,
   FacilityKindSchema,
   LoginSchema,
+  MAX_MEDIA_UPLOAD_BYTES,
   PublicSelfRegisterRoleSchema,
   RegisterUserSchema,
+  UserMediaCategorySchema,
   type AuthenticatedUser,
   type CountryPack,
   type FacilityKind,
+  type FacilityMediaDocument,
   type FacilitySummary,
   type PublicSelfRegisterRole,
+  type UserMediaCategory,
+  type UserMediaDocument,
 } from "@medisync/contracts";
 import { validateFacilityLicense } from "@medisync/country-packs";
 import {
+  FileUploadDropzone,
+  MediaPreviewModal,
+  formatByteSize,
+  inferUploadMimeType,
+  listFacilityMedia,
+  listMyUserMedia,
+  uploadFacilityMediaEndToEnd,
+  uploadUserMediaEndToEnd,
+  type PreviewableMediaItem,
+} from "@/features/media-certifications";
+import {
   Building2,
+  Camera,
   CheckCircle2,
+  Eye,
+  FileText,
   KeyRound,
   LogOut,
   RefreshCw,
   ShieldAlert,
   ShieldCheck,
+  Upload,
   UserPlus,
 } from "lucide-react";
 import {
@@ -77,6 +100,7 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
       setSessionToken(stored.token);
       setCurrentUser(stored.user);
       setSelectedCountry(stored.user.countryCode);
+      void refreshMyUserMedia(stored.token);
     }
   }, []);
 
@@ -103,6 +127,25 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
   const [facAddress, setFacAddress] = useState("");
   const [facLat, setFacLat] = useState("33.5731");
   const [facLng, setFacLng] = useState("-7.5898");
+  const [facLicenseFile, setFacLicenseFile] = useState<File | null>(null);
+  const [facPhotoFile, setFacPhotoFile] = useState<File | null>(null);
+  const [facUploadProgress, setFacUploadProgress] = useState<number | null>(
+    null,
+  );
+
+  // User Profile Avatar & Practitioner Credentials State
+  const [myUserMedia, setMyUserMedia] = useState<UserMediaDocument[]>([]);
+  const [credCategory, setCredCategory] =
+    useState<UserMediaCategory>("PRACTITIONER_LICENSE");
+  const [credFile, setCredFile] = useState<File | null>(null);
+  const [credProgress, setCredProgress] = useState<number | null>(null);
+  const [avatarProgress, setAvatarProgress] = useState<number | null>(null);
+  const [facilityDocsByFac, setFacilityDocsByFac] = useState<
+    Record<string, FacilityMediaDocument[]>
+  >({});
+  const [previewMedia, setPreviewMedia] = useState<PreviewableMediaItem | null>(
+    null,
+  );
 
   const activePack =
     packs.find((p) => p.code === selectedCountry) ?? packs[0] ?? null;
@@ -110,6 +153,13 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
   const licenseMatchesPack =
     facLicense.trim().length > 0 &&
     validateFacilityLicense(selectedCountry, facLicense);
+
+  async function refreshMyUserMedia(token: string) {
+    const res = await listMyUserMedia(apiBaseUrl, token);
+    if (res.ok) {
+      setMyUserMedia(res.data.documents);
+    }
+  }
 
   async function refreshScopedFacilities(token: string, countryCode: string) {
     const res = await listFacilities(apiBaseUrl, token, countryCode);
@@ -123,6 +173,151 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
         res.error === "API_UNREACHABLE"
           ? `Could not reach API at ${apiBaseUrl}. Ensure PostgreSQL + API server are running.`
           : `Unable to load scoped facilities (${res.error}).`,
+    });
+  }
+
+  async function handleAvatarFileChange(file: File | null) {
+    if (!file || !sessionToken || !currentUser) return;
+    const mime = inferUploadMimeType(file, ALLOWED_AVATAR_MIME_TYPES);
+    if (!mime) {
+      setStatusMessage({
+        tone: "error",
+        text: "Profile avatar must be a PNG, JPEG, or WebP image.",
+      });
+      return;
+    }
+
+    setBusy(true);
+    setAvatarProgress(10);
+    const res = await uploadUserMediaEndToEnd({
+      apiBaseUrl,
+      token: sessionToken,
+      category: "AVATAR",
+      file,
+      mimeType: CertificationMimeTypeSchema.parse(mime),
+      onProgress: (pct) => setAvatarProgress(pct),
+    });
+    setBusy(false);
+    setAvatarProgress(null);
+
+    if (!res.ok) {
+      setStatusMessage({
+        tone: "error",
+        text: `Avatar upload failed: ${res.error}`,
+      });
+      return;
+    }
+
+    const updatedUser: AuthenticatedUser = {
+      ...currentUser,
+      avatarUrl:
+        res.confirmed.avatarUrl ?? res.confirmed.document.downloadUrl ?? null,
+    };
+    setCurrentUser(updatedUser);
+    writeStoredSession({ token: sessionToken, user: updatedUser });
+    await refreshMyUserMedia(sessionToken);
+    setStatusMessage({
+      tone: "success",
+      text: "Profile photo uploaded and verified in MinIO S3 storage.",
+    });
+  }
+
+  async function handleCredentialUpload(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!sessionToken || !credFile) return;
+
+    const mime = inferUploadMimeType(credFile, ALLOWED_CERTIFICATION_MIME_TYPES);
+    if (!mime) {
+      setStatusMessage({
+        tone: "error",
+        text: "Credential document must be PDF, PNG, JPEG, or WebP.",
+      });
+      return;
+    }
+
+    setBusy(true);
+    setCredProgress(10);
+    const res = await uploadUserMediaEndToEnd({
+      apiBaseUrl,
+      token: sessionToken,
+      category: credCategory,
+      file: credFile,
+      mimeType: CertificationMimeTypeSchema.parse(mime),
+      onProgress: (pct) => setCredProgress(pct),
+    });
+    setBusy(false);
+    setCredProgress(null);
+
+    if (!res.ok) {
+      setStatusMessage({
+        tone: "error",
+        text: `Credential upload failed: ${res.error}`,
+      });
+      return;
+    }
+
+    setCredFile(null);
+    await refreshMyUserMedia(sessionToken);
+    setStatusMessage({
+      tone: "success",
+      text: `Uploaded ${res.confirmed.document.fileName} (${res.confirmed.document.category}) for verification.`,
+    });
+  }
+
+  async function handleLoadFacilityDocs(facilityId: string) {
+    if (!sessionToken) return;
+    const res = await listFacilityMedia(apiBaseUrl, sessionToken, facilityId);
+    if (res.ok) {
+      setFacilityDocsByFac((prev) => ({
+        ...prev,
+        [facilityId]: res.data.documents,
+      }));
+    }
+  }
+
+  async function handleUploadExtraFacilityDoc(
+    facilityId: string,
+    category: "MINISTRY_LICENSE" | "FACILITY_PHOTO",
+    file: File | null,
+  ) {
+    if (!file || !sessionToken) return;
+    const mime = inferUploadMimeType(
+      file,
+      category === "FACILITY_PHOTO"
+        ? ALLOWED_AVATAR_MIME_TYPES
+        : ALLOWED_CERTIFICATION_MIME_TYPES,
+    );
+    if (!mime) {
+      setStatusMessage({
+        tone: "error",
+        text: "Unsupported document format. Use PDF, PNG, JPEG, or WebP.",
+      });
+      return;
+    }
+
+    setBusy(true);
+    const uploadRes = await uploadFacilityMediaEndToEnd({
+      apiBaseUrl,
+      token: sessionToken,
+      facilityId,
+      category,
+      file,
+      mimeType: CertificationMimeTypeSchema.parse(mime),
+    });
+    setBusy(false);
+
+    if (!uploadRes.ok) {
+      setStatusMessage({
+        tone: "error",
+        text: `Facility document upload failed: ${uploadRes.error}`,
+      });
+      return;
+    }
+
+    await handleLoadFacilityDocs(facilityId);
+    setStatusMessage({
+      tone: "success",
+      text: `Uploaded ${uploadRes.confirmed.document.fileName} for ops review.`,
     });
   }
 
@@ -164,7 +359,10 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
       tone: "success",
       text: `Authenticated as ${res.data.user.fullName} (${res.data.user.role} · ${res.data.user.countryCode}).`,
     });
-    await refreshScopedFacilities(res.data.token, res.data.user.countryCode);
+    await Promise.all([
+      refreshScopedFacilities(res.data.token, res.data.user.countryCode),
+      refreshMyUserMedia(res.data.token),
+    ]);
   }
 
   async function handleRegisterSubmit(event: FormEvent<HTMLFormElement>) {
@@ -250,9 +448,9 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
     setBusy(true);
     setStatusMessage(null);
     const res = await createFacility(apiBaseUrl, sessionToken, parsed.data);
-    setBusy(false);
 
     if (!res.ok) {
+      setBusy(false);
       setStatusMessage({
         tone: "error",
         text:
@@ -263,13 +461,67 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
       return;
     }
 
-    setFacilities((prev) => [res.data.facility, ...prev]);
+    const createdFacility = res.data.facility;
+    const uploadNotes: string[] = [];
+
+    if (facLicenseFile) {
+      const mime = inferUploadMimeType(
+        facLicenseFile,
+        ALLOWED_CERTIFICATION_MIME_TYPES,
+      );
+      if (mime) {
+        setFacUploadProgress(15);
+        const upRes = await uploadFacilityMediaEndToEnd({
+          apiBaseUrl,
+          token: sessionToken,
+          facilityId: createdFacility.id,
+          category: "MINISTRY_LICENSE",
+          file: facLicenseFile,
+          mimeType: CertificationMimeTypeSchema.parse(mime),
+          onProgress: (pct) => setFacUploadProgress(pct),
+        });
+        uploadNotes.push(
+          upRes.ok
+            ? "Ministry certificate uploaded"
+            : `License file failed (${upRes.error})`,
+        );
+      }
+    }
+
+    if (facPhotoFile) {
+      const mime = inferUploadMimeType(facPhotoFile, ALLOWED_AVATAR_MIME_TYPES);
+      if (mime) {
+        setFacUploadProgress(15);
+        const upPhoto = await uploadFacilityMediaEndToEnd({
+          apiBaseUrl,
+          token: sessionToken,
+          facilityId: createdFacility.id,
+          category: "FACILITY_PHOTO",
+          file: facPhotoFile,
+          mimeType: CertificationMimeTypeSchema.parse(mime),
+          onProgress: (pct) => setFacUploadProgress(pct),
+        });
+        uploadNotes.push(
+          upPhoto.ok
+            ? "Facility photo uploaded"
+            : `Photo failed (${upPhoto.error})`,
+        );
+      }
+    }
+
+    setFacUploadProgress(null);
+    setBusy(false);
+
+    setFacilities((prev) => [createdFacility, ...prev]);
     setFacName("");
     setFacLicense("");
     setFacAddress("");
+    setFacLicenseFile(null);
+    setFacPhotoFile(null);
+    void handleLoadFacilityDocs(createdFacility.id);
     setStatusMessage({
       tone: "success",
-      text: `Facility "${res.data.facility.name}" indexed in PostGIS (${res.data.facility.verificationStatus}).`,
+      text: `Facility "${createdFacility.name}" indexed in PostGIS (${createdFacility.verificationStatus})${uploadNotes.length > 0 ? ` · ${uploadNotes.join(", ")}` : ""}.`,
     });
   }
 
@@ -717,12 +969,37 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
                 </div>
               </div>
 
+              <div className="grid gap-4 sm:grid-cols-2">
+                <FileUploadDropzone
+                  id="fac-license-file"
+                  label="Ministry License Proof (Optional)"
+                  hint="PDF, PNG, JPEG or WebP certificate"
+                  accept={ALLOWED_CERTIFICATION_MIME_TYPES.join(",")}
+                  maxBytes={MAX_MEDIA_UPLOAD_BYTES}
+                  selectedFile={facLicenseFile}
+                  progressPercent={facUploadProgress}
+                  disabled={busy}
+                  onFileSelected={setFacLicenseFile}
+                />
+                <FileUploadDropzone
+                  id="fac-photo-file"
+                  label="Facility Exterior / Lobby Photo"
+                  hint="PNG, JPEG or WebP photo"
+                  accept={ALLOWED_AVATAR_MIME_TYPES.join(",")}
+                  maxBytes={MAX_MEDIA_UPLOAD_BYTES}
+                  selectedFile={facPhotoFile}
+                  progressPercent={null}
+                  disabled={busy}
+                  onFileSelected={setFacPhotoFile}
+                />
+              </div>
+
               <button
                 type="submit"
                 disabled={busy}
                 className="min-h-[44px] w-full rounded-xl bg-teal-800 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-teal-900 active:scale-[0.99] disabled:opacity-60"
               >
-                {busy ? "Indexing in PostGIS..." : "Submit Facility for Verification"}
+                {busy ? "Uploading & Indexing Facility..." : "Submit Facility for Verification"}
               </button>
             </form>
           ) : null}
@@ -748,24 +1025,134 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
             </div>
 
             {currentUser ? (
-              <dl className="mt-4 space-y-2 text-sm">
-                <div className="flex justify-between gap-2 border-b border-slate-100 pb-2">
-                  <dt className="text-slate-500">Actor</dt>
-                  <dd className="font-semibold text-slate-900">{currentUser.fullName}</dd>
+              <div className="mt-4 space-y-4">
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    {currentUser.avatarUrl ? (
+                      <img
+                        src={currentUser.avatarUrl}
+                        alt={currentUser.fullName}
+                        className="h-12 w-12 shrink-0 rounded-full border border-teal-200 object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-teal-200 bg-teal-50 font-bold text-teal-800">
+                        {currentUser.fullName.slice(0, 2).toUpperCase()}
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-slate-900">
+                        <bdi dir="auto">{currentUser.fullName}</bdi>
+                      </p>
+                      <p className="font-mono-tabular text-xs font-semibold text-teal-800">
+                        {currentUser.role} · {currentUser.countryCode}
+                      </p>
+                    </div>
+                  </div>
+
+                  <label className="inline-flex min-h-[34px] shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:border-teal-700 hover:text-teal-900">
+                    <Camera className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>
+                      {avatarProgress !== null ? `${avatarProgress}%` : "Photo"}
+                    </span>
+                    <input
+                      type="file"
+                      accept={ALLOWED_AVATAR_MIME_TYPES.join(",")}
+                      disabled={busy}
+                      className="sr-only"
+                      onChange={(e) =>
+                        void handleAvatarFileChange(e.target.files?.[0] ?? null)
+                      }
+                    />
+                  </label>
                 </div>
-                <div className="flex justify-between gap-2 border-b border-slate-100 pb-2">
-                  <dt className="text-slate-500">RBAC Role</dt>
-                  <dd className="font-mono-tabular font-semibold text-teal-800">
-                    {currentUser.role}
-                  </dd>
-                </div>
-                <div className="flex justify-between gap-2">
-                  <dt className="text-slate-500">Tenant Country</dt>
-                  <dd className="font-mono-tabular font-semibold text-slate-900">
-                    {currentUser.countryCode}
-                  </dd>
-                </div>
-              </dl>
+
+                <form
+                  onSubmit={(e) => void handleCredentialUpload(e)}
+                  className="space-y-2.5 border-t border-slate-100 pt-3"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <label
+                      htmlFor="user-cred-category"
+                      className="text-xs font-semibold uppercase tracking-wider text-slate-700"
+                    >
+                      Verify Personal Credentials
+                    </label>
+                    <select
+                      id="user-cred-category"
+                      value={credCategory}
+                      onChange={(e) =>
+                        setCredCategory(
+                          UserMediaCategorySchema.parse(e.target.value),
+                        )
+                      }
+                      className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs font-medium"
+                    >
+                      <option value="PRACTITIONER_LICENSE">
+                        Practitioner License
+                      </option>
+                      <option value="MEDICAL_DEGREE">Medical Degree</option>
+                      <option value="DRIVER_LICENSE">Driver License</option>
+                    </select>
+                  </div>
+
+                  <FileUploadDropzone
+                    id="user-cred-file"
+                    label="Credential Scan (PDF / Image)"
+                    hint="Upload license or board diploma"
+                    accept={ALLOWED_CERTIFICATION_MIME_TYPES.join(",")}
+                    maxBytes={MAX_MEDIA_UPLOAD_BYTES}
+                    selectedFile={credFile}
+                    progressPercent={credProgress}
+                    disabled={busy}
+                    onFileSelected={setCredFile}
+                  />
+
+                  <button
+                    type="submit"
+                    disabled={busy || !credFile}
+                    className="inline-flex min-h-[36px] w-full items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 active:scale-[0.99] disabled:opacity-50"
+                  >
+                    <Upload className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>Upload Credential to MinIO</span>
+                  </button>
+                </form>
+
+                {myUserMedia.length > 0 ? (
+                  <ul className="space-y-1.5 border-t border-slate-100 pt-3">
+                    {myUserMedia.slice(0, 4).map((doc) => (
+                      <li
+                        key={doc.id}
+                        className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate font-semibold text-slate-800">
+                            <bdi dir="auto">{doc.fileName}</bdi>
+                          </p>
+                          <p className="font-mono-tabular text-[11px] text-slate-500">
+                            {doc.category} · {doc.reviewStatus}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPreviewMedia({
+                              fileName: doc.fileName,
+                              mimeType: doc.mimeType,
+                              sizeBytes: doc.confirmedSizeBytes ?? doc.sizeBytes,
+                              downloadUrl: doc.downloadUrl,
+                              subtitle: `${doc.category} · ${doc.reviewStatus}`,
+                            })
+                          }
+                          className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:border-teal-700"
+                        >
+                          <Eye className="h-3 w-3" aria-hidden="true" />
+                          <span>View</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
             ) : (
               <p className="mt-3 text-sm leading-relaxed text-slate-600">
                 No active token in this tab yet. Sign in or register on the left to inspect
@@ -827,21 +1214,93 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
                       </span>
                     </div>
                     <p className="mt-2 text-xs text-slate-600">{facility.address}</p>
-                    <div className="mt-2 flex items-center justify-between gap-2">
+
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                       <span className="font-mono-tabular text-[11px] text-slate-500">
                         {facility.lat.toFixed(4)}, {facility.lng.toFixed(4)}
                       </span>
-                      {currentUser?.role === "OPS_ADMIN" &&
-                      facility.verificationStatus !== "VERIFIED" ? (
+
+                      <div className="flex flex-wrap items-center gap-1.5">
                         <button
                           type="button"
-                          onClick={() => void handleVerifyFacility(facility.id)}
-                          className="rounded-md bg-teal-800 px-2.5 py-1 text-xs font-semibold text-white hover:bg-teal-900"
+                          onClick={() => void handleLoadFacilityDocs(facility.id)}
+                          className="rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:border-teal-700"
                         >
-                          Verify Facility
+                          Docs
                         </button>
-                      ) : null}
+
+                        {currentUser?.id === facility.ownerUserId ||
+                        currentUser?.role === "OPS_ADMIN" ? (
+                          <label className="cursor-pointer rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-teal-800 hover:border-teal-700">
+                            <span>+ Attach License</span>
+                            <input
+                              type="file"
+                              accept={ALLOWED_CERTIFICATION_MIME_TYPES.join(",")}
+                              className="sr-only"
+                              onChange={(e) =>
+                                void handleUploadExtraFacilityDoc(
+                                  facility.id,
+                                  "MINISTRY_LICENSE",
+                                  e.target.files?.[0] ?? null,
+                                )
+                              }
+                            />
+                          </label>
+                        ) : null}
+
+                        {currentUser?.role === "OPS_ADMIN" &&
+                        facility.verificationStatus !== "VERIFIED" ? (
+                          <button
+                            type="button"
+                            onClick={() => void handleVerifyFacility(facility.id)}
+                            className="rounded-md bg-teal-800 px-2.5 py-1 text-xs font-semibold text-white hover:bg-teal-900"
+                          >
+                            Verify Facility
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
+
+                    {facilityDocsByFac[facility.id] &&
+                    facilityDocsByFac[facility.id]!.length > 0 ? (
+                      <div className="mt-2.5 space-y-1 border-t border-slate-200 pt-2">
+                        {facilityDocsByFac[facility.id]!.map((doc) => (
+                          <div
+                            key={doc.id}
+                            className="flex items-center justify-between gap-2 rounded border border-slate-200 bg-white px-2 py-1 text-[11px]"
+                          >
+                            <span className="inline-flex min-w-0 items-center gap-1.5 truncate">
+                              <FileText
+                                className="h-3 w-3 shrink-0 text-teal-700"
+                                aria-hidden="true"
+                              />
+                              <span className="truncate font-medium text-slate-800">
+                                {doc.fileName}
+                              </span>
+                              <span className="font-mono-tabular text-slate-500">
+                                ({formatByteSize(doc.sizeBytes)} · {doc.reviewStatus})
+                              </span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPreviewMedia({
+                                  fileName: doc.fileName,
+                                  mimeType: doc.mimeType,
+                                  sizeBytes:
+                                    doc.confirmedSizeBytes ?? doc.sizeBytes,
+                                  downloadUrl: doc.downloadUrl,
+                                  subtitle: `${doc.category} · ${doc.reviewStatus}`,
+                                })
+                              }
+                              className="font-semibold text-teal-800 hover:underline"
+                            >
+                              Preview
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
                   </li>
                 ))}
               </ul>
@@ -849,6 +1308,11 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
           </section>
         </aside>
       </div>
+
+      <MediaPreviewModal
+        item={previewMedia}
+        onClose={() => setPreviewMedia(null)}
+      />
     </div>
   );
 }

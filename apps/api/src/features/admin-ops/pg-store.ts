@@ -19,6 +19,31 @@ import {
   type UpdateUserRoleInput,
 } from "@medisync/contracts";
 import { appendAuditLog, type AuthTokenClaims } from "../foundation/index.js";
+import {
+  createSigV4PresignedUrl,
+  type S3PresignConfig,
+} from "../../shared/storage/s3-presign.js";
+
+function withUserAvatarUrl(
+  row: Record<string, unknown>,
+  s3Config?: S3PresignConfig,
+): Record<string, unknown> {
+  const objectKey =
+    typeof row.avatarObjectKey === "string" && row.avatarObjectKey.length > 0
+      ? row.avatarObjectKey
+      : null;
+  return {
+    ...row,
+    avatarUrl:
+      objectKey && s3Config
+        ? createSigV4PresignedUrl({
+            config: s3Config,
+            method: "GET",
+            objectKey,
+          })
+        : null,
+  };
+}
 
 export class AdminForbiddenError extends Error {
   constructor(message: string) {
@@ -188,6 +213,7 @@ export async function listUsersAdmin(
   pool: Pool,
   actor: Pick<AuthTokenClaims, "role" | "countryCode">,
   query: AdminUsersQuery,
+  s3Config?: S3PresignConfig,
 ): Promise<AuthenticatedUser[]> {
   const effectiveCountry = resolveScopedCountry(actor, query.countryCode);
 
@@ -199,6 +225,7 @@ export async function listUsersAdmin(
        role,
        country_code AS "countryCode",
        facility_id AS "facilityId",
+       avatar_object_key AS "avatarObjectKey",
        to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"
      FROM users
      WHERE ($1::text IS NULL OR country_code = $1)
@@ -208,7 +235,11 @@ export async function listUsersAdmin(
     [effectiveCountry, query.role ?? null, query.limit],
   );
 
-  return res.rows.map((row) => AuthenticatedUserSchema.parse(row));
+  return res.rows.map((row) =>
+    AuthenticatedUserSchema.parse(
+      withUserAvatarUrl(row as Record<string, unknown>, s3Config),
+    ),
+  );
 }
 
 export async function updateUserRoleAdmin(
@@ -216,6 +247,7 @@ export async function updateUserRoleAdmin(
   targetUserId: string,
   actor: AuthTokenClaims,
   input: UpdateUserRoleInput,
+  s3Config?: S3PresignConfig,
 ): Promise<AuthenticatedUser> {
   if (actor.sub === targetUserId && input.role !== "OPS_ADMIN") {
     throw new AdminConflictError(
@@ -235,6 +267,7 @@ export async function updateUserRoleAdmin(
          role,
          country_code AS "countryCode",
          facility_id AS "facilityId",
+         avatar_object_key AS "avatarObjectKey",
          to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"
        FROM users
        WHERE id = $1
@@ -246,7 +279,9 @@ export async function updateUserRoleAdmin(
       throw new AdminNotFoundError("Target user not found.");
     }
 
-    const existingUser = AuthenticatedUserSchema.parse(existingRes.rows[0]);
+    const existingUser = AuthenticatedUserSchema.parse(
+      withUserAvatarUrl(existingRes.rows[0] as Record<string, unknown>, s3Config),
+    );
     const nextCountryCode =
       input.countryCode?.trim().toUpperCase() ?? existingUser.countryCode;
 
@@ -262,11 +297,14 @@ export async function updateUserRoleAdmin(
          role,
          country_code AS "countryCode",
          facility_id AS "facilityId",
+         avatar_object_key AS "avatarObjectKey",
          to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"`,
       [targetUserId, input.role, nextCountryCode],
     );
 
-    const updatedUser = AuthenticatedUserSchema.parse(updatedRes.rows[0]);
+    const updatedUser = AuthenticatedUserSchema.parse(
+      withUserAvatarUrl(updatedRes.rows[0] as Record<string, unknown>, s3Config),
+    );
 
     await appendAuditLog(client, {
       countryCode: updatedUser.countryCode,

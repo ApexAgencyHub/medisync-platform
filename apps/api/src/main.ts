@@ -11,6 +11,7 @@ const server = await buildApiServer({
     .filter(Boolean),
   s3Config: {
     endpoint: env.S3_ENDPOINT,
+    ...(env.S3_PUBLIC_ENDPOINT ? { publicEndpoint: env.S3_PUBLIC_ENDPOINT } : {}),
     region: env.S3_REGION,
     bucket: env.S3_BUCKET,
     accessKeyId: env.S3_ACCESS_KEY_ID,

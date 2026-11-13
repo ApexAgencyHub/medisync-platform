@@ -41,6 +41,7 @@ export const AuthenticatedUserSchema = z.object({
   role: UserRoleSchema,
   countryCode: z.string().regex(/^[A-Z]{2,4}$/),
   facilityId: z.string().uuid().nullable(),
+  avatarUrl: z.string().url().nullable().default(null),
   createdAtIso: z.string().datetime(),
 });
 

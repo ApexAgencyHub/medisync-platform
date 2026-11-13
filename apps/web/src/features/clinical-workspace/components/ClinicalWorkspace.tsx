@@ -19,6 +19,14 @@ import {
 } from "@medisync/contracts";
 import { loginUser } from "@/features/auth-portal";
 import {
+  FileUploadDropzone,
+  MediaPreviewModal,
+  formatByteSize,
+  inferUploadMimeType,
+  uploadClinicalMediaEndToEnd,
+  type PreviewableMediaItem,
+} from "@/features/media-certifications";
+import {
   clearStoredSession,
   readStoredSession,
   writeStoredSession,
@@ -26,8 +34,11 @@ import {
 import {
   CheckCircle2,
   ClipboardList,
+  Eye,
+  FileText,
   FileUp,
   FlaskConical,
+  ImageIcon,
   KeyRound,
   LogOut,
   Pill,
@@ -43,7 +54,6 @@ import {
   fetchLabOrders,
   fetchPrescriptions,
   fetchVisitNotes,
-  presignClinicalUpload,
   updateLabOrderStatus,
   verifyPrescriptionQr,
 } from "../api-client";
@@ -97,17 +107,22 @@ export function ClinicalWorkspace({
   );
   const [dispenseNote, setDispenseNote] = useState("");
 
-  // Lab Order & S3 SigV4 Upload Presigner
+  // Lab Order & Real Binary S3/MinIO Upload
   const [labFacilityId, setLabFacilityId] = useState("");
   const [labPanelName, setLabPanelName] = useState("Complete Blood Count (CBC)");
   const [labUrgency, setLabUrgency] = useState<LabUrgency>("ROUTINE");
 
-  const [uploadFileName, setUploadFileName] = useState("thoracic-ct-report.pdf");
+  const [selectedUploadFile, setSelectedUploadFile] = useState<File | null>(null);
+  const [selectedLabOrderForUpload, setSelectedLabOrderForUpload] =
+    useState<string>("");
   const [uploadMime, setUploadMime] =
     useState<ClinicalMediaMimeType>("application/pdf");
-  const [uploadSizeBytes, setUploadSizeBytes] = useState("524288");
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [latestPresigned, setLatestPresigned] =
     useState<PresignedUploadResponse | null>(null);
+  const [previewMedia, setPreviewMedia] = useState<PreviewableMediaItem | null>(
+    null,
+  );
 
   const [busy, setBusy] = useState(false);
   const [banner, setBanner] = useState<{
@@ -326,26 +341,44 @@ export function ClinicalWorkspace({
 
   async function handlePresignUpload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!sessionToken) return;
+    if (!sessionToken || !selectedUploadFile) return;
 
-    setBusy(true);
-    const res = await presignClinicalUpload(apiBaseUrl, sessionToken, {
-      patientUserId: patientUuid.trim(),
-      fileName: uploadFileName.trim(),
-      mimeType: uploadMime,
-      sizeBytes: Number(uploadSizeBytes),
-    });
-    setBusy(false);
-
-    if (!res.ok) {
-      setBanner({ tone: "error", text: `Presign failed: ${res.error}` });
+    const effectivePatientId =
+      patientUuid.trim() || currentUser?.id || "";
+    if (!effectivePatientId) {
+      setBanner({
+        tone: "error",
+        text: "Specify a Patient UUID (or sign in as a patient) before uploading medical media.",
+      });
       return;
     }
 
-    setLatestPresigned(res.data);
+    setBusy(true);
+    setUploadProgress(5);
+    const res = await uploadClinicalMediaEndToEnd({
+      apiBaseUrl,
+      token: sessionToken,
+      patientUserId: effectivePatientId,
+      ...(selectedLabOrderForUpload
+        ? { labOrderId: selectedLabOrderForUpload }
+        : {}),
+      file: selectedUploadFile,
+      mimeType: uploadMime,
+      onProgress: (pct) => setUploadProgress(pct),
+    });
+    setBusy(false);
+    setUploadProgress(null);
+
+    if (!res.ok) {
+      setBanner({ tone: "error", text: `Binary upload failed: ${res.error}` });
+      return;
+    }
+
+    setLatestPresigned(res.presigned);
+    setSelectedUploadFile(null);
     setBanner({
       tone: "success",
-      text: `Generated AWS4-HMAC-SHA256 presigned upload URL for ${res.data.mediaObject.fileName}.`,
+      text: `Uploaded & cryptographically verified ${res.confirmed.mediaObject.fileName} in MinIO S3 storage.`,
     });
     await refreshClinicalData(sessionToken, selectedCountry);
   }
@@ -821,84 +854,100 @@ export function ClinicalWorkspace({
 
                 <form
                   onSubmit={(e) => void handlePresignUpload(e)}
-                  className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3"
+                  className="mt-4 space-y-3"
                 >
-                  <div>
-                    <label
-                      htmlFor="s3-file-name"
-                      className="block text-xs font-semibold text-slate-700"
-                    >
-                      Report / Scan File Name
-                    </label>
-                    <input
-                      id="s3-file-name"
-                      type="text"
-                      required
-                      value={uploadFileName}
-                      onChange={(e) => setUploadFileName(e.target.value)}
-                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label
-                      htmlFor="s3-mime-type"
-                      className="block text-xs font-semibold text-slate-700"
-                    >
-                      Allowed Clinical MIME
-                    </label>
-                    <select
-                      id="s3-mime-type"
-                      value={uploadMime}
-                      onChange={(e) =>
-                        setUploadMime(
-                          ClinicalMediaMimeTypeSchema.parse(e.target.value),
-                        )
+                  <FileUploadDropzone
+                    id="s3-clinical-file"
+                    label="Diagnostic Scan / Lab PDF Binary Upload"
+                    hint="Drag & drop X-ray PNG/JPG/WebP, DICOM, or lab report PDF"
+                    accept={ALLOWED_MEDIA_MIME_TYPES.join(",")}
+                    maxBytes={MAX_CLINICAL_UPLOAD_BYTES}
+                    selectedFile={selectedUploadFile}
+                    progressPercent={uploadProgress}
+                    disabled={busy || !sessionToken}
+                    onFileSelected={(file) => {
+                      setSelectedUploadFile(file);
+                      if (file) {
+                        const detected = inferUploadMimeType(
+                          file,
+                          ALLOWED_MEDIA_MIME_TYPES,
+                        );
+                        if (detected) {
+                          setUploadMime(
+                            ClinicalMediaMimeTypeSchema.parse(detected),
+                          );
+                        }
                       }
-                      className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 font-mono-tabular text-xs"
-                    >
-                      {ALLOWED_MEDIA_MIME_TYPES.map((mime) => (
-                        <option key={mime} value={mime}>
-                          {mime}
-                        </option>
-                      ))}
-                    </select>
+                    }}
+                  />
+
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
+                      <label
+                        htmlFor="s3-mime-type"
+                        className="block text-xs font-semibold text-slate-700"
+                      >
+                        Allowed Clinical MIME
+                      </label>
+                      <select
+                        id="s3-mime-type"
+                        value={uploadMime}
+                        onChange={(e) =>
+                          setUploadMime(
+                            ClinicalMediaMimeTypeSchema.parse(e.target.value),
+                          )
+                        }
+                        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 font-mono-tabular text-xs"
+                      >
+                        {ALLOWED_MEDIA_MIME_TYPES.map((mime) => (
+                          <option key={mime} value={mime}>
+                            {mime}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="s3-lab-order-link"
+                        className="block text-xs font-semibold text-slate-700"
+                      >
+                        Link to Lab Order (Optional)
+                      </label>
+                      <select
+                        id="s3-lab-order-link"
+                        value={selectedLabOrderForUpload}
+                        onChange={(e) =>
+                          setSelectedLabOrderForUpload(e.target.value)
+                        }
+                        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs"
+                      >
+                        <option value="">Standalone clinical file</option>
+                        {labOrders.map((order) => (
+                          <option key={order.id} value={order.id}>
+                            {order.panelName} ({order.patientName})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
+
                   <div>
-                    <label
-                      htmlFor="s3-size-bytes"
-                      className="block text-xs font-semibold text-slate-700"
-                    >
-                      Size (max {(MAX_CLINICAL_UPLOAD_BYTES / (1024 * 1024)).toFixed(0)} MB)
-                    </label>
-                    <input
-                      id="s3-size-bytes"
-                      type="number"
-                      min={1}
-                      max={MAX_CLINICAL_UPLOAD_BYTES}
-                      value={uploadSizeBytes}
-                      onChange={(e) => setUploadSizeBytes(e.target.value)}
-                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-mono-tabular text-xs"
-                    />
-                  </div>
-                  <div className="sm:col-span-3">
                     <button
                       type="submit"
-                      disabled={busy || !sessionToken}
-                      className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg bg-teal-800 px-4 py-2 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-60"
+                      disabled={busy || !sessionToken || !selectedUploadFile}
+                      className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg bg-teal-800 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-teal-900 active:scale-95 disabled:opacity-60"
                     >
                       <FileUp className="h-3.5 w-3.5" aria-hidden="true" />
-                      <span>Generate Presigned S3 PUT URL</span>
+                      <span>Upload Binary to MinIO S3 Vault</span>
                     </button>
                   </div>
                 </form>
 
                 {latestPresigned ? (
-                  <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs">
-                    <p className="font-semibold text-slate-900">
-                      Object Key: {latestPresigned.mediaObject.objectKey}
-                    </p>
-                    <p className="mt-1 break-all font-mono-tabular text-[11px] text-teal-800">
-                      PUT {latestPresigned.uploadUrl}
+                  <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 text-xs">
+                    <p className="font-semibold text-emerald-950">
+                      Verified S3 Object Key: {latestPresigned.mediaObject.objectKey}
                     </p>
                   </div>
                 ) : null}
@@ -990,9 +1039,79 @@ export function ClinicalWorkspace({
                 ) : null}
 
                 {mediaObjects.length > 0 ? (
-                  <p className="mt-3 font-mono-tabular text-xs text-slate-600">
-                    Presigned diagnostic objects indexed: {mediaObjects.length}
-                  </p>
+                  <div className="mt-5 space-y-2.5 border-t border-slate-200 pt-4">
+                    <p className="font-mono-tabular text-xs font-semibold text-slate-700">
+                      Uploaded Clinical Scans & Lab PDFs ({mediaObjects.length})
+                    </p>
+                    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                      {mediaObjects.map((media) => {
+                        const isImg = media.mimeType.startsWith("image/");
+                        return (
+                          <article
+                            key={media.id}
+                            className="flex items-center justify-between gap-2.5 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs"
+                          >
+                            <div className="flex min-w-0 items-center gap-2.5">
+                              {isImg && media.uploadStatus === "UPLOADED" ? (
+                                <img
+                                  src={media.downloadUrl}
+                                  alt={media.fileName}
+                                  className="h-10 w-10 shrink-0 rounded-lg border border-slate-200 object-cover"
+                                />
+                              ) : (
+                                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-teal-800">
+                                  {isImg ? (
+                                    <ImageIcon className="h-4 w-4" aria-hidden="true" />
+                                  ) : (
+                                    <FileText className="h-4 w-4" aria-hidden="true" />
+                                  )}
+                                </div>
+                              )}
+                              <div className="min-w-0">
+                                <p className="truncate font-semibold text-slate-900">
+                                  <bdi dir="auto">{media.fileName}</bdi>
+                                </p>
+                                <p className="font-mono-tabular text-[11px] text-slate-600">
+                                  {formatByteSize(media.sizeBytes)} ·{" "}
+                                  <span
+                                    className={
+                                      media.uploadStatus === "UPLOADED"
+                                        ? "font-semibold text-emerald-700"
+                                        : media.uploadStatus === "FAILED"
+                                          ? "font-semibold text-red-700"
+                                          : "font-semibold text-amber-700"
+                                    }
+                                  >
+                                    {media.uploadStatus}
+                                  </span>
+                                </p>
+                              </div>
+                            </div>
+
+                            {media.uploadStatus === "UPLOADED" ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setPreviewMedia({
+                                    fileName: media.fileName,
+                                    mimeType: media.mimeType,
+                                    sizeBytes:
+                                      media.confirmedSizeBytes ?? media.sizeBytes,
+                                    downloadUrl: media.downloadUrl,
+                                    subtitle: `Clinical Media · ${media.uploadStatus}`,
+                                  })
+                                }
+                                className="inline-flex min-h-[32px] shrink-0 items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-800 hover:border-teal-700 hover:text-teal-900 active:scale-95"
+                              >
+                                <Eye className="h-3.5 w-3.5" aria-hidden="true" />
+                                <span>Preview</span>
+                              </button>
+                            ) : null}
+                          </article>
+                        );
+                      })}
+                    </div>
+                  </div>
                 ) : null}
               </section>
             </div>
@@ -1104,6 +1223,11 @@ export function ClinicalWorkspace({
           </section>
         </aside>
       </div>
+
+      <MediaPreviewModal
+        item={previewMedia}
+        onClose={() => setPreviewMedia(null)}
+      />
     </div>
   );
 }
