@@ -1,0 +1,15 @@
+:root {
+  --ms-bg-canvas: #F8FAFC;
+  --ms-bg-surface: #FFFFFF;
+  --ms-bg-subtle: #F1F5F9;
+  --ms-ink-primary: #0F172A;
+  --ms-ink-secondary: #475569;
+  --ms-ink-muted: #64748B;
+  --ms-brand-primary: #0D7377;
+  --ms-brand-primary-hover: #09575A;
+  --ms-brand-soft: #CCFBF1;
+  --ms-border-subtle: #E2E8F0;
+  --ms-status-success: #059669;
+  --ms-status-warning: #D97706;
+  --ms-status-emergency: #DC2626;
+}
