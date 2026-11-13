@@ -14,6 +14,7 @@
     "@medisync/contracts": "workspace:*",
     "@medisync/country-packs": "workspace:*",
     "fastify": "^5.12.8",
+    "ioredis": "^6.0.0",
     "pg": "^8.23.1",
     "zod": "^4.3.6"
   },

@@ -52,7 +52,7 @@ for (const vp of VIEWPORTS) {
     expect(hasOverflowHome, "Horizontal scroll overflow on /").toBe(false);
 
     // Navigate to Slice 1 Clinical & Ops Access Portal (/portal)
-    await page.getByRole("link", { name: "Clinical Portal" }).click();
+    await page.getByRole("link", { name: "Portal", exact: true }).click();
     await expect(
       page.getByRole("heading", { name: /Clinical & Ops Access Portal/i }),
     ).toBeVisible();
@@ -75,12 +75,28 @@ for (const vp of VIEWPORTS) {
     const hasOverflowPortal = await page.evaluate(
       () => document.documentElement.scrollWidth > window.innerWidth,
     );
+    expect(hasOverflowPortal, "Horizontal scroll overflow on /portal").toBe(
+      false,
+    );
+
+    // Navigate from /portal to Slice 2 Live Medical Map & Dispatch Console (/map)
+    await page.getByRole("link", { name: "Live Map", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: /Live Medical Map & Dispatch Console/i }),
+    ).toBeVisible();
+
+    await page.getByRole("button", { name: "MA", exact: true }).click();
+    await expect(page.getByText(/Casablanca Central Metro/i)).toBeVisible();
+    await page.getByRole("button", { name: "Hospitals", exact: true }).click();
+    await page.getByRole("button", { name: "Zoom in viewport" }).click();
+
+    const hasOverflowMap = await page.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth,
+    );
 
     expect(pageErrors, "Unexpected uncaught page errors").toEqual([]);
     expect(consoleErrors, "Unexpected console.error logs").toEqual([]);
     expect(badResponses, "Unexpected >= 400 HTTP responses").toEqual([]);
-    expect(hasOverflowPortal, "Horizontal scroll overflow on /portal").toBe(
-      false,
-    );
+    expect(hasOverflowMap, "Horizontal scroll overflow on /map").toBe(false);
   });
 }

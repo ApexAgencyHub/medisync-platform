@@ -18,17 +18,20 @@ export default function HomePage() {
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4 sm:px-6">
           <BrandMark />
           <div className="flex items-center gap-2 sm:gap-3">
-            <span className="hidden rounded-full border border-teal-200 bg-teal-50 px-3 py-1 font-mono-tabular text-xs font-medium text-teal-900 sm:inline-flex">
+            <span className="hidden rounded-full border border-teal-200 bg-teal-50 px-3 py-1 font-mono-tabular text-xs font-medium text-teal-900 lg:inline-flex">
               {packs.length} CountryPacks · {roleCount} RBAC Roles
             </span>
-            <span className="hidden rounded-lg bg-slate-900 px-3 py-1.5 font-mono-tabular text-xs font-semibold text-white md:inline-flex">
-              Web · iOS · Android
-            </span>
+            <Link
+              href="/map"
+              className="inline-flex min-h-[38px] items-center rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-900 transition-colors hover:border-teal-700 hover:text-teal-800 sm:px-3.5"
+            >
+              Live Map
+            </Link>
             <Link
               href="/portal"
-              className="inline-flex min-h-[40px] items-center rounded-lg bg-teal-800 px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-teal-900 active:scale-[0.99]"
+              className="inline-flex min-h-[38px] items-center rounded-lg bg-teal-800 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-teal-900 active:scale-[0.99] sm:px-3.5"
             >
-              Clinical Portal
+              Portal
             </Link>
           </div>
         </div>
