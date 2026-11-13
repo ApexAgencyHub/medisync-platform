@@ -18,7 +18,9 @@ import {
   ClinicalBadRequestError,
   ClinicalConflictError,
   ClinicalForbiddenError,
+  ClinicalInvalidMediaError,
   ClinicalNotFoundError,
+  confirmClinicalMediaUpload,
   createLabOrder,
   createPrescription,
   createPresignedMediaUpload,
@@ -87,6 +89,8 @@ const LAB_TECH_ROLES: readonly UserRole[] = [
 ];
 
 const MEDIA_UPLOADER_ROLES: readonly UserRole[] = [
+  "PATIENT",
+  "CAREGIVER",
   "DOCTOR",
   "LAB_TECH",
   "CLINIC_STAFF",
@@ -97,6 +101,12 @@ const MEDIA_UPLOADER_ROLES: readonly UserRole[] = [
 function mapClinicalError(err: unknown, reply: FastifyReply): unknown {
   if (err instanceof ClinicalBadRequestError) {
     return reply.status(400).send({ error: err.message });
+  }
+  if (err instanceof ClinicalInvalidMediaError) {
+    return reply.status(422).send({
+      error: "INVALID_FILE_SIGNATURE",
+      message: err.message,
+    });
   }
   if (err instanceof ClinicalForbiddenError) {
     return reply.status(403).send({ error: err.message });
@@ -389,6 +399,33 @@ export async function registerClinicalRoutes(
         parsed.data,
       );
       return reply.status(201).send(response);
+    } catch (err) {
+      return mapClinicalError(err, reply);
+    }
+  });
+
+  app.post("/v1/clinical/media/:id/confirm", async (request, reply) => {
+    const claims = authenticateRequest(
+      request,
+      reply,
+      deps.authSecret,
+      MEDIA_UPLOADER_ROLES,
+    );
+    if (!claims) return;
+
+    const paramsParsed = UuidParamSchema.safeParse(request.params);
+    if (!paramsParsed.success) {
+      return reply.status(400).send({ error: "INVALID_MEDIA_ID" });
+    }
+
+    try {
+      const mediaObject = await confirmClinicalMediaUpload(
+        deps.pool,
+        paramsParsed.data.id,
+        claims,
+        deps.s3Config,
+      );
+      return reply.status(200).send({ mediaObject });
     } catch (err) {
       return mapClinicalError(err, reply);
     }

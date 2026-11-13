@@ -17,6 +17,7 @@ import {
   verifyPassword,
 } from "./auth-crypto.js";
 import { authenticateRequest } from "./guard.js";
+import type { S3PresignConfig } from "../../shared/storage/s3-presign.js";
 import {
   appendAuditLog,
   DuplicateConflictError,
@@ -50,7 +51,7 @@ const AuditQuerySchema = z.object({
 
 export async function registerFoundationRoutes(
   app: FastifyInstance,
-  deps: { pool: Pool; authSecret: string },
+  deps: { pool: Pool; authSecret: string; s3Config?: S3PresignConfig },
 ): Promise<void> {
   app.get("/health", async (_request, reply) => {
     const dbOk = await pingDatabase(deps.pool);
@@ -107,7 +108,11 @@ export async function registerFoundationRoutes(
       });
     }
 
-    const stored = await findUserByEmail(deps.pool, parsed.data.email);
+    const stored = await findUserByEmail(
+      deps.pool,
+      parsed.data.email,
+      deps.s3Config,
+    );
     if (!stored) {
       return reply.status(401).send({ error: "INVALID_CREDENTIALS" });
     }
@@ -127,6 +132,7 @@ export async function registerFoundationRoutes(
       role: stored.role,
       countryCode: stored.countryCode,
       facilityId: stored.facilityId,
+      avatarUrl: stored.avatarUrl,
       createdAtIso: stored.createdAtIso,
     };
 
@@ -147,7 +153,7 @@ export async function registerFoundationRoutes(
     const claims = authenticateRequest(request, reply, deps.authSecret);
     if (!claims) return;
 
-    const user = await findUserById(deps.pool, claims.sub);
+    const user = await findUserById(deps.pool, claims.sub, deps.s3Config);
     if (!user) {
       return reply.status(401).send({ error: "ACCOUNT_NOT_FOUND" });
     }

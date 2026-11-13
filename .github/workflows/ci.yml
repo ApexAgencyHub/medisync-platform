@@ -45,6 +45,11 @@ jobs:
       DATABASE_URL: postgresql://medisync:medisync_dev_password@127.0.0.1:5433/medisync
       REDIS_URL: redis://127.0.0.1:6380
       AUTH_SECRET: medisync-ci-ephemeral-test-secret-minimum-32-chars
+      S3_ENDPOINT: http://127.0.0.1:9010
+      S3_REGION: us-east-1
+      S3_BUCKET: medisync-clinical-media
+      S3_ACCESS_KEY_ID: medisync-dev-s3-access-key
+      S3_SECRET_ACCESS_KEY: medisync-dev-s3-secret-key-min-32-chars
 
     steps:
       - uses: actions/checkout@v4
@@ -53,6 +58,25 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      - name: Start MinIO S3 service
+        run: |
+          docker run -d --name medisync-ci-minio \
+            -p 127.0.0.1:9010:9000 \
+            -e MINIO_ROOT_USER=medisync-dev-s3-access-key \
+            -e MINIO_ROOT_PASSWORD=medisync-dev-s3-secret-key-min-32-chars \
+            -e MINIO_REGION_NAME=us-east-1 \
+            -e MINIO_API_CORS_ALLOW_ORIGIN="http://localhost:3000,http://127.0.0.1:3000,http://127.0.0.1:3210,http://localhost:3210" \
+            pgsty/minio:latest server /data
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:9010/minio/health/live >/dev/null 2>&1; then
+              echo "MinIO S3 is healthy"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "MinIO failed healthcheck"
+          docker logs medisync-ci-minio
+          exit 1
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Typecheck

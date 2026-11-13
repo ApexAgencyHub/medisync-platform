@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MediaUploadStatusSchema } from "./media.js";
 
 export const ALLOWED_MEDIA_MIME_TYPES = [
   "application/pdf",
@@ -190,6 +191,9 @@ export const ClinicalMediaObjectSummarySchema = z.object({
   fileName: z.string(),
   mimeType: ClinicalMediaMimeTypeSchema,
   sizeBytes: z.number().int(),
+  confirmedSizeBytes: z.number().int().nullable().default(null),
+  uploadStatus: MediaUploadStatusSchema.default("PENDING"),
+  confirmedAtIso: z.string().datetime().nullable().default(null),
   downloadUrl: z.string().url(),
   createdAtIso: z.string().datetime(),
 });
@@ -264,4 +268,11 @@ export const ClinicalMediaListResponseSchema = z.object({
 });
 export type ClinicalMediaListResponse = z.infer<
   typeof ClinicalMediaListResponseSchema
+>;
+
+export const ClinicalMediaObjectResponseSchema = z.object({
+  mediaObject: ClinicalMediaObjectSummarySchema,
+});
+export type ClinicalMediaObjectResponse = z.infer<
+  typeof ClinicalMediaObjectResponseSchema
 >;

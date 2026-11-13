@@ -10,9 +10,12 @@ const ApiEnvSchema = z.object({
   AUTH_SECRET: z.string().min(32),
   CORS_ORIGINS: z
     .string()
-    .default("http://127.0.0.1:3000,http://localhost:3000,http://127.0.0.1:3100"),
-  S3_ENDPOINT: z.string().url().default("https://s3.sovereign.medisync.local"),
-  S3_REGION: z.string().min(1).default("auto"),
+    .default(
+      "http://127.0.0.1:3000,http://localhost:3000,http://127.0.0.1:3210,http://localhost:3210",
+    ),
+  S3_ENDPOINT: z.string().url().default("http://127.0.0.1:9010"),
+  S3_PUBLIC_ENDPOINT: z.string().url().optional(),
+  S3_REGION: z.string().min(1).default("us-east-1"),
   S3_BUCKET: z.string().min(1).default("medisync-clinical-media"),
   S3_ACCESS_KEY_ID: z.string().min(8).default("medisync-dev-s3-access-key"),
   S3_SECRET_ACCESS_KEY: z

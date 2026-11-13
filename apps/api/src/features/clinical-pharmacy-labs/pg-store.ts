@@ -22,7 +22,10 @@ import {
 } from "@medisync/contracts";
 import { appendAuditLog, type AuthTokenClaims } from "../foundation/index.js";
 import {
+  S3InvalidSignatureError,
+  S3ObjectNotFoundError,
   createSigV4PresignedUrl,
+  inspectUploadedS3Object,
   sanitizeUploadFileName,
   type S3PresignConfig,
 } from "../../shared/storage/s3-presign.js";
@@ -56,6 +59,13 @@ export class ClinicalConflictError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "ClinicalConflictError";
+  }
+}
+
+export class ClinicalInvalidMediaError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ClinicalInvalidMediaError";
   }
 }
 
@@ -797,6 +807,15 @@ export async function createPresignedMediaUpload(
   s3Config: S3PresignConfig,
   input: PresignClinicalUploadInput,
 ): Promise<PresignedUploadResponse> {
+  if (
+    (actor.role === "PATIENT" || actor.role === "CAREGIVER") &&
+    input.patientUserId !== actor.sub
+  ) {
+    throw new ClinicalForbiddenError(
+      "Patients may only upload medical documents to their own record.",
+    );
+  }
+
   const client = await pool.connect();
   const objectId = crypto.randomUUID();
   const safeName = sanitizeUploadFileName(input.fileName);
@@ -909,6 +928,9 @@ export async function createPresignedMediaUpload(
        file_name AS "fileName",
        mime_type AS "mimeType",
        size_bytes AS "sizeBytes",
+       confirmed_size_bytes AS "confirmedSizeBytes",
+       upload_status AS "uploadStatus",
+       CASE WHEN confirmed_at IS NULL THEN NULL ELSE to_char(confirmed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "confirmedAtIso",
        to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"
      FROM clinical_media_objects WHERE id = $1`,
     [objectId],
@@ -933,6 +955,133 @@ export async function createPresignedMediaUpload(
   };
 }
 
+export async function confirmClinicalMediaUpload(
+  pool: Pool,
+  mediaId: string,
+  actor: AuthTokenClaims,
+  s3Config: S3PresignConfig,
+): Promise<ClinicalMediaObjectSummary> {
+  const rowRes = await pool.query<{
+    id: string;
+    countryCode: string;
+    patientUserId: string;
+    uploadedByUserId: string;
+    objectKey: string;
+    mimeType: string;
+  }>(
+    `SELECT
+       id,
+       country_code AS "countryCode",
+       patient_user_id AS "patientUserId",
+       uploaded_by_user_id AS "uploadedByUserId",
+       object_key AS "objectKey",
+       mime_type AS "mimeType"
+     FROM clinical_media_objects
+     WHERE id = $1`,
+    [mediaId],
+  );
+  const existing = rowRes.rows[0];
+  if (!existing) {
+    throw new ClinicalNotFoundError("Clinical media object not found.");
+  }
+
+  if (actor.role !== "OPS_ADMIN" && existing.countryCode !== actor.countryCode) {
+    throw new ClinicalForbiddenError(
+      "Cross-country clinical media confirmation is forbidden.",
+    );
+  }
+  if (
+    (actor.role === "PATIENT" || actor.role === "CAREGIVER") &&
+    existing.patientUserId !== actor.sub
+  ) {
+    throw new ClinicalForbiddenError(
+      "Cannot confirm medical media uploaded for another patient.",
+    );
+  }
+
+  let observedSizeBytes: number;
+  try {
+    const inspected = await inspectUploadedS3Object({
+      config: s3Config,
+      objectKey: existing.objectKey,
+      expectedMimeType: existing.mimeType,
+      maxBytes: MAX_CLINICAL_UPLOAD_BYTES,
+    });
+    observedSizeBytes = inspected.observedSizeBytes;
+  } catch (err) {
+    if (err instanceof S3ObjectNotFoundError) {
+      throw new ClinicalNotFoundError(err.message);
+    }
+    if (err instanceof S3InvalidSignatureError) {
+      await pool.query(
+        `UPDATE clinical_media_objects SET upload_status = 'FAILED' WHERE id = $1`,
+        [mediaId],
+      );
+      throw new ClinicalInvalidMediaError(err.message);
+    }
+    throw err;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `UPDATE clinical_media_objects
+       SET upload_status = 'UPLOADED',
+           confirmed_size_bytes = $2,
+           confirmed_at = NOW()
+       WHERE id = $1`,
+      [mediaId, observedSizeBytes],
+    );
+
+    await appendAuditLog(client, {
+      countryCode: existing.countryCode,
+      actorId: actor.sub,
+      actorRole: actor.role,
+      action: "CLINICAL_MEDIA_CONFIRMED",
+      resourceType: "clinical_media",
+      resourceId: mediaId,
+      metadata: {
+        observedSizeBytes,
+      },
+    });
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  const refreshed = await pool.query(
+    `SELECT
+       id,
+       country_code AS "countryCode",
+       patient_user_id AS "patientUserId",
+       lab_order_id AS "labOrderId",
+       uploaded_by_user_id AS "uploadedByUserId",
+       object_key AS "objectKey",
+       file_name AS "fileName",
+       mime_type AS "mimeType",
+       size_bytes AS "sizeBytes",
+       confirmed_size_bytes AS "confirmedSizeBytes",
+       upload_status AS "uploadStatus",
+       CASE WHEN confirmed_at IS NULL THEN NULL ELSE to_char(confirmed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "confirmedAtIso",
+       to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"
+     FROM clinical_media_objects WHERE id = $1`,
+    [mediaId],
+  );
+  const raw = refreshed.rows[0] as Record<string, unknown>;
+  return ClinicalMediaObjectSummarySchema.parse({
+    ...raw,
+    downloadUrl: createSigV4PresignedUrl({
+      config: s3Config,
+      method: "GET",
+      objectKey: String(raw.objectKey),
+    }),
+  });
+}
+
 export async function listClinicalMediaScoped(
   pool: Pool,
   actor: AuthTokenClaims,
@@ -951,6 +1100,9 @@ export async function listClinicalMediaScoped(
        file_name AS "fileName",
        mime_type AS "mimeType",
        size_bytes AS "sizeBytes",
+       confirmed_size_bytes AS "confirmedSizeBytes",
+       upload_status AS "uploadStatus",
+       CASE WHEN confirmed_at IS NULL THEN NULL ELSE to_char(confirmed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "confirmedAtIso",
        to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"
      FROM clinical_media_objects
      WHERE ($1::text IS NULL OR country_code = $1)

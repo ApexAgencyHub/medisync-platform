@@ -15,6 +15,7 @@ import {
 } from "@medisync/contracts";
 import { authenticateRequest } from "../foundation/index.js";
 import { publishDispatchUpdate } from "../maps-dispatch/index.js";
+import type { S3PresignConfig } from "../../shared/storage/s3-presign.js";
 import {
   AdminBadRequestError,
   AdminConflictError,
@@ -81,6 +82,7 @@ export async function registerAdminOpsRoutes(
     pool: Pool;
     redis: Redis;
     authSecret: string;
+    s3Config?: S3PresignConfig;
   },
 ): Promise<void> {
   app.get("/v1/admin/overview", async (request, reply) => {
@@ -126,7 +128,12 @@ export async function registerAdminOpsRoutes(
     }
 
     try {
-      const users = await listUsersAdmin(deps.pool, claims, parsed.data);
+      const users = await listUsersAdmin(
+        deps.pool,
+        claims,
+        parsed.data,
+        deps.s3Config,
+      );
       return { users };
     } catch (err) {
       return handleAdminError(err, reply);
@@ -163,6 +170,7 @@ export async function registerAdminOpsRoutes(
           params.data.id,
           claims,
           body.data,
+          deps.s3Config,
         );
         return { user };
       } catch (err) {

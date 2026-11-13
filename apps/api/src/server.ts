@@ -8,11 +8,13 @@ import { registerMapsDispatchRoutes } from "./features/maps-dispatch/index.js";
 import { registerBookingRoutes } from "./features/booking/index.js";
 import { registerClinicalRoutes } from "./features/clinical-pharmacy-labs/index.js";
 import { registerAdminOpsRoutes } from "./features/admin-ops/index.js";
+import { registerMediaCertificationRoutes } from "./features/media-certifications/index.js";
 import { createDbPool } from "./shared/db/pool.js";
 import { runMigrations } from "./shared/db/migrate.js";
 import { createRedisClient } from "./shared/redis/client.js";
 import {
   DEFAULT_DEV_S3_CONFIG,
+  ensureS3BucketExists,
   type S3PresignConfig,
 } from "./shared/storage/s3-presign.js";
 
@@ -56,9 +58,13 @@ export async function buildApiServer(
     credentials: true,
   });
 
+  const s3Config = options.s3Config ?? DEFAULT_DEV_S3_CONFIG;
+  await ensureS3BucketExists(s3Config);
+
   await registerFoundationRoutes(app, {
     pool,
     authSecret: options.authSecret,
+    s3Config,
   });
   await registerCountryPackRoutes(app);
   await registerMapsDispatchRoutes(app, {
@@ -74,12 +80,18 @@ export async function buildApiServer(
   await registerClinicalRoutes(app, {
     pool,
     authSecret: options.authSecret,
-    s3Config: options.s3Config ?? DEFAULT_DEV_S3_CONFIG,
+    s3Config,
   });
   await registerAdminOpsRoutes(app, {
     pool,
     redis,
     authSecret: options.authSecret,
+    s3Config,
+  });
+  await registerMediaCertificationRoutes(app, {
+    pool,
+    authSecret: options.authSecret,
+    s3Config,
   });
 
   if (ownsPool || ownsRedis) {

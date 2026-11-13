@@ -14,7 +14,9 @@ import {
   type DispatchStatus,
   type DisputeCategory,
   type DisputeSummary,
+  type FacilityMediaDocument,
   type FacilitySummary,
+  type UserMediaDocument,
   type UserRole,
 } from "@medisync/contracts";
 import {
@@ -23,6 +25,15 @@ import {
   verifyFacilityStatus,
 } from "@/features/auth-portal";
 import { listDispatchRequests } from "@/features/maps-dispatch";
+import {
+  MediaPreviewModal,
+  formatByteSize,
+  listAdminFacilityMedia,
+  listAdminUserMedia,
+  reviewFacilityMediaDocument,
+  reviewUserMediaDocument,
+  type PreviewableMediaItem,
+} from "@/features/media-certifications";
 import {
   clearStoredSession,
   readStoredSession,
@@ -33,7 +44,9 @@ import {
   AlertTriangle,
   Building2,
   CheckCircle2,
+  Eye,
   FileCheck2,
+  FileText,
   KeyRound,
   LogOut,
   Navigation,
@@ -99,6 +112,15 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
   const [dispatches, setDispatches] = useState<DispatchRequestSummary[]>([]);
   const [disputes, setDisputes] = useState<DisputeSummary[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditEvent[]>([]);
+  const [facilityMedia, setFacilityMedia] = useState<FacilityMediaDocument[]>(
+    [],
+  );
+  const [userMediaByUser, setUserMediaByUser] = useState<
+    Record<string, UserMediaDocument[]>
+  >({});
+  const [previewMedia, setPreviewMedia] = useState<PreviewableMediaItem | null>(
+    null,
+  );
 
   // User Role Governance Editor State
   const [roleDrafts, setRoleDrafts] = useState<Record<string, UserRole>>({});
@@ -196,6 +218,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
       dispatchesRes,
       disputesRes,
       auditRes,
+      facMediaRes,
     ] = await Promise.all([
       fetchAdminOverview(apiBaseUrl, token, countryParam),
       listFacilities(apiBaseUrl, token, countryParam),
@@ -205,6 +228,10 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
       fetchAdminAuditEvents(apiBaseUrl, token, {
         countryCode: countryParam,
         limit: 50,
+      }),
+      listAdminFacilityMedia(apiBaseUrl, token, {
+        ...(countryParam ? { countryCode: countryParam } : {}),
+        limit: 80,
       }),
     ]);
 
@@ -226,6 +253,97 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
     if (auditRes.ok) {
       setAuditLogs(auditRes.data.logs);
     }
+    if (facMediaRes.ok) {
+      setFacilityMedia(facMediaRes.data.documents);
+    }
+  }
+
+  async function handleReviewFacilityDoc(
+    mediaId: string,
+    reviewStatus: "APPROVED" | "REJECTED",
+  ) {
+    if (!sessionToken || !isOpsAdmin) return;
+    setBusy(true);
+    const res = await reviewFacilityMediaDocument(
+      apiBaseUrl,
+      sessionToken,
+      mediaId,
+      {
+        reviewStatus,
+        reviewerNote:
+          reviewStatus === "APPROVED"
+            ? "Certificate verified by Operations Compliance Desk."
+            : "Certificate rejected during compliance inspection.",
+      },
+    );
+    setBusy(false);
+
+    if (!res.ok) {
+      setBanner({
+        tone: "error",
+        text: `Document review failed: ${res.error}`,
+      });
+      return;
+    }
+
+    setFacilityMedia((prev) =>
+      prev.map((doc) => (doc.id === mediaId ? res.data.document : doc)),
+    );
+    setBanner({
+      tone: "success",
+      text: `${res.data.document.fileName} marked ${res.data.document.reviewStatus}.`,
+    });
+  }
+
+  async function handleLoadUserCredentials(userId: string) {
+    if (!sessionToken) return;
+    const res = await listAdminUserMedia(apiBaseUrl, sessionToken, userId);
+    if (res.ok) {
+      setUserMediaByUser((prev) => ({
+        ...prev,
+        [userId]: res.data.documents,
+      }));
+    }
+  }
+
+  async function handleReviewUserCredential(
+    userId: string,
+    mediaId: string,
+    reviewStatus: "APPROVED" | "REJECTED",
+  ) {
+    if (!sessionToken || !isOpsAdmin) return;
+    setBusy(true);
+    const res = await reviewUserMediaDocument(
+      apiBaseUrl,
+      sessionToken,
+      mediaId,
+      {
+        reviewStatus,
+        reviewerNote:
+          reviewStatus === "APPROVED"
+            ? "Practitioner license validated by Ops Admin."
+            : "Credential rejected by Ops Admin.",
+      },
+    );
+    setBusy(false);
+    if (!res.ok) {
+      setBanner({
+        tone: "error",
+        text: `Credential review failed: ${res.error}`,
+      });
+      return;
+    }
+
+    setUserMediaByUser((prev) => ({
+      ...prev,
+      [userId]: (prev[userId] ?? []).map((doc) =>
+        doc.id === mediaId ? res.data.document : doc,
+      ),
+    }));
+    setBanner({
+      tone: "success",
+      text: `${res.data.document.fileName} marked ${res.data.document.reviewStatus}.`,
+    });
   }
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
@@ -856,68 +974,168 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                   No facilities loaded in this scope yet.
                 </p>
               ) : (
-                <div className="space-y-2.5">
-                  {facilities.map((fac) => (
-                    <article
-                      key={fac.id}
-                      className="flex flex-col gap-3 rounded-xl border border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between"
-                    >
-                      <div className="space-y-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h3 className="text-sm font-semibold text-slate-900">
-                            {fac.name}
-                          </h3>
-                          <span className="rounded bg-slate-100 px-2 py-0.5 font-mono-tabular text-[11px] font-semibold text-slate-700">
-                            {fac.kind}
-                          </span>
-                          <span
-                            className={`rounded border px-2 py-0.5 font-mono-tabular text-[11px] font-semibold ${
-                              fac.verificationStatus === "VERIFIED"
-                                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                                : fac.verificationStatus === "SUSPENDED"
-                                  ? "border-red-200 bg-red-50 text-red-800"
-                                  : "border-amber-200 bg-amber-50 text-amber-800"
-                            }`}
-                          >
-                            {fac.verificationStatus}
-                          </span>
-                        </div>
-                        <p className="font-mono-tabular text-xs text-slate-600">
-                          {fac.countryCode} · License {fac.licenseNumber}
-                        </p>
-                        <p className="text-xs text-slate-500">{fac.address}</p>
-                      </div>
+                <div className="space-y-3">
+                  {facilities.map((fac) => {
+                    const attachedDocs = facilityMedia.filter(
+                      (doc) => doc.facilityId === fac.id,
+                    );
+                    return (
+                      <article
+                        key={fac.id}
+                        className="space-y-3 rounded-xl border border-slate-200 p-4"
+                      >
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className="text-sm font-semibold text-slate-900">
+                                {fac.name}
+                              </h3>
+                              <span className="rounded bg-slate-100 px-2 py-0.5 font-mono-tabular text-[11px] font-semibold text-slate-700">
+                                {fac.kind}
+                              </span>
+                              <span
+                                className={`rounded border px-2 py-0.5 font-mono-tabular text-[11px] font-semibold ${
+                                  fac.verificationStatus === "VERIFIED"
+                                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                                    : fac.verificationStatus === "SUSPENDED"
+                                      ? "border-red-200 bg-red-50 text-red-800"
+                                      : "border-amber-200 bg-amber-50 text-amber-800"
+                                }`}
+                              >
+                                {fac.verificationStatus}
+                              </span>
+                            </div>
+                            <p className="font-mono-tabular text-xs text-slate-600">
+                              {fac.countryCode} · License {fac.licenseNumber}
+                            </p>
+                            <p className="text-xs text-slate-500">
+                              {fac.address}
+                            </p>
+                          </div>
 
-                      {isOpsAdmin ? (
-                        <div className="flex shrink-0 gap-2">
-                          <button
-                            type="button"
-                            disabled={
-                              busy || fac.verificationStatus === "VERIFIED"
-                            }
-                            onClick={() =>
-                              void handleFacilityStatus(fac.id, "VERIFIED")
-                            }
-                            className="min-h-[36px] rounded-lg bg-teal-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-45"
-                          >
-                            Verify
-                          </button>
-                          <button
-                            type="button"
-                            disabled={
-                              busy || fac.verificationStatus === "SUSPENDED"
-                            }
-                            onClick={() =>
-                              void handleFacilityStatus(fac.id, "SUSPENDED")
-                            }
-                            className="min-h-[36px] rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-800 hover:bg-red-100 disabled:opacity-45"
-                          >
-                            Suspend
-                          </button>
+                          {isOpsAdmin ? (
+                            <div className="flex shrink-0 gap-2">
+                              <button
+                                type="button"
+                                disabled={
+                                  busy || fac.verificationStatus === "VERIFIED"
+                                }
+                                onClick={() =>
+                                  void handleFacilityStatus(fac.id, "VERIFIED")
+                                }
+                                className="min-h-[36px] rounded-lg bg-teal-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-45"
+                              >
+                                Verify
+                              </button>
+                              <button
+                                type="button"
+                                disabled={
+                                  busy || fac.verificationStatus === "SUSPENDED"
+                                }
+                                onClick={() =>
+                                  void handleFacilityStatus(fac.id, "SUSPENDED")
+                                }
+                                className="min-h-[36px] rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-800 hover:bg-red-100 disabled:opacity-45"
+                              >
+                                Suspend
+                              </button>
+                            </div>
+                          ) : null}
                         </div>
-                      ) : null}
-                    </article>
-                  ))}
+
+                        {attachedDocs.length > 0 ? (
+                          <div className="space-y-1.5 border-t border-slate-100 pt-2.5">
+                            <p className="font-mono-tabular text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                              Submitted Certifications & Photos ({attachedDocs.length})
+                            </p>
+                            {attachedDocs.map((doc) => (
+                              <div
+                                key={doc.id}
+                                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs"
+                              >
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <FileText
+                                    className="h-3.5 w-3.5 shrink-0 text-teal-700"
+                                    aria-hidden="true"
+                                  />
+                                  <span className="truncate font-semibold text-slate-900">
+                                    {doc.fileName}
+                                  </span>
+                                  <span className="font-mono-tabular text-[11px] text-slate-500">
+                                    {doc.category} ·{" "}
+                                    {formatByteSize(doc.sizeBytes)} ·{" "}
+                                    {doc.reviewStatus}
+                                  </span>
+                                </div>
+                                <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                                  {doc.uploadStatus === "UPLOADED" ? (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setPreviewMedia({
+                                          fileName: doc.fileName,
+                                          mimeType: doc.mimeType,
+                                          sizeBytes:
+                                            doc.confirmedSizeBytes ??
+                                            doc.sizeBytes,
+                                          downloadUrl: doc.downloadUrl,
+                                          subtitle: `${fac.name} · ${doc.category} · ${doc.reviewStatus}`,
+                                        })
+                                      }
+                                      className="inline-flex min-h-[30px] items-center gap-1 rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:border-teal-700"
+                                    >
+                                      <Eye
+                                        className="h-3 w-3"
+                                        aria-hidden="true"
+                                      />
+                                      <span>Inspect</span>
+                                    </button>
+                                  ) : null}
+                                  {isOpsAdmin &&
+                                  doc.uploadStatus === "UPLOADED" ? (
+                                    <>
+                                      <button
+                                        type="button"
+                                        disabled={
+                                          busy ||
+                                          doc.reviewStatus === "APPROVED"
+                                        }
+                                        onClick={() =>
+                                          void handleReviewFacilityDoc(
+                                            doc.id,
+                                            "APPROVED",
+                                          )
+                                        }
+                                        className="min-h-[30px] rounded bg-emerald-700 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-800 disabled:opacity-45"
+                                      >
+                                        Approve
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={
+                                          busy ||
+                                          doc.reviewStatus === "REJECTED"
+                                        }
+                                        onClick={() =>
+                                          void handleReviewFacilityDoc(
+                                            doc.id,
+                                            "REJECTED",
+                                          )
+                                        }
+                                        className="min-h-[30px] rounded border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-semibold text-red-800 hover:bg-red-100 disabled:opacity-45"
+                                      >
+                                        Reject
+                                      </button>
+                                    </>
+                                  ) : null}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                      </article>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -963,23 +1181,124 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                         className="flex flex-col gap-3 rounded-xl border border-slate-200 p-4"
                       >
                         <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div>
-                            <h3 className="text-sm font-semibold text-slate-900">
-                              {user.fullName}
-                            </h3>
-                            <p className="text-xs text-slate-500">
-                              {user.email} ·{" "}
-                              <span className="font-mono-tabular">
-                                {user.id.slice(0, 8)}
-                              </span>
-                            </p>
+                          <div className="flex items-center gap-2.5">
+                            {user.avatarUrl ? (
+                              <img
+                                src={user.avatarUrl}
+                                alt={user.fullName}
+                                className="h-9 w-9 shrink-0 rounded-full border border-teal-200 object-cover"
+                              />
+                            ) : (
+                              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-xs font-bold text-slate-700">
+                                {user.fullName.slice(0, 2).toUpperCase()}
+                              </div>
+                            )}
+                            <div>
+                              <h3 className="text-sm font-semibold text-slate-900">
+                                {user.fullName}
+                              </h3>
+                              <p className="text-xs text-slate-500">
+                                {user.email} ·{" "}
+                                <span className="font-mono-tabular">
+                                  {user.id.slice(0, 8)}
+                                </span>
+                              </p>
+                            </div>
                           </div>
-                          <span
-                            className={`rounded border px-2 py-0.5 font-mono-tabular text-[11px] font-semibold ${ROLE_BADGE_COLORS[user.role]}`}
-                          >
-                            {user.role} · {user.countryCode}
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void handleLoadUserCredentials(user.id)
+                              }
+                              className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 hover:border-teal-700"
+                            >
+                              Credentials
+                            </button>
+                            <span
+                              className={`rounded border px-2 py-0.5 font-mono-tabular text-[11px] font-semibold ${ROLE_BADGE_COLORS[user.role]}`}
+                            >
+                              {user.role} · {user.countryCode}
+                            </span>
+                          </div>
                         </div>
+
+                        {userMediaByUser[user.id] &&
+                        userMediaByUser[user.id]!.length > 0 ? (
+                          <div className="space-y-1 border-t border-slate-100 pt-2">
+                            {userMediaByUser[user.id]!.map((doc) => (
+                              <div
+                                key={doc.id}
+                                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs"
+                              >
+                                <span className="truncate font-medium text-slate-800">
+                                  {doc.fileName} ({doc.category} ·{" "}
+                                  {doc.reviewStatus})
+                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  {doc.uploadStatus === "UPLOADED" ? (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setPreviewMedia({
+                                          fileName: doc.fileName,
+                                          mimeType: doc.mimeType,
+                                          sizeBytes:
+                                            doc.confirmedSizeBytes ??
+                                            doc.sizeBytes,
+                                          downloadUrl: doc.downloadUrl,
+                                          subtitle: `${user.fullName} · ${doc.category}`,
+                                        })
+                                      }
+                                      className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700"
+                                    >
+                                      Inspect
+                                    </button>
+                                  ) : null}
+                                  {isOpsAdmin &&
+                                  doc.uploadStatus === "UPLOADED" ? (
+                                    <>
+                                      <button
+                                        type="button"
+                                        disabled={
+                                          busy ||
+                                          doc.reviewStatus === "APPROVED"
+                                        }
+                                        onClick={() =>
+                                          void handleReviewUserCredential(
+                                            user.id,
+                                            doc.id,
+                                            "APPROVED",
+                                          )
+                                        }
+                                        className="rounded bg-emerald-700 px-2 py-0.5 text-[11px] font-semibold text-white disabled:opacity-45"
+                                      >
+                                        Approve
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={
+                                          busy ||
+                                          doc.reviewStatus === "REJECTED"
+                                        }
+                                        onClick={() =>
+                                          void handleReviewUserCredential(
+                                            user.id,
+                                            doc.id,
+                                            "REJECTED",
+                                          )
+                                        }
+                                        className="rounded border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-red-800 disabled:opacity-45"
+                                      >
+                                        Reject
+                                      </button>
+                                    </>
+                                  ) : null}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
 
                         {isOpsAdmin ? (
                           <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
@@ -1394,6 +1713,11 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
           ) : null}
         </section>
       </div>
+
+      <MediaPreviewModal
+        item={previewMedia}
+        onClose={() => setPreviewMedia(null)}
+      />
     </div>
   );
 }

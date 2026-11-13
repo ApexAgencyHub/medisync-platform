@@ -71,6 +71,8 @@ for (const vp of VIEWPORTS) {
     await expect(page.getByText("Invalid Jurisdiction Format")).toBeVisible();
     await licenseInput.fill("MA-CLIN-90812");
     await expect(page.getByText("Pattern Valid")).toBeVisible();
+    await expect(page.locator("#fac-license-file")).toBeAttached();
+    await expect(page.locator("#fac-photo-file")).toBeAttached();
 
     const hasOverflowPortal = await page.evaluate(
       () => document.documentElement.scrollWidth > window.innerWidth,
@@ -135,6 +137,10 @@ for (const vp of VIEWPORTS) {
     await expect(
       page.getByLabel(/Allowed Clinical MIME/i),
     ).toContainText("application/pdf");
+    await expect(page.locator("#s3-clinical-file")).toBeAttached();
+    await expect(
+      page.getByRole("button", { name: /Upload Binary to MinIO S3 Vault/i }),
+    ).toBeVisible();
 
     const hasOverflowClinical = await page.evaluate(
       () => document.documentElement.scrollWidth > window.innerWidth,
