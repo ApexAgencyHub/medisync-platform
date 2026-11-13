@@ -8,7 +8,9 @@ import {
   DriverPingSchema,
   FacilityListQuerySchema,
   FacilityViewportQuerySchema,
+  MAX_CLINICAL_UPLOAD_BYTES,
   NearbyDriversQuerySchema,
+  PresignClinicalUploadSchema,
   RegisterUserSchema,
   SlotsQuerySchema,
   UserRoleSchema,
@@ -171,5 +173,31 @@ describe("@medisync/contracts", () => {
       reason: "Annual cardiology follow-up",
     });
     expect(booking.slotStartIso).toBe("2026-11-16T09:00:00.000Z");
+  });
+
+  it("enforces clinical media upload MIME allowlist and 10MB cap", () => {
+    const validUpload = PresignClinicalUploadSchema.safeParse({
+      patientUserId: "33333333-3333-4333-8333-333333333333",
+      fileName: "chest-xray.png",
+      mimeType: "image/png",
+      sizeBytes: 2_400_000,
+    });
+    expect(validUpload.success).toBe(true);
+
+    const exeUpload = PresignClinicalUploadSchema.safeParse({
+      patientUserId: "33333333-3333-4333-8333-333333333333",
+      fileName: "payload.exe",
+      mimeType: "application/x-msdownload",
+      sizeBytes: 1024,
+    });
+    expect(exeUpload.success).toBe(false);
+
+    const oversized = PresignClinicalUploadSchema.safeParse({
+      patientUserId: "33333333-3333-4333-8333-333333333333",
+      fileName: "huge-scan.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: MAX_CLINICAL_UPLOAD_BYTES + 1,
+    });
+    expect(oversized.success).toBe(false);
   });
 });

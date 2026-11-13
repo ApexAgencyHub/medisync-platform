@@ -11,6 +11,15 @@ const ApiEnvSchema = z.object({
   CORS_ORIGINS: z
     .string()
     .default("http://127.0.0.1:3000,http://localhost:3000,http://127.0.0.1:3100"),
+  S3_ENDPOINT: z.string().url().default("https://s3.sovereign.medisync.local"),
+  S3_REGION: z.string().min(1).default("auto"),
+  S3_BUCKET: z.string().min(1).default("medisync-clinical-media"),
+  S3_ACCESS_KEY_ID: z.string().min(8).default("medisync-dev-s3-access-key"),
+  S3_SECRET_ACCESS_KEY: z
+    .string()
+    .min(16)
+    .default("medisync-dev-s3-secret-key-min-32-chars"),
+  S3_PRESIGN_EXPIRES_SECONDS: z.coerce.number().int().min(60).max(86400).default(900),
 });
 
 export type ApiEnv = z.infer<typeof ApiEnvSchema>;
