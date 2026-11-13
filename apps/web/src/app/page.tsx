@@ -1,12 +1,11 @@
 import Image from "next/image";
-import Link from "next/link";
 import { UserRoleSchema } from "@medisync/contracts";
 import { listCountryPacks } from "@medisync/country-packs";
 import {
   CountryPackExplorer,
   EcosystemSlicesGrid,
 } from "@/features/platform-overview";
-import { BrandMark } from "@/shared/ui/BrandMark";
+import { AppHeader } from "@/shared/ui/AppHeader";
 
 export default function HomePage() {
   const packs = listCountryPacks();
@@ -14,28 +13,10 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4 sm:px-6">
-          <BrandMark />
-          <div className="flex items-center gap-2 sm:gap-3">
-            <span className="hidden rounded-full border border-teal-200 bg-teal-50 px-3 py-1 font-mono-tabular text-xs font-medium text-teal-900 lg:inline-flex">
-              {packs.length} CountryPacks · {roleCount} RBAC Roles
-            </span>
-            <Link
-              href="/map"
-              className="inline-flex min-h-[38px] items-center rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-900 transition-colors hover:border-teal-700 hover:text-teal-800 sm:px-3.5"
-            >
-              Live Map
-            </Link>
-            <Link
-              href="/portal"
-              className="inline-flex min-h-[38px] items-center rounded-lg bg-teal-800 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-teal-900 active:scale-[0.99] sm:px-3.5"
-            >
-              Portal
-            </Link>
-          </div>
-        </div>
-      </header>
+      <AppHeader
+        activeRoute="/"
+        statusPill={`${packs.length} CountryPacks · ${roleCount} RBAC Roles`}
+      />
 
       <main className="mx-auto max-w-6xl space-y-10 px-4 py-8 sm:px-6 sm:py-12">
         <section className="grid items-center gap-8 lg:grid-cols-12">

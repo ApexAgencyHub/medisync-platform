@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   CountryPackSchema,
+  CreateAppointmentSchema,
   CreateDispatchRequestSchema,
   CreateFacilitySchema,
+  CreateScheduleSchema,
   DriverPingSchema,
   FacilityListQuerySchema,
   FacilityViewportQuerySchema,
   NearbyDriversQuerySchema,
   RegisterUserSchema,
+  SlotsQuerySchema,
   UserRoleSchema,
 } from "./index.js";
 
@@ -134,5 +137,39 @@ describe("@medisync/contracts", () => {
       urgency: "EMERGENCY",
     });
     expect(dispatch.urgency).toBe("EMERGENCY");
+  });
+
+  it("validates scheduling windows, includeBooked boolean transform, and booking requests", () => {
+    const validSchedule = CreateScheduleSchema.parse({
+      facilityId: "11111111-1111-4111-8111-111111111111",
+      dayOfWeek: 1,
+      startTimeUtc: "09:00",
+      endTimeUtc: "12:00",
+      slotDurationMinutes: 30,
+      visitMode: "IN_PERSON",
+    });
+    expect(validSchedule.slotDurationMinutes).toBe(30);
+
+    const invertedWindow = CreateScheduleSchema.safeParse({
+      facilityId: "11111111-1111-4111-8111-111111111111",
+      dayOfWeek: 1,
+      startTimeUtc: "14:00",
+      endTimeUtc: "14:15",
+      slotDurationMinutes: 30,
+    });
+    expect(invertedWindow.success).toBe(false);
+
+    const queryFalse = SlotsQuerySchema.parse({
+      date: "2026-11-16",
+      includeBooked: "false",
+    });
+    expect(queryFalse.includeBooked).toBe(false);
+
+    const booking = CreateAppointmentSchema.parse({
+      scheduleId: "22222222-2222-4222-8222-222222222222",
+      slotStartIso: "2026-11-16T09:00:00.000Z",
+      reason: "Annual cardiology follow-up",
+    });
+    expect(booking.slotStartIso).toBe("2026-11-16T09:00:00.000Z");
   });
 });

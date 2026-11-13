@@ -269,12 +269,12 @@ export async function updateFacilityVerification(
 }
 
 export async function appendAuditLog(
-  pool: Pool,
+  db: Pick<Pool, "query">,
   entry: Omit<AuditEvent, "eventId" | "occurredAtIso"> & {
     metadata?: Record<string, unknown>;
   },
 ): Promise<void> {
-  await pool.query(
+  await db.query(
     `INSERT INTO audit_logs (
        country_code,
        actor_id,

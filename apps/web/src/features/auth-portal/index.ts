@@ -1,2 +1,2 @@
 export { PortalWorkspace } from "./components/PortalWorkspace";
-export { loginUser } from "./api-client";
+export { listFacilities, loginUser } from "./api-client";
