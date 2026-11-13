@@ -21,6 +21,7 @@ const server = await buildApiServer({
   runDbMigrations: true,
   seedDemoWorld:
     env.NODE_ENV !== "production" || process.env.ENABLE_DEMO_SEED === "true",
+  rateLimitMaxPerMinute: env.RATE_LIMIT_MAX_PER_MIN,
 });
 
 await server.listen({ port: env.PORT, host: env.HOST });
