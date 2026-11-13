@@ -1,6 +1,11 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import {
+  clearStoredSession,
+  readStoredSession,
+  writeStoredSession,
+} from "@/shared/auth/session-storage";
 import {
   CreateFacilitySchema,
   FacilityKindSchema,
@@ -65,6 +70,15 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<AuthenticatedUser | null>(null);
   const [facilities, setFacilities] = useState<FacilitySummary[]>([]);
+
+  useEffect(() => {
+    const stored = readStoredSession();
+    if (stored) {
+      setSessionToken(stored.token);
+      setCurrentUser(stored.user);
+      setSelectedCountry(stored.user.countryCode);
+    }
+  }, []);
 
   const [busy, setBusy] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{
@@ -142,6 +156,7 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
       return;
     }
 
+    writeStoredSession(res.data);
     setSessionToken(res.data.token);
     setCurrentUser(res.data.user);
     setSelectedCountry(res.data.user.countryCode);
@@ -186,6 +201,7 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
       return;
     }
 
+    writeStoredSession(res.data);
     setSessionToken(res.data.token);
     setCurrentUser(res.data.user);
     setStatusMessage({
@@ -284,6 +300,7 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
   }
 
   function handleSignOut() {
+    clearStoredSession();
     setSessionToken(null);
     setCurrentUser(null);
     setFacilities([]);

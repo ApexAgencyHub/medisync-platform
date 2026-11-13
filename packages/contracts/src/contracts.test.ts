@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  AdminOverrideDispatchSchema,
   CountryPackSchema,
   CreateAppointmentSchema,
   CreateDispatchRequestSchema,
+  CreateDisputeSchema,
   CreateFacilitySchema,
   CreateScheduleSchema,
   DriverPingSchema,
@@ -13,6 +15,7 @@ import {
   PresignClinicalUploadSchema,
   RegisterUserSchema,
   SlotsQuerySchema,
+  UpdateUserRoleSchema,
   UserRoleSchema,
 } from "./index.js";
 
@@ -199,5 +202,26 @@ describe("@medisync/contracts", () => {
       sizeBytes: MAX_CLINICAL_UPLOAD_BYTES + 1,
     });
     expect(oversized.success).toBe(false);
+  });
+
+  it("validates admin-ops role governance, dispatch overrides, and disputes", () => {
+    const dispute = CreateDisputeSchema.parse({
+      category: "DISPATCH_DELAY",
+      subject: "Ambulance ETA deviation > 15 min",
+      description: "Unit reported heavy traffic near Maarif junction.",
+    });
+    expect(dispute.category).toBe("DISPATCH_DELAY");
+
+    const override = AdminOverrideDispatchSchema.parse({
+      status: "EN_ROUTE",
+      note: "Manual ops coordinator escalation.",
+    });
+    expect(override.status).toBe("EN_ROUTE");
+
+    const roleUpdate = UpdateUserRoleSchema.parse({
+      role: "CLINIC_STAFF",
+      countryCode: "MA",
+    });
+    expect(roleUpdate.role).toBe("CLINIC_STAFF");
   });
 });
