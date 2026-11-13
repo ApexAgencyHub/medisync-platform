@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgis/postgis:17-3.5-alpine
+    container_name: medisync-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: medisync
+      POSTGRES_USER: medisync
+      POSTGRES_PASSWORD: medisync_dev_password
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - medisync_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medisync -d medisync"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    container_name: medisync-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6380:6379"
+    volumes:
+      - medisync_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  medisync_pgdata:
+  medisync_redisdata:

@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   CountryPackSchema,
+  CreateFacilitySchema,
   DriverPingSchema,
+  FacilityListQuerySchema,
   FacilityViewportQuerySchema,
+  RegisterUserSchema,
   UserRoleSchema,
 } from "./index.js";
 
@@ -59,5 +62,42 @@ describe("@medisync/contracts", () => {
       dataResidencyRegion: "us-east",
     });
     expect(pack.code).toBe("US");
+  });
+
+  it("enforces self-registration privilege boundaries and facility schema limits", () => {
+    const allowed = RegisterUserSchema.safeParse({
+      email: "dr.amina@clinic.ma",
+      password: "StrongPassword!123",
+      fullName: "Dr. Amina Benali",
+      role: "DOCTOR",
+      countryCode: "MA",
+    });
+    expect(allowed.success).toBe(true);
+
+    const escalation = RegisterUserSchema.safeParse({
+      email: "attacker@clinic.ma",
+      password: "StrongPassword!123",
+      fullName: "System Seeker",
+      role: "OPS_ADMIN",
+      countryCode: "MA",
+    });
+    expect(escalation.success).toBe(false);
+
+    const facilityOk = CreateFacilitySchema.safeParse({
+      name: "Clinique Atlas Casablanca",
+      kind: "CLINIC",
+      countryCode: "MA",
+      licenseNumber: "MA-CLIN-90812",
+      lat: 33.5731,
+      lng: -7.5898,
+      address: "18 Boulevard d'Anfa, Casablanca",
+    });
+    expect(facilityOk.success).toBe(true);
+
+    const facilityListTooHigh = FacilityListQuerySchema.safeParse({
+      countryCode: "MA",
+      limit: 200,
+    });
+    expect(facilityListTooHigh.success).toBe(false);
   });
 });
