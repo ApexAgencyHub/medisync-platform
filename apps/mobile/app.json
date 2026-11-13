@@ -2,7 +2,7 @@
   "expo": {
     "name": "MediSync Global",
     "slug": "medisync-global",
-    "version": "0.1.0",
+    "version": "2.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "medisync",
@@ -14,14 +14,33 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.apexagencyhub.medisync"
+      "bundleIdentifier": "com.apexagencyhub.medisync",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Scan e-prescription QR codes and capture diagnostic clinical photos.",
+        "NSPhotoLibraryUsageDescription": "Upload lab PDFs, imaging scans, and clinician certification documents.",
+        "NSLocationWhenInUseUsageDescription": "Find nearby verified clinics, emergency hospitals, and pharmacies.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Share real-time ambulance telemetry during active emergency dispatches."
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#F8FAFC"
       },
-      "package": "com.apexagencyhub.medisync"
+      "package": "com.apexagencyhub.medisync",
+      "permissions": [
+        "CAMERA",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "READ_MEDIA_IMAGES"
+      ]
+    },
+    "extra": {
+      "apiBaseUrl": "http://127.0.0.1:4200",
+      "eas": {
+        "projectId": "medisync-global-production-mobile"
+      }
     }
   }
 }

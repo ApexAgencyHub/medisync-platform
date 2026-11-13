@@ -15,6 +15,10 @@ import {
 } from "./features/directory/index.js";
 import { registerUserRecoveryRoutes } from "./features/user-recovery/index.js";
 import { registerPharmacyCommerceRoutes } from "./features/pharmacy-commerce/index.js";
+import {
+  registerApiRateLimiterHook,
+  registerSystemOpsRoutes,
+} from "./features/system-ops/index.js";
 import { createDbPool } from "./shared/db/pool.js";
 import { runMigrations } from "./shared/db/migrate.js";
 import { createRedisClient } from "./shared/redis/client.js";
@@ -34,6 +38,8 @@ export interface BuildServerOptions {
   redis?: Redis;
   runDbMigrations?: boolean;
   seedDemoWorld?: boolean;
+  rateLimitMaxPerMinute?: number;
+  rateLimitKeyPrefix?: string;
 }
 
 export async function buildApiServer(
@@ -67,6 +73,22 @@ export async function buildApiServer(
 
   const s3Config = options.s3Config ?? DEFAULT_DEV_S3_CONFIG;
   await ensureS3BucketExists(s3Config);
+
+  const envRateLimit = Number.parseInt(
+    process.env.RATE_LIMIT_MAX_PER_MIN ?? "600",
+    10,
+  );
+  const maxRequestsPerMinute =
+    options.rateLimitMaxPerMinute ??
+    (Number.isFinite(envRateLimit) && envRateLimit > 0 ? envRateLimit : 600);
+
+  registerApiRateLimiterHook(app, {
+    redis,
+    maxRequestsPerMinute,
+    ...(options.rateLimitKeyPrefix
+      ? { keyPrefix: options.rateLimitKeyPrefix }
+      : {}),
+  });
 
   await registerFoundationRoutes(app, {
     pool,
@@ -117,6 +139,7 @@ export async function buildApiServer(
     authSecret: options.authSecret,
     s3Config,
   });
+  await registerSystemOpsRoutes(app, { pool, redis });
 
   if (options.seedDemoWorld) {
     await seedRealisticWorld(pool, redis, options.authSecret);

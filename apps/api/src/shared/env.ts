@@ -23,6 +23,7 @@ const ApiEnvSchema = z.object({
     .min(16)
     .default("medisync-dev-s3-secret-key-min-32-chars"),
   S3_PRESIGN_EXPIRES_SECONDS: z.coerce.number().int().min(60).max(86400).default(900),
+  RATE_LIMIT_MAX_PER_MIN: z.coerce.number().int().min(10).max(10000).default(600),
 });
 
 export type ApiEnv = z.infer<typeof ApiEnvSchema>;

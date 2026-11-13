@@ -23,6 +23,11 @@ import {
   MapDispatchScreen,
   type MobileTabId,
 } from "./screens/SliceTabScreens";
+import { PharmacyScreen } from "./screens/PharmacyScreen";
+import {
+  NativeClinicalPanel,
+  NativeMapDriverPanel,
+} from "./screens/NativeCapabilitiesPanel";
 
 export interface MobileShellProps {
   countryCode?: string;
@@ -35,6 +40,7 @@ const MOBILE_TABS: ReadonlyArray<{ id: MobileTabId; label: string }> = [
   { id: "map", label: "Map" },
   { id: "booking", label: "Booking" },
   { id: "clinical", label: "Clinical" },
+  { id: "pharmacy", label: "Pharmacy" },
   { id: "admin", label: "Admin" },
 ];
 
@@ -219,8 +225,19 @@ export function MobileAppShell({
         />
       ) : null}
 
+      {activeTab === "map" ? (
+        <NativeMapDriverPanel pack={activePack} user={initialUser} />
+      ) : null}
+
+      {activeTab === "pharmacy" ? (
+        <PharmacyScreen pack={activePack} user={initialUser} />
+      ) : null}
+
       {activeTab === "clinical" ? (
-        <ClinicalScreen pack={activePack} user={initialUser} />
+        <>
+          <ClinicalScreen pack={activePack} user={initialUser} />
+          <NativeClinicalPanel pack={activePack} user={initialUser} />
+        </>
       ) : null}
 
       {activeTab === "admin" ? (

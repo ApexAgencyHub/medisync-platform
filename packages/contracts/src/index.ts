@@ -11,3 +11,4 @@ export * from "./admin-ops.js";
 export * from "./media.js";
 export * from "./directory.js";
 export * from "./pharmacy-commerce.js";
+export * from "./system-ops.js";

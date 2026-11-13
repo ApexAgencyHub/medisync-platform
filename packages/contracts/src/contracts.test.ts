@@ -13,7 +13,9 @@ import {
   FacilityListQuerySchema,
   FacilityViewportQuerySchema,
   MAX_CLINICAL_UPLOAD_BYTES,
+  MobileTelemetryHeartbeatSchema,
   NearbyDriversQuerySchema,
+  PlatformMetricsResponseSchema,
   PresignClinicalUploadSchema,
   RegisterUserSchema,
   RequestVerificationCodeSchema,
@@ -265,5 +267,38 @@ describe("@medisync/contracts", () => {
       code: "abc",
     });
     expect(invalidOtp.success).toBe(false);
+  });
+
+  it("validates platform metrics & mobile telemetry heartbeat schemas", () => {
+    const metrics = PlatformMetricsResponseSchema.parse({
+      service: "medisync-api",
+      version: "0.1.0",
+      timestamp: new Date().toISOString(),
+      uptimeSeconds: 42.5,
+      dependencies: {
+        postgres: { status: "OK", latencyMs: 1.4 },
+        redis: { status: "OK", latencyMs: 0.8 },
+      },
+      counts: {
+        users: 10,
+        verifiedFacilities: 8,
+        activeDispatches: 2,
+        pharmacyOrders: 4,
+        clinicalMediaObjects: 3,
+      },
+    });
+    expect(metrics.dependencies.postgres.status).toBe("OK");
+
+    const heartbeat = MobileTelemetryHeartbeatSchema.parse({
+      platform: "ios",
+      appVersion: "2.0.0",
+      countryCode: "MA",
+      capabilities: {
+        cameraQr: true,
+        backgroundLocation: true,
+        binaryMediaPicker: true,
+      },
+    });
+    expect(heartbeat.appVersion).toBe("2.0.0");
   });
 });

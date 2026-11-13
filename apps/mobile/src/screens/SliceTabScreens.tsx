@@ -17,7 +17,7 @@ import {
 import { validateFacilityLicense } from "@medisync/country-packs";
 import { mobileTheme } from "../theme";
 
-export type MobileTabId = "map" | "booking" | "clinical" | "admin";
+export type MobileTabId = "map" | "booking" | "clinical" | "pharmacy" | "admin";
 
 interface SharedTabProps {
   pack: CountryPack;
