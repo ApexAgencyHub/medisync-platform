@@ -110,11 +110,40 @@ for (const vp of VIEWPORTS) {
     const hasOverflowBooking = await page.evaluate(
       () => document.documentElement.scrollWidth > window.innerWidth,
     );
+    expect(hasOverflowBooking, "Horizontal scroll overflow on /booking").toBe(
+      false,
+    );
+
+    // Navigate from /booking to Slice 4 Clinical Care & Pharmacy Workspace (/clinical)
+    await page.getByRole("link", { name: "Clinical", exact: true }).click();
+    await expect(
+      page.getByRole("heading", {
+        name: /Clinical Care, QR E-Prescriptions & Direct S3 Labs/i,
+      }),
+    ).toBeVisible();
+
+    await page
+      .getByRole("tab", { name: /Pharmacy QR Dispense/i })
+      .click();
+    await expect(
+      page.getByText(/Pharmacy QR Verification & Atomic Dispensing/i),
+    ).toBeVisible();
+
+    await page
+      .getByRole("tab", { name: /Diagnostic Labs & S3 Media/i })
+      .click();
+    await expect(
+      page.getByLabel(/Allowed Clinical MIME/i),
+    ).toContainText("application/pdf");
+
+    const hasOverflowClinical = await page.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth,
+    );
 
     expect(pageErrors, "Unexpected uncaught page errors").toEqual([]);
     expect(consoleErrors, "Unexpected console.error logs").toEqual([]);
     expect(badResponses, "Unexpected >= 400 HTTP responses").toEqual([]);
-    expect(hasOverflowBooking, "Horizontal scroll overflow on /booking").toBe(
+    expect(hasOverflowClinical, "Horizontal scroll overflow on /clinical").toBe(
       false,
     );
   });

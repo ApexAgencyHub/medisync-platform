@@ -9,6 +9,14 @@ const server = await buildApiServer({
   corsOrigins: env.CORS_ORIGINS.split(",")
     .map((s) => s.trim())
     .filter(Boolean),
+  s3Config: {
+    endpoint: env.S3_ENDPOINT,
+    region: env.S3_REGION,
+    bucket: env.S3_BUCKET,
+    accessKeyId: env.S3_ACCESS_KEY_ID,
+    secretAccessKey: env.S3_SECRET_ACCESS_KEY,
+    expiresInSeconds: env.S3_PRESIGN_EXPIRES_SECONDS,
+  },
   runDbMigrations: true,
 });
 
