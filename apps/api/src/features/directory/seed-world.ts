@@ -5,6 +5,7 @@ import type { FacilityKind, UserRole } from "@medisync/contracts";
 import { hashPassword } from "../foundation/index.js";
 import { signPrescriptionQr } from "../clinical-pharmacy-labs/index.js";
 import { upsertDriverLocation } from "../maps-dispatch/index.js";
+import { seedDefaultPharmacyProducts } from "../pharmacy-commerce/index.js";
 import { SEEDED_DEMO_PASSWORD } from "./pg-store.js";
 
 interface SeedFacilitySpec {
@@ -682,6 +683,8 @@ export async function seedRealisticWorld(
       );
     }
   }
+
+  await seedDefaultPharmacyProducts(pool);
 
   return {
     facilitiesSeeded: SEED_FACILITIES.length,

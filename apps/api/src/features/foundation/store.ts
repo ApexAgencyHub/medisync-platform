@@ -93,6 +93,9 @@ export async function insertUser(
          role,
          country_code AS "countryCode",
          facility_id AS "facilityId",
+         email_verified AS "emailVerified",
+         phone,
+         phone_verified AS "phoneVerified",
          to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"`,
       [
         input.email.trim().toLowerCase(),
@@ -127,6 +130,9 @@ export async function findUserByEmail(
        country_code AS "countryCode",
        facility_id AS "facilityId",
        avatar_object_key AS "avatarObjectKey",
+       email_verified AS "emailVerified",
+       phone,
+       phone_verified AS "phoneVerified",
        to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"
      FROM users
      WHERE email = $1
@@ -153,6 +159,9 @@ export async function findUserById(
        country_code AS "countryCode",
        facility_id AS "facilityId",
        avatar_object_key AS "avatarObjectKey",
+       email_verified AS "emailVerified",
+       phone,
+       phone_verified AS "phoneVerified",
        to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"
      FROM users
      WHERE id = $1

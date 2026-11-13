@@ -1,5 +1,9 @@
+"use client";
+
 import Link from "next/link";
 import { BrandMark } from "./BrandMark";
+import { LocaleTogglePill } from "../i18n/LocaleTogglePill";
+import { useLocale } from "../i18n/locale-store";
 
 export type AppRouteKey =
   | "/"
@@ -7,20 +11,22 @@ export type AppRouteKey =
   | "/map"
   | "/booking"
   | "/clinical"
+  | "/pharmacy"
   | "/admin";
 
 interface NavItem {
   href: AppRouteKey;
-  label: string;
+  labelKey: string;
 }
 
 const NAV_ITEMS: readonly NavItem[] = [
-  { href: "/", label: "Overview" },
-  { href: "/map", label: "Live Map" },
-  { href: "/booking", label: "Booking" },
-  { href: "/clinical", label: "Clinical" },
-  { href: "/admin", label: "Admin" },
-  { href: "/portal", label: "Portal" },
+  { href: "/", labelKey: "nav.overview" },
+  { href: "/map", labelKey: "nav.map" },
+  { href: "/booking", labelKey: "nav.booking" },
+  { href: "/clinical", labelKey: "nav.clinical" },
+  { href: "/pharmacy", labelKey: "nav.pharmacy" },
+  { href: "/admin", labelKey: "nav.admin" },
+  { href: "/portal", labelKey: "nav.portal" },
 ];
 
 interface AppHeaderProps {
@@ -29,6 +35,8 @@ interface AppHeaderProps {
 }
 
 export function AppHeader({ activeRoute, statusPill }: AppHeaderProps) {
+  const { t } = useLocale();
+
   return (
     <header className="border-b border-slate-200 bg-white">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3.5 sm:px-6">
@@ -46,6 +54,8 @@ export function AppHeader({ activeRoute, statusPill }: AppHeaderProps) {
             </span>
           ) : null}
 
+          <LocaleTogglePill />
+
           {NAV_ITEMS.map((item) => {
             const isActive = item.href === activeRoute;
             return (
@@ -59,7 +69,7 @@ export function AppHeader({ activeRoute, statusPill }: AppHeaderProps) {
                     : "inline-flex min-h-[38px] items-center whitespace-nowrap rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition-colors hover:border-teal-700 hover:text-teal-800 sm:px-3"
                 }
               >
-                {item.label}
+                {t(item.labelKey)}
               </Link>
             );
           })}

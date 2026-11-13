@@ -13,6 +13,8 @@ import {
   registerDirectoryRoutes,
   seedRealisticWorld,
 } from "./features/directory/index.js";
+import { registerUserRecoveryRoutes } from "./features/user-recovery/index.js";
+import { registerPharmacyCommerceRoutes } from "./features/pharmacy-commerce/index.js";
 import { createDbPool } from "./shared/db/pool.js";
 import { runMigrations } from "./shared/db/migrate.js";
 import { createRedisClient } from "./shared/redis/client.js";
@@ -100,6 +102,18 @@ export async function buildApiServer(
   });
   await registerDirectoryRoutes(app, {
     pool,
+    authSecret: options.authSecret,
+    s3Config,
+  });
+  await registerUserRecoveryRoutes(app, {
+    pool,
+    redis,
+    authSecret: options.authSecret,
+    s3Config,
+  });
+  await registerPharmacyCommerceRoutes(app, {
+    pool,
+    redis,
     authSecret: options.authSecret,
     s3Config,
   });

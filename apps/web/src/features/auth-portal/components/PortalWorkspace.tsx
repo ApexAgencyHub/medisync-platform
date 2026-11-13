@@ -6,6 +6,7 @@ import {
   readStoredSession,
   writeStoredSession,
 } from "@/shared/auth/session-storage";
+import { useLocale } from "@/shared/i18n/locale-store";
 import {
   ALLOWED_AVATAR_MIME_TYPES,
   ALLOWED_CERTIFICATION_MIME_TYPES,
@@ -58,14 +59,17 @@ import {
   UserPlus,
 } from "lucide-react";
 import {
+  confirmVerificationCode,
   createFacility,
   listFacilities,
   loginUser,
   registerUser,
+  requestVerificationCode,
+  resetPasswordWithCode,
   verifyFacilityStatus,
 } from "../api-client";
 
-type PortalTab = "signin" | "register" | "facility";
+type PortalTab = "signin" | "register" | "facility" | "recovery";
 
 interface PortalWorkspaceProps {
   packs: readonly CountryPack[];
@@ -91,6 +95,7 @@ const FACILITY_KIND_LABELS: Record<FacilityKind, string> = {
 };
 
 export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
+  const { t } = useLocale();
   const defaultPackCode = packs[0]?.code ?? "INTL";
   const [activeTab, setActiveTab] = useState<PortalTab>("signin");
   const [selectedCountry, setSelectedCountry] = useState<string>(defaultPackCode);
@@ -163,6 +168,18 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
     Record<string, FacilityMediaDocument[]>
   >({});
   const [previewMedia, setPreviewMedia] = useState<PreviewableMediaItem | null>(
+    null,
+  );
+
+  // Account Verification & Password Recovery State
+  const [recoveryEmail, setRecoveryEmail] = useState("");
+  const [recoveryPhone, setRecoveryPhone] = useState("");
+  const [recoveryPurpose, setRecoveryPurpose] = useState<
+    "VERIFY_EMAIL" | "VERIFY_PHONE" | "RESET_PASSWORD"
+  >("VERIFY_EMAIL");
+  const [recoveryOtpCode, setRecoveryOtpCode] = useState("");
+  const [recoveryNewPassword, setRecoveryNewPassword] = useState("");
+  const [recoveryPreviewHint, setRecoveryPreviewHint] = useState<string | null>(
     null,
   );
 
@@ -337,6 +354,96 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
     setStatusMessage({
       tone: "success",
       text: `Uploaded ${uploadRes.confirmed.document.fileName} for ops review.`,
+    });
+  }
+
+  async function handleRequestRecoveryOtp() {
+    const email = recoveryEmail.trim() || currentUser?.email || "";
+    if (!email) {
+      setStatusMessage({ tone: "error", text: "Enter account email first." });
+      return;
+    }
+    setBusy(true);
+    setRecoveryPreviewHint(null);
+    const res = await requestVerificationCode(apiBaseUrl, {
+      email,
+      purpose: recoveryPurpose,
+      ...(recoveryPurpose === "VERIFY_PHONE" && recoveryPhone.trim()
+        ? { phone: recoveryPhone.trim() }
+        : {}),
+    });
+    setBusy(false);
+
+    if (!res.ok) {
+      setStatusMessage({ tone: "error", text: `OTP request error: ${res.error}` });
+      return;
+    }
+
+    if (res.data.devPreviewCode) {
+      setRecoveryPreviewHint(res.data.devPreviewCode);
+      setRecoveryOtpCode(res.data.devPreviewCode);
+    }
+    setStatusMessage({
+      tone: "success",
+      text: `Verification code dispatched via ${res.data.deliveryChannel} (expires in ${res.data.expiresInMinutes}m).`,
+    });
+  }
+
+  async function handleSubmitRecoveryAction(e: FormEvent) {
+    e.preventDefault();
+    const email = recoveryEmail.trim() || currentUser?.email || "";
+    if (!email) {
+      setStatusMessage({ tone: "error", text: "Enter account email first." });
+      return;
+    }
+
+    setBusy(true);
+    if (recoveryPurpose === "RESET_PASSWORD") {
+      const res = await resetPasswordWithCode(apiBaseUrl, {
+        email,
+        code: recoveryOtpCode.trim(),
+        newPassword: recoveryNewPassword,
+      });
+      setBusy(false);
+      if (!res.ok) {
+        setStatusMessage({ tone: "error", text: `Password reset failed: ${res.error}` });
+        return;
+      }
+      setRecoveryOtpCode("");
+      setRecoveryNewPassword("");
+      setRecoveryPreviewHint(null);
+      setStatusMessage({
+        tone: "success",
+        text: "Password updated cleanly. Sign in with your new credentials.",
+      });
+      setActiveTab("signin");
+      setLoginEmail(email);
+      return;
+    }
+
+    const res = await confirmVerificationCode(apiBaseUrl, {
+      email,
+      code: recoveryOtpCode.trim(),
+      purpose: recoveryPurpose,
+      ...(recoveryPurpose === "VERIFY_PHONE" && recoveryPhone.trim()
+        ? { phone: recoveryPhone.trim() }
+        : {}),
+    });
+    setBusy(false);
+    if (!res.ok) {
+      setStatusMessage({ tone: "error", text: `Verification failed: ${res.error}` });
+      return;
+    }
+
+    if (sessionToken && currentUser?.id === res.data.user.id) {
+      setCurrentUser(res.data.user);
+      writeStoredSession({ token: sessionToken, user: res.data.user });
+    }
+    setRecoveryOtpCode("");
+    setRecoveryPreviewHint(null);
+    setStatusMessage({
+      tone: "success",
+      text: `${recoveryPurpose === "VERIFY_EMAIL" ? "Email" : "Phone"} verified cleanly.`,
     });
   }
 
@@ -667,7 +774,7 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
           <div
             role="tablist"
             aria-label="Portal workflow modes"
-            className="grid grid-cols-3 gap-2 rounded-xl bg-slate-100 p-1"
+            className="grid grid-cols-2 gap-2 rounded-xl bg-slate-100 p-1 sm:grid-cols-4"
           >
             <button
               type="button"
@@ -710,6 +817,25 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
             >
               <Building2 className="h-4 w-4 shrink-0" aria-hidden="true" />
               <span>Onboard Facility</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "recovery"}
+              onClick={() => {
+                setActiveTab("recovery");
+                if (currentUser?.email && !recoveryEmail) {
+                  setRecoveryEmail(currentUser.email);
+                }
+              }}
+              className={`flex min-h-[44px] items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition-colors sm:text-sm ${
+                activeTab === "recovery"
+                  ? "bg-white text-slate-900 shadow-xs"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              <ShieldCheck className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span>{t("portal.recoveryTab")}</span>
             </button>
           </div>
 
@@ -1072,6 +1198,155 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
               </button>
             </form>
           ) : null}
+
+          {activeTab === "recovery" ? (
+            <form
+              onSubmit={(e) => void handleSubmitRecoveryAction(e)}
+              className="mt-6 space-y-4"
+            >
+              <div className="grid gap-3 sm:grid-cols-3">
+                <button
+                  type="button"
+                  onClick={() => setRecoveryPurpose("VERIFY_EMAIL")}
+                  className={`rounded-xl border px-3 py-2 text-xs font-semibold ${
+                    recoveryPurpose === "VERIFY_EMAIL"
+                      ? "border-teal-800 bg-teal-50 text-teal-900"
+                      : "border-slate-200 bg-white text-slate-700"
+                  }`}
+                >
+                  Verify Email
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRecoveryPurpose("VERIFY_PHONE")}
+                  className={`rounded-xl border px-3 py-2 text-xs font-semibold ${
+                    recoveryPurpose === "VERIFY_PHONE"
+                      ? "border-teal-800 bg-teal-50 text-teal-900"
+                      : "border-slate-200 bg-white text-slate-700"
+                  }`}
+                >
+                  Verify SMS Phone
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRecoveryPurpose("RESET_PASSWORD")}
+                  className={`rounded-xl border px-3 py-2 text-xs font-semibold ${
+                    recoveryPurpose === "RESET_PASSWORD"
+                      ? "border-teal-800 bg-teal-50 text-teal-900"
+                      : "border-slate-200 bg-white text-slate-700"
+                  }`}
+                >
+                  Reset Password
+                </button>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="rec-email"
+                  className="block text-xs font-semibold uppercase tracking-wider text-slate-700"
+                >
+                  Account Email
+                </label>
+                <input
+                  id="rec-email"
+                  type="email"
+                  required
+                  value={recoveryEmail}
+                  onChange={(e) => setRecoveryEmail(e.target.value)}
+                  placeholder="patient.ma@medisync.global"
+                  className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm"
+                />
+              </div>
+
+              {recoveryPurpose === "VERIFY_PHONE" ? (
+                <div>
+                  <label
+                    htmlFor="rec-phone"
+                    className="block text-xs font-semibold uppercase tracking-wider text-slate-700"
+                  >
+                    Mobile Number (E.164)
+                  </label>
+                  <input
+                    id="rec-phone"
+                    type="tel"
+                    required
+                    value={recoveryPhone}
+                    onChange={(e) => setRecoveryPhone(e.target.value)}
+                    placeholder="+212661223344"
+                    className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm font-mono-tabular"
+                  />
+                </div>
+              ) : null}
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void handleRequestRecoveryOtp()}
+                  className="min-h-[40px] rounded-xl border border-teal-700 bg-teal-50 px-4 py-2 text-xs font-semibold text-teal-900 hover:bg-teal-100"
+                >
+                  Send 6-Digit OTP Code
+                </button>
+                {recoveryPreviewHint ? (
+                  <span className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 font-mono-tabular text-xs font-bold text-amber-900">
+                    Dev OTP: {recoveryPreviewHint}
+                  </span>
+                ) : null}
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label
+                    htmlFor="rec-otp"
+                    className="block text-xs font-semibold uppercase tracking-wider text-slate-700"
+                  >
+                    6-Digit OTP Code
+                  </label>
+                  <input
+                    id="rec-otp"
+                    type="text"
+                    required
+                    pattern="[0-9]{6}"
+                    value={recoveryOtpCode}
+                    onChange={(e) => setRecoveryOtpCode(e.target.value)}
+                    placeholder="123456"
+                    className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 font-mono-tabular text-sm"
+                  />
+                </div>
+
+                {recoveryPurpose === "RESET_PASSWORD" ? (
+                  <div>
+                    <label
+                      htmlFor="rec-new-pass"
+                      className="block text-xs font-semibold uppercase tracking-wider text-slate-700"
+                    >
+                      New Password
+                    </label>
+                    <input
+                      id="rec-new-pass"
+                      type="password"
+                      required
+                      minLength={8}
+                      value={recoveryNewPassword}
+                      onChange={(e) => setRecoveryNewPassword(e.target.value)}
+                      placeholder="Min 8 characters"
+                      className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm"
+                    />
+                  </div>
+                ) : null}
+              </div>
+
+              <button
+                type="submit"
+                disabled={busy}
+                className="min-h-[44px] w-full rounded-xl bg-teal-800 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-teal-900 disabled:opacity-60"
+              >
+                {recoveryPurpose === "RESET_PASSWORD"
+                  ? "Confirm OTP & Reset Password"
+                  : "Confirm Verification Code"}
+              </button>
+            </form>
+          ) : null}
         </section>
 
         {/* Right Column: Session State & Scoped Registry */}
@@ -1115,6 +1390,26 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
                       <p className="font-mono-tabular text-xs font-semibold text-teal-800">
                         {currentUser.role} · {currentUser.countryCode}
                       </p>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        <span
+                          className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                            currentUser.emailVerified
+                              ? "bg-teal-100 text-teal-900"
+                              : "bg-slate-200 text-slate-700"
+                          }`}
+                        >
+                          {currentUser.emailVerified ? "Email Verified" : "Email Unverified"}
+                        </span>
+                        <span
+                          className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                            currentUser.phoneVerified
+                              ? "bg-teal-100 text-teal-900"
+                              : "bg-slate-200 text-slate-700"
+                          }`}
+                        >
+                          {currentUser.phoneVerified ? "Phone Verified" : "Phone Unverified"}
+                        </span>
+                      </div>
                     </div>
                   </div>
 
