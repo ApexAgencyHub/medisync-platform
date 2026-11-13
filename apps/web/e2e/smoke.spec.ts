@@ -46,14 +46,40 @@ for (const vp of VIEWPORTS) {
     await expect(page.getByText(/Active CountryPack: Morocco/i)).toBeVisible();
     await expect(page.getByText(/141 \/ 15/)).toBeVisible();
 
-    const hasHorizontalOverflow = await page.evaluate(
+    const hasOverflowHome = await page.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth,
+    );
+    expect(hasOverflowHome, "Horizontal scroll overflow on /").toBe(false);
+
+    // Navigate to Slice 1 Clinical & Ops Access Portal (/portal)
+    await page.getByRole("link", { name: "Clinical Portal" }).click();
+    await expect(
+      page.getByRole("heading", { name: /Clinical & Ops Access Portal/i }),
+    ).toBeVisible();
+
+    // Switch CountryPack to Morocco (MA) and test tabs + live license regex validation
+    await page.getByRole("button", { name: "MA", exact: true }).click();
+    await expect(page.getByText(/Jurisdiction:\s*Morocco/i)).toBeVisible();
+
+    await page.getByRole("tab", { name: /Register/i }).click();
+    await expect(page.getByLabel("Ecosystem Actor Role")).toBeVisible();
+    await expect(page.getByLabel("Ecosystem Actor Role")).not.toContainText("OPS_ADMIN");
+
+    await page.getByRole("tab", { name: /Onboard Facility/i }).click();
+    const licenseInput = page.getByLabel(/Ministry License \(MA\)/i);
+    await licenseInput.fill("BADFORMAT");
+    await expect(page.getByText("Invalid Jurisdiction Format")).toBeVisible();
+    await licenseInput.fill("MA-CLIN-90812");
+    await expect(page.getByText("Pattern Valid")).toBeVisible();
+
+    const hasOverflowPortal = await page.evaluate(
       () => document.documentElement.scrollWidth > window.innerWidth,
     );
 
     expect(pageErrors, "Unexpected uncaught page errors").toEqual([]);
     expect(consoleErrors, "Unexpected console.error logs").toEqual([]);
     expect(badResponses, "Unexpected >= 400 HTTP responses").toEqual([]);
-    expect(hasHorizontalOverflow, "Horizontal scroll overflow detected").toBe(
+    expect(hasOverflowPortal, "Horizontal scroll overflow on /portal").toBe(
       false,
     );
   });
