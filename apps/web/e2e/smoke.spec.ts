@@ -139,11 +139,37 @@ for (const vp of VIEWPORTS) {
     const hasOverflowClinical = await page.evaluate(
       () => document.documentElement.scrollWidth > window.innerWidth,
     );
+    expect(hasOverflowClinical, "Horizontal scroll overflow on /clinical").toBe(
+      false,
+    );
+
+    // Navigate from /clinical to Slice 5 Master Operations & Compliance Center (/admin)
+    await page.getByRole("link", { name: "Admin", exact: true }).click();
+    await expect(
+      page.getByRole("heading", {
+        name: /Master Operations & Compliance Center/i,
+      }),
+    ).toBeVisible();
+
+    await page.getByRole("button", { name: "MA", exact: true }).click();
+    await expect(page.getByText("MAD", { exact: true })).toBeVisible();
+    await page.getByRole("tab", { name: /Disputes/i }).click();
+    await expect(
+      page.getByRole("heading", { name: /File Governance or SLA Dispute/i }),
+    ).toBeVisible();
+    await page.getByRole("tab", { name: /Audit Trail/i }).click();
+    await expect(
+      page.getByRole("heading", { name: /Filterable Immutable Audit Stream/i }),
+    ).toBeVisible();
+
+    const hasOverflowAdmin = await page.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth,
+    );
 
     expect(pageErrors, "Unexpected uncaught page errors").toEqual([]);
     expect(consoleErrors, "Unexpected console.error logs").toEqual([]);
     expect(badResponses, "Unexpected >= 400 HTTP responses").toEqual([]);
-    expect(hasOverflowClinical, "Horizontal scroll overflow on /clinical").toBe(
+    expect(hasOverflowAdmin, "Horizontal scroll overflow on /admin").toBe(
       false,
     );
   });

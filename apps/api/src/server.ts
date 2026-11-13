@@ -7,6 +7,7 @@ import { registerCountryPackRoutes } from "./features/country-packs/index.js";
 import { registerMapsDispatchRoutes } from "./features/maps-dispatch/index.js";
 import { registerBookingRoutes } from "./features/booking/index.js";
 import { registerClinicalRoutes } from "./features/clinical-pharmacy-labs/index.js";
+import { registerAdminOpsRoutes } from "./features/admin-ops/index.js";
 import { createDbPool } from "./shared/db/pool.js";
 import { runMigrations } from "./shared/db/migrate.js";
 import { createRedisClient } from "./shared/redis/client.js";
@@ -74,6 +75,11 @@ export async function buildApiServer(
     pool,
     authSecret: options.authSecret,
     s3Config: options.s3Config ?? DEFAULT_DEV_S3_CONFIG,
+  });
+  await registerAdminOpsRoutes(app, {
+    pool,
+    redis,
+    authSecret: options.authSecret,
   });
 
   if (ownsPool || ownsRedis) {

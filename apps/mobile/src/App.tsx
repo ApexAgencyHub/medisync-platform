@@ -1,50 +1,342 @@
-import { StyleSheet, Text, View } from "react-native";
-import { UserRoleSchema } from "@medisync/contracts";
-import { resolveCountryPack } from "@medisync/country-packs";
+import { useState } from "react";
+import {
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
+import {
+  CreateDispatchRequestSchema,
+  CreateDisputeSchema,
+  type AuthenticatedUser,
+  type DispatchUrgency,
+  type DisputeCategory,
+  type VisitMode,
+} from "@medisync/contracts";
+import { listCountryPacks, resolveCountryPack } from "@medisync/country-packs";
 import { mobileTheme } from "./theme";
+import {
+  AdminOpsScreen,
+  BookingScreen,
+  ClinicalScreen,
+  MapDispatchScreen,
+  type MobileTabId,
+} from "./screens/SliceTabScreens";
 
 export interface MobileShellProps {
   countryCode?: string;
+  apiBaseUrl?: string;
+  initialUser?: AuthenticatedUser | null;
+  authToken?: string | null;
 }
 
-export function MobileAppShell({ countryCode = "INTL" }: MobileShellProps) {
-  const pack = resolveCountryPack(countryCode);
+const MOBILE_TABS: ReadonlyArray<{ id: MobileTabId; label: string }> = [
+  { id: "map", label: "Map" },
+  { id: "booking", label: "Booking" },
+  { id: "clinical", label: "Clinical" },
+  { id: "admin", label: "Admin" },
+];
+
+export function MobileAppShell({
+  countryCode = "INTL",
+  apiBaseUrl = "http://127.0.0.1:4100",
+  initialUser = null,
+  authToken = null,
+}: MobileShellProps) {
+  const packs = listCountryPacks();
+  const [selectedCountry, setSelectedCountry] = useState(countryCode);
+  const [activeTab, setActiveTab] = useState<MobileTabId>("map");
+
+  const [urgency, setUrgency] = useState<DispatchUrgency>("URGENT");
+  const [pickupAddress, setPickupAddress] = useState("");
+  const [visitMode, setVisitMode] = useState<VisitMode>("IN_PERSON");
+  const [licenseProbe, setLicenseProbe] = useState("");
+  const [disputeCategory, setDisputeCategory] =
+    useState<DisputeCategory>("DISPATCH_DELAY");
+  const [disputeSubject, setDisputeSubject] = useState("");
+  const [statusBanner, setStatusBanner] = useState<string | null>(null);
+
+  const activePack = resolveCountryPack(selectedCountry);
+
+  async function submitValidatedDispatch() {
+    const parsed = CreateDispatchRequestSchema.safeParse({
+      pickupLat: activePack.code === "MA" ? 33.5731 : 40.7128,
+      pickupLng: activePack.code === "MA" ? -7.5898 : -74.006,
+      pickupAddress,
+      urgency,
+    });
+    if (!parsed.success) {
+      setStatusBanner("Enter a pickup address (minimum 4 characters).");
+      return;
+    }
+
+    if (!authToken) {
+      setStatusBanner(
+        `Dispatch contract validated for ${activePack.code} (${urgency}); configure authToken to transmit to ${apiBaseUrl}.`,
+      );
+      return;
+    }
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/v1/dispatch/requests`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify(parsed.data),
+      });
+      setStatusBanner(
+        response.ok
+          ? "Emergency dispatch request queued via API."
+          : `Dispatch rejected (${response.status}).`,
+      );
+    } catch {
+      setStatusBanner(`Network unreachable at ${apiBaseUrl}.`);
+    }
+  }
+
+  async function submitValidatedDispute() {
+    const parsed = CreateDisputeSchema.safeParse({
+      category: disputeCategory,
+      subject: disputeSubject,
+      description: `Submitted from MediSync mobile shell under ${activePack.code}.`,
+    });
+    if (!parsed.success) {
+      setStatusBanner("Dispute subject must be at least 3 characters.");
+      return;
+    }
+
+    if (!authToken) {
+      setStatusBanner(
+        `Dispute payload validated (${disputeCategory}); configure authToken to post to ${apiBaseUrl}.`,
+      );
+      return;
+    }
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/v1/disputes`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify(parsed.data),
+      });
+      setStatusBanner(
+        response.ok
+          ? "Dispute escalated to central admin desk."
+          : `Dispute rejected (${response.status}).`,
+      );
+    } catch {
+      setStatusBanner(`Network unreachable at ${apiBaseUrl}.`);
+    }
+  }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>MediSync Global</Text>
-      <Text style={styles.subtitle}>
-        Jurisdiction: {pack.name} ({pack.currencyCode}) · Emergency:{" "}
-        {pack.emergencyHotlines.ambulance}
-      </Text>
-      <Text style={styles.meta}>
-        Shared Roles: {UserRoleSchema.options.length} · Direction:{" "}
-        {pack.direction.toUpperCase()}
-      </Text>
-    </View>
+    <ScrollView
+      style={styles.canvas}
+      contentContainerStyle={styles.scrollContent}
+    >
+      <View style={styles.headerCard}>
+        <Text style={styles.brandEyebrow}>MEDISYNC GLOBAL · EXPO SHELL</Text>
+        <Text style={styles.title}>8-Actor Mobile Care & Ops</Text>
+        <Text style={styles.subtitle}>
+          Jurisdiction: {activePack.name} ({activePack.currencyCode}) · Dir:{" "}
+          {activePack.direction.toUpperCase()} · Emergency:{" "}
+          {activePack.emergencyHotlines.ambulance}
+        </Text>
+
+        <View style={styles.countryRow}>
+          {packs.map((pack) => {
+            const active = pack.code === activePack.code;
+            return (
+              <Pressable
+                key={pack.code}
+                onPress={() => setSelectedCountry(pack.code)}
+                style={[styles.countryPill, active && styles.countryPillActive]}
+              >
+                <Text
+                  style={[
+                    styles.countryPillText,
+                    active && styles.countryPillTextActive,
+                  ]}
+                >
+                  {pack.code}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+
+      <View style={styles.tabBar}>
+        {MOBILE_TABS.map((tab) => {
+          const active = tab.id === activeTab;
+          return (
+            <Pressable
+              key={tab.id}
+              onPress={() => setActiveTab(tab.id)}
+              style={[styles.tabButton, active && styles.tabButtonActive]}
+            >
+              <Text
+                style={[styles.tabLabel, active && styles.tabLabelActive]}
+              >
+                {tab.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {statusBanner ? (
+        <View style={styles.banner}>
+          <Text style={styles.bannerText}>{statusBanner}</Text>
+        </View>
+      ) : null}
+
+      {activeTab === "map" ? (
+        <MapDispatchScreen
+          pack={activePack}
+          user={initialUser}
+          urgency={urgency}
+          onUrgencyChange={setUrgency}
+          pickupAddress={pickupAddress}
+          onPickupAddressChange={setPickupAddress}
+          onSubmitDispatch={() => {
+            void submitValidatedDispatch();
+          }}
+        />
+      ) : null}
+
+      {activeTab === "booking" ? (
+        <BookingScreen
+          pack={activePack}
+          user={initialUser}
+          visitMode={visitMode}
+          onVisitModeChange={setVisitMode}
+        />
+      ) : null}
+
+      {activeTab === "clinical" ? (
+        <ClinicalScreen pack={activePack} user={initialUser} />
+      ) : null}
+
+      {activeTab === "admin" ? (
+        <AdminOpsScreen
+          pack={activePack}
+          user={initialUser}
+          licenseProbe={licenseProbe}
+          onLicenseProbeChange={setLicenseProbe}
+          disputeCategory={disputeCategory}
+          onDisputeCategoryChange={setDisputeCategory}
+          disputeSubject={disputeSubject}
+          onDisputeSubjectChange={setDisputeSubject}
+          onSubmitDispute={() => {
+            void submitValidatedDispute();
+          }}
+        />
+      ) : null}
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  canvas: {
     flex: 1,
     backgroundColor: mobileTheme.colors.bgCanvas,
-    padding: mobileTheme.spacing.lg,
-    justifyContent: "center",
+  },
+  scrollContent: {
+    padding: mobileTheme.spacing.md,
+    gap: mobileTheme.spacing.md,
+  },
+  headerCard: {
+    backgroundColor: mobileTheme.colors.bgSurface,
+    borderRadius: mobileTheme.radii.lg,
+    borderWidth: 1,
+    borderColor: mobileTheme.colors.borderSubtle,
+    padding: mobileTheme.spacing.md,
+    gap: mobileTheme.spacing.xs,
+  },
+  brandEyebrow: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.8,
+    color: mobileTheme.colors.brandPrimary,
   },
   title: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: "700",
     color: mobileTheme.colors.inkPrimary,
-    marginBottom: mobileTheme.spacing.sm,
   },
   subtitle: {
-    fontSize: 15,
-    color: mobileTheme.colors.brandPrimary,
-    marginBottom: mobileTheme.spacing.xs,
-  },
-  meta: {
     fontSize: 13,
+    lineHeight: 18,
     color: mobileTheme.colors.inkSecondary,
+  },
+  countryRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: mobileTheme.spacing.xs,
+    marginTop: mobileTheme.spacing.xs,
+  },
+  countryPill: {
+    borderRadius: mobileTheme.radii.sm,
+    borderWidth: 1,
+    borderColor: mobileTheme.colors.borderSubtle,
+    backgroundColor: mobileTheme.colors.bgSubtle,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  countryPillActive: {
+    borderColor: mobileTheme.colors.brandPrimary,
+    backgroundColor: mobileTheme.colors.brandPrimary,
+  },
+  countryPillText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: mobileTheme.colors.inkSecondary,
+  },
+  countryPillTextActive: {
+    color: mobileTheme.colors.bgSurface,
+  },
+  tabBar: {
+    flexDirection: "row",
+    gap: mobileTheme.spacing.xs,
+    backgroundColor: mobileTheme.colors.bgSurface,
+    borderRadius: mobileTheme.radii.md,
+    borderWidth: 1,
+    borderColor: mobileTheme.colors.borderSubtle,
+    padding: mobileTheme.spacing.xs,
+  },
+  tabButton: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: "center",
+    borderRadius: mobileTheme.radii.sm,
+  },
+  tabButtonActive: {
+    backgroundColor: mobileTheme.colors.brandPrimary,
+  },
+  tabLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: mobileTheme.colors.inkSecondary,
+  },
+  tabLabelActive: {
+    color: mobileTheme.colors.bgSurface,
+  },
+  banner: {
+    borderRadius: mobileTheme.radii.md,
+    borderWidth: 1,
+    borderColor: mobileTheme.colors.brandPrimary,
+    backgroundColor: mobileTheme.colors.brandSoft,
+    padding: mobileTheme.spacing.sm,
+  },
+  bannerText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: mobileTheme.colors.inkPrimary,
   },
 });

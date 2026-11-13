@@ -1,6 +1,8 @@
+import Link from "next/link";
 import {
   Activity,
   Ambulance,
+  ArrowUpRight,
   Building2,
   FlaskConical,
   Pill,
@@ -13,6 +15,7 @@ const ECOSYSTEM_PORTALS = [
   {
     role: "Patients & Caregivers",
     slice: "maps-dispatch / booking",
+    href: "/booking",
     summary:
       "Locate clinics, hospitals, and 24/7 pharmacies on the map, book slots, and track live ambulance arrival.",
     icon: Users,
@@ -20,6 +23,7 @@ const ECOSYSTEM_PORTALS = [
   {
     role: "Doctors & Specialists",
     slice: "booking / clinical-records",
+    href: "/clinical",
     summary:
       "Multi-clinic schedules, structured visit notes, digital lab orders, and QR-verified e-prescriptions.",
     icon: Stethoscope,
@@ -27,6 +31,7 @@ const ECOSYSTEM_PORTALS = [
   {
     role: "Clinics & Reception",
     slice: "foundation / booking",
+    href: "/booking",
     summary:
       "Branch discovery profiles, real-time walk-in queue intake, vitals capture, and doctor roster shifts.",
     icon: Building2,
@@ -34,6 +39,7 @@ const ECOSYSTEM_PORTALS = [
   {
     role: "Hospitals & ERs",
     slice: "maps-dispatch",
+    href: "/map",
     summary:
       "Live emergency wait times, ICU/bed availability broadcast, and pre-arrival ambulance handoffs.",
     icon: Activity,
@@ -41,6 +47,7 @@ const ECOSYSTEM_PORTALS = [
   {
     role: "Medical Transport Drivers",
     slice: "maps-dispatch",
+    href: "/map",
     summary:
       "Redis Geo real-time GPS streams, nearest-unit emergency routing, and medical courier dispatches.",
     icon: Ambulance,
@@ -48,6 +55,7 @@ const ECOSYSTEM_PORTALS = [
   {
     role: "Pharmacies",
     slice: "clinical-pharmacy-labs",
+    href: "/clinical",
     summary:
       "On-duty map status, instant QR e-prescription verification, dispensing logs, and home courier handoff.",
     icon: Pill,
@@ -55,6 +63,7 @@ const ECOSYSTEM_PORTALS = [
   {
     role: "Diagnostic Labs & Imaging",
     slice: "clinical-pharmacy-labs",
+    href: "/clinical",
     summary:
       "Digital test orders, home sample pickup scheduling, and presigned direct scan/PDF uploads.",
     icon: FlaskConical,
@@ -62,6 +71,7 @@ const ECOSYSTEM_PORTALS = [
   {
     role: "Operations & License Admins",
     slice: "admin-ops",
+    href: "/admin",
     summary:
       "Facility & medical license verification, manual dispatch overrides, disputes, and immutable audit logs.",
     icon: ShieldAlert,
@@ -81,7 +91,7 @@ export function EcosystemSlicesGrid() {
           </p>
         </div>
         <span className="font-mono-tabular text-xs font-medium text-teal-800">
-          Phase 0 Verified Baseline
+          5 Vertical Slices Verified
         </span>
       </div>
 
@@ -89,25 +99,33 @@ export function EcosystemSlicesGrid() {
         {ECOSYSTEM_PORTALS.map((portal) => {
           const Icon = portal.icon;
           return (
-            <article
+            <Link
               key={portal.role}
-              className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-5 transition-colors hover:border-teal-700/50"
+              href={portal.href}
+              className="group flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-5 transition-colors hover:border-teal-700/60 hover:bg-slate-50/40"
             >
               <div>
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-teal-50 text-teal-800">
-                  <Icon className="h-5 w-5" aria-hidden="true" />
+                <div className="flex items-center justify-between">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-teal-50 text-teal-800">
+                    <Icon className="h-5 w-5" aria-hidden="true" />
+                  </div>
+                  <ArrowUpRight
+                    className="h-4 w-4 text-slate-400 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-teal-800"
+                    aria-hidden="true"
+                  />
                 </div>
-                <h3 className="mt-3 text-sm font-semibold text-slate-900">
+                <h3 className="mt-3 text-sm font-semibold text-slate-900 group-hover:text-teal-900">
                   {portal.role}
                 </h3>
                 <p className="mt-1.5 text-xs leading-relaxed text-slate-600">
                   {portal.summary}
                 </p>
               </div>
-              <div className="mt-4 border-t border-slate-100 pt-2.5 font-mono-tabular text-[11px] text-slate-500">
-                {portal.slice}
+              <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-2.5 font-mono-tabular text-[11px] text-slate-500">
+                <span>{portal.slice}</span>
+                <span className="font-semibold text-teal-800">{portal.href}</span>
               </div>
-            </article>
+            </Link>
           );
         })}
       </div>

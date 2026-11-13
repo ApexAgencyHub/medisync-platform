@@ -17,6 +17,11 @@ import {
 } from "@medisync/contracts";
 import { loginUser } from "@/features/auth-portal";
 import {
+  clearStoredSession,
+  readStoredSession,
+  writeStoredSession,
+} from "@/shared/auth/session-storage";
+import {
   CheckCircle2,
   KeyRound,
   LogOut,
@@ -103,6 +108,16 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
   const [driverLat, setDriverLat] = useState(String(initialCenter.lat));
   const [driverLng, setDriverLng] = useState(String(initialCenter.lng));
   const [driverStatus, setDriverStatus] = useState<DriverStatus>("AVAILABLE");
+
+  useEffect(() => {
+    const stored = readStoredSession();
+    if (stored) {
+      setSessionToken(stored.token);
+      setCurrentUser(stored.user);
+      setSelectedCountry(stored.user.countryCode);
+      setViewport(getPresetForCountry(stored.user.countryCode));
+    }
+  }, []);
 
   // Live Server-Sent Events Subscription (zero setInterval polling)
   useEffect(() => {
@@ -265,6 +280,7 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
       return;
     }
 
+    writeStoredSession(res.data);
     const token = res.data.token;
     const user = res.data.user;
     setSessionToken(token);
@@ -576,6 +592,7 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
                 <button
                   type="button"
                   onClick={() => {
+                    clearStoredSession();
                     setSessionToken(null);
                     setCurrentUser(null);
                     setDrivers([]);

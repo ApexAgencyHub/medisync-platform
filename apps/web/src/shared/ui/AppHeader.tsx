@@ -19,6 +19,7 @@ const NAV_ITEMS: readonly NavItem[] = [
   { href: "/map", label: "Live Map" },
   { href: "/booking", label: "Booking" },
   { href: "/clinical", label: "Clinical" },
+  { href: "/admin", label: "Admin" },
   { href: "/portal", label: "Portal" },
 ];
 

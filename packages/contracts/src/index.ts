@@ -7,3 +7,4 @@ export * from "./facility.js";
 export * from "./dispatch.js";
 export * from "./booking.js";
 export * from "./clinical.js";
+export * from "./admin-ops.js";
