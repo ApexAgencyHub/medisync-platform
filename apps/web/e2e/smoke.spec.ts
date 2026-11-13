@@ -41,7 +41,20 @@ for (const vp of VIEWPORTS) {
     expect(logoLoaded).toBe(true);
     expect(heroLoaded).toBe(true);
 
-    // Interactive check: switch CountryPack to Morocco (MA) and verify RTL + hotline 141
+    // Verify immediate care action launcher above the fold & multilingual toggle
+    await expect(
+      page.getByRole("link", { name: /Find Care on Map/i }),
+    ).toBeVisible();
+    const langGroup = page.getByRole("group", {
+      name: "Interface language selector",
+    });
+    await langGroup.getByRole("button", { name: "FR", exact: true }).click();
+    await expect(
+      page.getByRole("link", { name: /Explorer la carte des soins/i }),
+    ).toBeVisible();
+    await langGroup.getByRole("button", { name: "EN", exact: true }).click();
+
+    // Interactive check: switch CountryPack to Morocco (MA) and verify hotline 141
     await page.getByRole("button", { name: "MA", exact: true }).click();
     await expect(page.getByText(/Active CountryPack: Morocco/i)).toBeVisible();
     await expect(page.getByText(/141 \/ 15/)).toBeVisible();
@@ -51,7 +64,7 @@ for (const vp of VIEWPORTS) {
     );
     expect(hasOverflowHome, "Horizontal scroll overflow on /").toBe(false);
 
-    // Navigate to Slice 1 Clinical & Ops Access Portal (/portal)
+    // Navigate to Clinical & Ops Access Portal (/portal)
     await page.getByRole("link", { name: "Portal", exact: true }).click();
     await expect(
       page.getByRole("heading", { name: /Clinical & Ops Access Portal/i }),
@@ -81,11 +94,24 @@ for (const vp of VIEWPORTS) {
       false,
     );
 
-    // Navigate from /portal to Slice 2 Live Medical Map & Dispatch Console (/map)
+    // Navigate from /portal to Live Medical Map & Dispatch Console (/map)
     await page.getByRole("link", { name: "Live Map", exact: true }).click();
     await expect(
       page.getByRole("heading", { name: /Live Medical Map & Dispatch Console/i }),
     ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /Search This Area/i }),
+    ).toBeVisible();
+
+    // Verify slippy street-map tiles render without broken images
+    await expect
+      .poll(async () =>
+        page
+          .locator('img[src^="/api/map-tiles/"]')
+          .first()
+          .evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0),
+      )
+      .toBe(true);
 
     await page.getByRole("button", { name: "MA", exact: true }).click();
     await expect(page.getByText(/Casablanca Central Metro/i)).toBeVisible();
@@ -97,7 +123,7 @@ for (const vp of VIEWPORTS) {
     );
     expect(hasOverflowMap, "Horizontal scroll overflow on /map").toBe(false);
 
-    // Navigate from /map to Slice 3 Multi-Clinic Booking Engine (/booking)
+    // Navigate from /map to Multi-Clinic Booking Engine (/booking)
     await page.getByRole("link", { name: "Booking", exact: true }).click();
     await expect(
       page.getByRole("heading", {
@@ -116,11 +142,11 @@ for (const vp of VIEWPORTS) {
       false,
     );
 
-    // Navigate from /booking to Slice 4 Clinical Care & Pharmacy Workspace (/clinical)
+    // Navigate from /booking to Clinical Care & Diagnostic Labs Workspace (/clinical)
     await page.getByRole("link", { name: "Clinical", exact: true }).click();
     await expect(
       page.getByRole("heading", {
-        name: /Clinical Care, QR E-Prescriptions & Direct S3 Labs/i,
+        name: /Clinical Care, QR E-Prescriptions & Diagnostic Labs/i,
       }),
     ).toBeVisible();
     await expect(page.locator("select#clin-patient-uuid")).toBeVisible();
@@ -133,7 +159,7 @@ for (const vp of VIEWPORTS) {
     ).toBeVisible();
 
     await page
-      .getByRole("tab", { name: /Diagnostic Labs & S3 Media/i })
+      .getByRole("tab", { name: /Diagnostic Labs & Scans/i })
       .click();
     await expect(
       page.getByLabel(/Allowed Clinical MIME/i),
@@ -141,7 +167,7 @@ for (const vp of VIEWPORTS) {
     await expect(page.locator("#s3-clinical-file")).toBeAttached();
     await expect(page.locator("select#clin-lab-facility")).toBeVisible();
     await expect(
-      page.getByRole("button", { name: /Upload Binary to MinIO S3 Vault/i }),
+      page.getByRole("button", { name: /Upload Diagnostic File/i }),
     ).toBeVisible();
 
     const hasOverflowClinical = await page.evaluate(
@@ -151,7 +177,7 @@ for (const vp of VIEWPORTS) {
       false,
     );
 
-    // Navigate from /clinical to Slice 8 Pharmacy Storefront (/pharmacy)
+    // Navigate from /clinical to Pharmacy Storefront (/pharmacy)
     await page.getByRole("link", { name: "Pharmacy", exact: true }).click();
     await expect(
       page.getByRole("heading", {

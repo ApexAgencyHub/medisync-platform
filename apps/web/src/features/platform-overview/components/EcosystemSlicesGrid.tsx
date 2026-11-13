@@ -1,3 +1,5 @@
+"use client";
+
 import Link from "next/link";
 import {
   Activity,
@@ -10,99 +12,78 @@ import {
   Stethoscope,
   Users,
 } from "lucide-react";
+import { useLocale } from "@/shared/i18n/locale-store";
 
 const ECOSYSTEM_PORTALS = [
   {
-    role: "Patients & Caregivers",
-    slice: "maps-dispatch / booking",
+    id: "patient",
     href: "/booking",
-    summary:
-      "Locate clinics, hospitals, and 24/7 pharmacies on the map, book slots, and track live ambulance arrival.",
     icon: Users,
   },
   {
-    role: "Doctors & Specialists",
-    slice: "booking / clinical-records",
+    id: "doctor",
     href: "/clinical",
-    summary:
-      "Multi-clinic schedules, structured visit notes, digital lab orders, and QR-verified e-prescriptions.",
     icon: Stethoscope,
   },
   {
-    role: "Clinics & Reception",
-    slice: "foundation / booking",
+    id: "clinic",
     href: "/booking",
-    summary:
-      "Branch discovery profiles, real-time walk-in queue intake, vitals capture, and doctor roster shifts.",
     icon: Building2,
   },
   {
-    role: "Hospitals & ERs",
-    slice: "maps-dispatch",
+    id: "hospital",
     href: "/map",
-    summary:
-      "Live emergency wait times, ICU/bed availability broadcast, and pre-arrival ambulance handoffs.",
     icon: Activity,
   },
   {
-    role: "Medical Transport Drivers",
-    slice: "maps-dispatch",
+    id: "driver",
     href: "/map",
-    summary:
-      "Redis Geo real-time GPS streams, nearest-unit emergency routing, and medical courier dispatches.",
     icon: Ambulance,
   },
   {
-    role: "Pharmacies",
-    slice: "clinical-pharmacy-labs",
-    href: "/clinical",
-    summary:
-      "On-duty map status, instant QR e-prescription verification, dispensing logs, and home courier handoff.",
+    id: "pharmacy",
+    href: "/pharmacy",
     icon: Pill,
   },
   {
-    role: "Diagnostic Labs & Imaging",
-    slice: "clinical-pharmacy-labs",
+    id: "lab",
     href: "/clinical",
-    summary:
-      "Digital test orders, home sample pickup scheduling, and presigned direct scan/PDF uploads.",
     icon: FlaskConical,
   },
   {
-    role: "Operations & License Admins",
-    slice: "admin-ops",
+    id: "admin",
     href: "/admin",
-    summary:
-      "Facility & medical license verification, manual dispatch overrides, disputes, and immutable audit logs.",
     icon: ShieldAlert,
   },
 ] as const;
 
 export function EcosystemSlicesGrid() {
+  const { t } = useLocale();
+
   return (
     <section aria-label="Medical Ecosystem Portals" className="space-y-4">
       <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h2 className="text-xl font-bold tracking-tight text-slate-900">
-            Eight-Actor Vertical Slice Architecture
+            {t("ecosystem.heading")}
           </h2>
-          <p className="text-sm text-slate-600">
-            Every portal shares `@medisync/contracts` and `@medisync/country-packs` across Web, iOS, and Android.
-          </p>
+          <p className="text-sm text-slate-600">{t("ecosystem.subtitle")}</p>
         </div>
         <span className="font-mono-tabular text-xs font-medium text-teal-800">
-          5 Vertical Slices Verified
+          {t("ecosystem.verifiedBadge")}
         </span>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {ECOSYSTEM_PORTALS.map((portal) => {
           const Icon = portal.icon;
+          const titleKey = `ecosystem.role.${portal.id}.title`;
+          const summaryKey = `ecosystem.role.${portal.id}.summary`;
           return (
             <Link
-              key={portal.role}
+              key={portal.id}
               href={portal.href}
-              className="group flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-5 transition-colors hover:border-teal-700/60 hover:bg-slate-50/40"
+              className="group flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-5 transition-all hover:border-teal-700/60 hover:bg-slate-50/40 active:scale-[0.99]"
             >
               <div>
                 <div className="flex items-center justify-between">
@@ -115,15 +96,17 @@ export function EcosystemSlicesGrid() {
                   />
                 </div>
                 <h3 className="mt-3 text-sm font-semibold text-slate-900 group-hover:text-teal-900">
-                  {portal.role}
+                  {t(titleKey)}
                 </h3>
                 <p className="mt-1.5 text-xs leading-relaxed text-slate-600">
-                  {portal.summary}
+                  {t(summaryKey)}
                 </p>
               </div>
-              <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-2.5 font-mono-tabular text-[11px] text-slate-500">
-                <span>{portal.slice}</span>
-                <span className="font-semibold text-teal-800">{portal.href}</span>
+              <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-2.5 text-[11px] text-slate-500">
+                <span>{t("ecosystem.openPortal")}</span>
+                <span dir="ltr" className="font-mono-tabular font-semibold text-teal-800">
+                  {portal.href}
+                </span>
               </div>
             </Link>
           );

@@ -25,6 +25,7 @@ import {
   verifyFacilityStatus,
 } from "@/features/auth-portal";
 import { listDispatchRequests } from "@/features/maps-dispatch";
+import { useLocale } from "@/shared/i18n/locale-store";
 import {
   MediaPreviewModal,
   formatByteSize,
@@ -98,6 +99,7 @@ const ROLE_BADGE_COLORS: Record<UserRole, string> = {
 };
 
 export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
+  const { t } = useLocale();
   const [selectedScope, setSelectedScope] = useState<string>("ALL");
   const [activeTab, setActiveTab] = useState<AdminTab>("overview");
 
@@ -691,10 +693,10 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <p className="font-mono-tabular text-xs font-semibold uppercase tracking-wider text-teal-800">
-              Slice 5 · Sovereign Multi-Tenant Governance
+              {t("admin.eyebrow")}
             </p>
             <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">
-              Master Operations & Compliance Center
+              {t("admin.heading")}
             </h1>
             {activePack ? (
               <p className="mt-1 text-sm text-slate-600">

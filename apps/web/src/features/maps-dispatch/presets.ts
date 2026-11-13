@@ -96,3 +96,69 @@ export function projectPoint(
     visible,
   };
 }
+
+export const MAP_TILE_SIZE = 256;
+
+export function lngToWorldPx(lng: number, zoom: number): number {
+  const worldSize = MAP_TILE_SIZE * Math.pow(2, zoom);
+  return ((lng + 180) / 360) * worldSize;
+}
+
+export function latToWorldPx(lat: number, zoom: number): number {
+  const clamped = Math.max(-85.05112878, Math.min(85.05112878, lat));
+  const sin = Math.sin((clamped * Math.PI) / 180);
+  const yNorm = 0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI);
+  const worldSize = MAP_TILE_SIZE * Math.pow(2, zoom);
+  return yNorm * worldSize;
+}
+
+export function worldPxToLng(px: number, zoom: number): number {
+  const worldSize = MAP_TILE_SIZE * Math.pow(2, zoom);
+  return (px / worldSize) * 360 - 180;
+}
+
+export function worldPxToLat(py: number, zoom: number): number {
+  const worldSize = MAP_TILE_SIZE * Math.pow(2, zoom);
+  const n = Math.PI - (2 * Math.PI * py) / worldSize;
+  return (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
+}
+
+export function estimateZoomForViewport(
+  box: ViewportBox,
+  containerWidthPx: number,
+): number {
+  const width = Math.max(256, containerWidthPx);
+  const spanLng = Math.max(0.004, box.maxLng - box.minLng);
+  const rawZoom = Math.log2((width / MAP_TILE_SIZE) * (360 / spanLng));
+  return Math.max(9, Math.min(17, Math.round(rawZoom)));
+}
+
+export function panViewportByPixels(
+  box: ViewportBox,
+  dragDeltaX: number,
+  dragDeltaY: number,
+  zoom: number,
+  containerWidthPx: number,
+  containerHeightPx: number,
+): ViewportBox {
+  const center = getViewportCenter(box);
+  const nextCenterX = lngToWorldPx(center.lng, zoom) - dragDeltaX;
+  const nextCenterY = latToWorldPx(center.lat, zoom) - dragDeltaY;
+
+  const halfW = Math.max(128, containerWidthPx) / 2;
+  const halfH = Math.max(128, containerHeightPx) / 2;
+
+  const minLng = worldPxToLng(nextCenterX - halfW, zoom);
+  const maxLng = worldPxToLng(nextCenterX + halfW, zoom);
+  const maxLat = worldPxToLat(nextCenterY - halfH, zoom);
+  const minLat = worldPxToLat(nextCenterY + halfH, zoom);
+
+  return {
+    districtLabel: box.districtLabel,
+    minLng: Number(Math.max(-179, minLng).toFixed(4)),
+    maxLng: Number(Math.min(179, maxLng).toFixed(4)),
+    minLat: Number(Math.max(-85, minLat).toFixed(4)),
+    maxLat: Number(Math.min(85, maxLat).toFixed(4)),
+  };
+}
+

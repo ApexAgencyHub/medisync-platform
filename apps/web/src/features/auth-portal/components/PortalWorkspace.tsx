@@ -254,7 +254,7 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
     await refreshMyUserMedia(sessionToken);
     setStatusMessage({
       tone: "success",
-      text: "Profile photo uploaded and verified in MinIO S3 storage.",
+      text: "Profile photo uploaded and verified.",
     });
   }
 
@@ -467,7 +467,7 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
         tone: "error",
         text:
           res.error === "API_UNREACHABLE"
-            ? `API server unreachable at ${apiBaseUrl}. Start apps/api with Docker PostGIS to authenticate.`
+            ? `Service unreachable at ${apiBaseUrl}. Please check backend availability.`
             : `Sign-in rejected (${res.error}).`,
       });
       return;
@@ -520,7 +520,7 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
         tone: "error",
         text:
           res.error === "API_UNREACHABLE"
-            ? `API server unreachable at ${apiBaseUrl}. Start apps/api with Docker PostGIS to register accounts.`
+            ? `Service unreachable at ${apiBaseUrl}. Please check backend availability.`
             : `Registration failed (${res.error}).`,
       });
       return;
@@ -648,7 +648,7 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
     void handleLoadFacilityDocs(createdFacility.id);
     setStatusMessage({
       tone: "success",
-      text: `Facility "${createdFacility.name}" indexed in PostGIS (${createdFacility.verificationStatus})${uploadNotes.length > 0 ? ` · ${uploadNotes.join(", ")}` : ""}.`,
+      text: `Facility "${createdFacility.name}" registered (${createdFacility.verificationStatus})${uploadNotes.length > 0 ? ` · ${uploadNotes.join(", ")}` : ""}.`,
     });
   }
 
@@ -699,21 +699,20 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <p className="font-mono-tabular text-xs font-semibold uppercase tracking-wider text-teal-800">
-              Sovereign Identity & Facility Onboarding
+              {t("portal.eyebrow")}
             </p>
             <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">
-              Clinical & Ops Access Portal
+              {t("portal.heading")}
             </h1>
             {activePack ? (
               <p className="mt-1 text-sm text-slate-600">
-                Jurisdiction: <strong className="text-slate-900">{activePack.name}</strong> ·
-                Layout <span className="font-mono-tabular">{activePack.direction.toUpperCase()}</span> ·
-                Emergency{" "}
-                <span className="font-mono-tabular font-semibold text-red-700">
+                Jurisdiction: <strong className="text-slate-900"><bdi dir="auto">{activePack.name}</bdi></strong> ·{" "}
+                {t("home.hotlineLabel")}{" "}
+                <bdi dir="ltr" className="font-mono-tabular font-semibold text-red-700">
                   {activePack.emergencyHotlines.ambulance}
-                </span>{" "}
-                · License Regex{" "}
-                <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono-tabular text-xs text-slate-800">
+                </bdi>{" "}
+                · Format{" "}
+                <code dir="ltr" className="rounded bg-slate-100 px-1.5 py-0.5 font-mono-tabular text-xs text-slate-800">
                   {activePack.licenseNumberPattern}
                 </code>
               </p>
@@ -1477,7 +1476,7 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
                     className="inline-flex min-h-[36px] w-full items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 active:scale-[0.99] disabled:opacity-50"
                   >
                     <Upload className="h-3.5 w-3.5" aria-hidden="true" />
-                    <span>Upload Credential to MinIO</span>
+                    <span>{t("portal.uploadCredential")}</span>
                   </button>
                 </form>
 
@@ -1519,8 +1518,7 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
               </div>
             ) : (
               <p className="mt-3 text-sm leading-relaxed text-slate-600">
-                No active token in this tab yet. Sign in or register on the left to inspect
-                country-scoped PostGIS facilities and RBAC controls.
+                {t("portal.signInPrompt")}
               </p>
             )}
           </section>
@@ -1528,7 +1526,7 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
           <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs">
             <div className="flex items-center justify-between gap-2">
               <h2 className="text-base font-semibold text-slate-900">
-                Scoped Facility Registry
+                {t("portal.facilityRegistry")}
               </h2>
               {sessionToken && currentUser ? (
                 <button

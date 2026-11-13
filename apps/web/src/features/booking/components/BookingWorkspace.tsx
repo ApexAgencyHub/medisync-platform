@@ -33,6 +33,7 @@ import {
   readStoredSession,
   writeStoredSession,
 } from "@/shared/auth/session-storage";
+import { useLocale } from "@/shared/i18n/locale-store";
 import {
   CalendarClock,
   CheckCircle2,
@@ -95,6 +96,7 @@ export function BookingWorkspace({
   packs,
   apiBaseUrl,
 }: BookingWorkspaceProps) {
+  const { t } = useLocale();
   const defaultCode = packs[0]?.code ?? "INTL";
   const [selectedCountry, setSelectedCountry] = useState<string>(defaultCode);
   const [selectedDate, setSelectedDate] = useState<string>(
@@ -501,15 +503,13 @@ export function BookingWorkspace({
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0 space-y-1">
             <p className="font-mono-tabular text-xs font-semibold uppercase tracking-wider text-teal-800">
-              Slice 3 · Multi-Clinic Scheduling & Transactional Locking
+              {t("booking.eyebrow")}
             </p>
             <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-              Doctor Shift Roster & Appointment Engine
+              {t("booking.heading")}
             </h1>
             <p className="text-sm text-slate-600">
-              PostgreSQL <code className="font-mono-tabular text-xs">FOR UPDATE</code>{" "}
-              doctor locks + partial unique indexes prevent cross-clinic double-booking in{" "}
-              {activePack?.name ?? selectedCountry}.
+              {t("booking.subtitle")} ({activePack?.name ?? selectedCountry})
             </p>
           </div>
 
