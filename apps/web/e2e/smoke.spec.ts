@@ -93,10 +93,29 @@ for (const vp of VIEWPORTS) {
     const hasOverflowMap = await page.evaluate(
       () => document.documentElement.scrollWidth > window.innerWidth,
     );
+    expect(hasOverflowMap, "Horizontal scroll overflow on /map").toBe(false);
+
+    // Navigate from /map to Slice 3 Multi-Clinic Booking Engine (/booking)
+    await page.getByRole("link", { name: "Booking", exact: true }).click();
+    await expect(
+      page.getByRole("heading", {
+        name: /Doctor Shift Roster & Appointment Engine/i,
+      }),
+    ).toBeVisible();
+
+    await page.getByRole("button", { name: "MA", exact: true }).click();
+    await expect(page.getByText(/Available Multi-Clinic Slots/i)).toBeVisible();
+    await expect(page.getByText(/MAD/i)).toBeVisible();
+
+    const hasOverflowBooking = await page.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth,
+    );
 
     expect(pageErrors, "Unexpected uncaught page errors").toEqual([]);
     expect(consoleErrors, "Unexpected console.error logs").toEqual([]);
     expect(badResponses, "Unexpected >= 400 HTTP responses").toEqual([]);
-    expect(hasOverflowMap, "Horizontal scroll overflow on /map").toBe(false);
+    expect(hasOverflowBooking, "Horizontal scroll overflow on /booking").toBe(
+      false,
+    );
   });
 }

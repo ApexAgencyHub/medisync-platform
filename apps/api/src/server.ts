@@ -5,6 +5,7 @@ import type { Pool } from "pg";
 import { registerFoundationRoutes } from "./features/foundation/index.js";
 import { registerCountryPackRoutes } from "./features/country-packs/index.js";
 import { registerMapsDispatchRoutes } from "./features/maps-dispatch/index.js";
+import { registerBookingRoutes } from "./features/booking/index.js";
 import { createDbPool } from "./shared/db/pool.js";
 import { runMigrations } from "./shared/db/migrate.js";
 import { createRedisClient } from "./shared/redis/client.js";
@@ -58,6 +59,10 @@ export async function buildApiServer(
     redis,
     authSecret: options.authSecret,
     corsOrigins: allowedOrigins,
+  });
+  await registerBookingRoutes(app, {
+    pool,
+    authSecret: options.authSecret,
   });
 
   if (ownsPool || ownsRedis) {
