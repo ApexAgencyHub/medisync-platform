@@ -1,3 +1,4 @@
+import type { Redis } from "ioredis";
 import type { Pool, PoolClient } from "pg";
 import {
   AdminOverviewMetricsSchema,
@@ -6,9 +7,11 @@ import {
   DispatchRequestSummarySchema,
   DisputeSummarySchema,
   type AdminAuditQuery,
+  type AdminCreateUserInput,
   type AdminOverviewMetrics,
   type AdminOverviewQuery,
   type AdminOverrideDispatchInput,
+  type AdminUpdateUserStatusInput,
   type AdminUsersQuery,
   type AuditEvent,
   type AuthenticatedUser,
@@ -18,7 +21,14 @@ import {
   type ResolveDisputeInput,
   type UpdateUserRoleInput,
 } from "@medisync/contracts";
-import { appendAuditLog, type AuthTokenClaims } from "../foundation/index.js";
+import {
+  appendAuditLog,
+  DuplicateConflictError,
+  hashPassword,
+  insertUser,
+  invalidateUserAuthCache,
+  type AuthTokenClaims,
+} from "../foundation/index.js";
 import {
   createSigV4PresignedUrl,
   type S3PresignConfig,
@@ -209,6 +219,23 @@ export async function getAdminOverview(
   });
 }
 
+const USER_RETURNING_COLUMNS = `
+  id,
+  email,
+  full_name AS "fullName",
+  role,
+  country_code AS "countryCode",
+  facility_id AS "facilityId",
+  avatar_object_key AS "avatarObjectKey",
+  email_verified AS "emailVerified",
+  phone,
+  phone_verified AS "phoneVerified",
+  account_status AS "accountStatus",
+  credential_verified AS "credentialVerified",
+  CASE WHEN last_login_at IS NULL THEN NULL ELSE to_char(last_login_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "lastLoginAtIso",
+  to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"
+`;
+
 export async function listUsersAdmin(
   pool: Pool,
   actor: Pick<AuthTokenClaims, "role" | "countryCode">,
@@ -216,23 +243,26 @@ export async function listUsersAdmin(
   s3Config?: S3PresignConfig,
 ): Promise<AuthenticatedUser[]> {
   const effectiveCountry = resolveScopedCountry(actor, query.countryCode);
+  const qPattern =
+    query.q && query.q.trim().length > 0 ? `%${query.q.trim()}%` : null;
 
   const res = await pool.query(
     `SELECT
-       id,
-       email,
-       full_name AS "fullName",
-       role,
-       country_code AS "countryCode",
-       facility_id AS "facilityId",
-       avatar_object_key AS "avatarObjectKey",
-       to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"
+       ${USER_RETURNING_COLUMNS}
      FROM users
      WHERE ($1::text IS NULL OR country_code = $1)
        AND ($2::text IS NULL OR role = $2)
+       AND ($3::text IS NULL OR account_status = $3)
+       AND ($4::text IS NULL OR full_name ILIKE $4 OR email ILIKE $4)
      ORDER BY created_at DESC
-     LIMIT $3`,
-    [effectiveCountry, query.role ?? null, query.limit],
+     LIMIT $5`,
+    [
+      effectiveCountry,
+      query.role ?? null,
+      query.accountStatus ?? null,
+      qPattern,
+      query.limit,
+    ],
   );
 
   return res.rows.map((row) =>
@@ -242,12 +272,67 @@ export async function listUsersAdmin(
   );
 }
 
+export async function createUserAdmin(
+  pool: Pool,
+  actor: AuthTokenClaims,
+  input: AdminCreateUserInput,
+): Promise<AuthenticatedUser> {
+  resolveScopedCountry(actor, input.countryCode);
+  const passwordHash = await hashPassword(input.password);
+
+  let created: AuthenticatedUser;
+  try {
+    created = await insertUser(
+      pool,
+      {
+        email: input.email,
+        password: input.password,
+        fullName: input.fullName,
+        role: input.role,
+        countryCode: input.countryCode,
+        ...(input.facilityId ? { facilityId: input.facilityId } : {}),
+      },
+      passwordHash,
+      {
+        accountStatus: input.accountStatus,
+        credentialVerified: input.credentialVerified,
+        phone: input.phone ?? null,
+      },
+    );
+  } catch (err) {
+    if (err instanceof DuplicateConflictError) {
+      throw new AdminConflictError(
+        "EMAIL_ALREADY_REGISTERED",
+        "Email is already registered.",
+      );
+    }
+    throw err;
+  }
+
+  await appendAuditLog(pool, {
+    countryCode: created.countryCode,
+    actorId: actor.sub,
+    actorRole: actor.role,
+    action: "USER_PROVISIONED_BY_ADMIN",
+    resourceType: "user",
+    resourceId: created.id,
+    metadata: {
+      role: created.role,
+      accountStatus: created.accountStatus,
+      credentialVerified: created.credentialVerified,
+    },
+  });
+
+  return created;
+}
+
 export async function updateUserRoleAdmin(
   pool: Pool,
   targetUserId: string,
   actor: AuthTokenClaims,
   input: UpdateUserRoleInput,
   s3Config?: S3PresignConfig,
+  redis?: Redis,
 ): Promise<AuthenticatedUser> {
   if (actor.sub === targetUserId && input.role !== "OPS_ADMIN") {
     throw new AdminConflictError(
@@ -288,7 +373,8 @@ export async function updateUserRoleAdmin(
     const updatedRes = await client.query(
       `UPDATE users
        SET role = $2,
-           country_code = $3
+           country_code = $3,
+           token_version = token_version + 1
        WHERE id = $1
        RETURNING
          id,
@@ -298,6 +384,12 @@ export async function updateUserRoleAdmin(
          country_code AS "countryCode",
          facility_id AS "facilityId",
          avatar_object_key AS "avatarObjectKey",
+         email_verified AS "emailVerified",
+         phone,
+         phone_verified AS "phoneVerified",
+         account_status AS "accountStatus",
+         credential_verified AS "credentialVerified",
+         CASE WHEN last_login_at IS NULL THEN NULL ELSE to_char(last_login_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "lastLoginAtIso",
          to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"`,
       [targetUserId, input.role, nextCountryCode],
     );
@@ -323,6 +415,87 @@ export async function updateUserRoleAdmin(
     });
 
     await client.query("COMMIT");
+    await invalidateUserAuthCache(redis, updatedUser.id);
+    return updatedUser;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function updateUserStatusAdmin(
+  pool: Pool,
+  targetUserId: string,
+  actor: AuthTokenClaims,
+  input: AdminUpdateUserStatusInput,
+  s3Config?: S3PresignConfig,
+  redis?: Redis,
+): Promise<AuthenticatedUser> {
+  if (actor.sub === targetUserId && input.accountStatus === "SUSPENDED") {
+    throw new AdminConflictError(
+      "CANNOT_SELF_SUSPEND_ADMIN",
+      "An active OPS_ADMIN cannot suspend their own account.",
+    );
+  }
+
+  const client: PoolClient = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const existingRes = await client.query(
+      `SELECT ${USER_RETURNING_COLUMNS}
+       FROM users
+       WHERE id = $1
+       FOR UPDATE`,
+      [targetUserId],
+    );
+
+    if (existingRes.rowCount === 0) {
+      throw new AdminNotFoundError("Target user not found.");
+    }
+
+    const existingUser = AuthenticatedUserSchema.parse(
+      withUserAvatarUrl(existingRes.rows[0] as Record<string, unknown>, s3Config),
+    );
+    const shouldBumpVersion = input.accountStatus === "SUSPENDED";
+
+    const updatedRes = await client.query(
+      `UPDATE users
+       SET account_status = $2,
+           credential_verified = COALESCE($3, credential_verified),
+           token_version = token_version + CASE WHEN $4::boolean THEN 1 ELSE 0 END
+       WHERE id = $1
+       RETURNING ${USER_RETURNING_COLUMNS}`,
+      [
+        targetUserId,
+        input.accountStatus,
+        input.credentialVerified ?? null,
+        shouldBumpVersion,
+      ],
+    );
+
+    const updatedUser = AuthenticatedUserSchema.parse(
+      withUserAvatarUrl(updatedRes.rows[0] as Record<string, unknown>, s3Config),
+    );
+
+    await appendAuditLog(client, {
+      countryCode: updatedUser.countryCode,
+      actorId: actor.sub,
+      actorRole: actor.role,
+      action: "USER_STATUS_UPDATED",
+      resourceType: "user",
+      resourceId: updatedUser.id,
+      metadata: {
+        previousStatus: existingUser.accountStatus,
+        nextStatus: updatedUser.accountStatus,
+        credentialVerified: updatedUser.credentialVerified,
+        reason: input.reason?.trim() ?? null,
+      },
+    });
+
+    await client.query("COMMIT");
+    await invalidateUserAuthCache(redis, updatedUser.id);
     return updatedUser;
   } catch (err) {
     await client.query("ROLLBACK").catch(() => undefined);

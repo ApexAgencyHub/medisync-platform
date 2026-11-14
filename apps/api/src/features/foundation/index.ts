@@ -6,5 +6,16 @@ export {
   verifyPassword,
   type AuthTokenClaims,
 } from "./auth-crypto.js";
-export { authenticateRequest } from "./guard.js";
-export { appendAuditLog, DuplicateConflictError, findUserById } from "./store.js";
+export {
+  authenticateRequest,
+  invalidateUserAuthCache,
+  revokeJwtToken,
+  type AuthGuardDeps,
+  type AuthGuardOptions,
+} from "./guard.js";
+export {
+  appendAuditLog,
+  DuplicateConflictError,
+  findUserById,
+  insertUser,
+} from "./store.js";

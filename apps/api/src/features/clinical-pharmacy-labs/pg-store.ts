@@ -865,18 +865,20 @@ export async function createPresignedMediaUpload(
          patient_user_id,
          lab_order_id,
          uploaded_by_user_id,
+         media_category,
          object_key,
          file_name,
          mime_type,
          size_bytes
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       [
         objectId,
         countryCode,
         input.patientUserId,
         input.labOrderId ?? null,
         actor.sub,
+        input.mediaCategory ?? "OTHER",
         objectKey,
         safeName,
         input.mimeType,
@@ -892,6 +894,7 @@ export async function createPresignedMediaUpload(
       resourceType: "clinical_media",
       resourceId: objectId,
       metadata: {
+        mediaCategory: input.mediaCategory ?? "OTHER",
         mimeType: input.mimeType,
         sizeBytes: input.sizeBytes,
       },
@@ -924,12 +927,14 @@ export async function createPresignedMediaUpload(
        patient_user_id AS "patientUserId",
        lab_order_id AS "labOrderId",
        uploaded_by_user_id AS "uploadedByUserId",
+       media_category AS "mediaCategory",
        object_key AS "objectKey",
        file_name AS "fileName",
        mime_type AS "mimeType",
        size_bytes AS "sizeBytes",
        confirmed_size_bytes AS "confirmedSizeBytes",
        upload_status AS "uploadStatus",
+       sha256_checksum AS "sha256Checksum",
        CASE WHEN confirmed_at IS NULL THEN NULL ELSE to_char(confirmed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "confirmedAtIso",
        to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"
      FROM clinical_media_objects WHERE id = $1`,
@@ -1000,6 +1005,7 @@ export async function confirmClinicalMediaUpload(
   }
 
   let observedSizeBytes: number;
+  let sha256Checksum: string;
   try {
     const inspected = await inspectUploadedS3Object({
       config: s3Config,
@@ -1008,6 +1014,7 @@ export async function confirmClinicalMediaUpload(
       maxBytes: MAX_CLINICAL_UPLOAD_BYTES,
     });
     observedSizeBytes = inspected.observedSizeBytes;
+    sha256Checksum = inspected.sha256Checksum;
   } catch (err) {
     if (err instanceof S3ObjectNotFoundError) {
       throw new ClinicalNotFoundError(err.message);
@@ -1029,9 +1036,10 @@ export async function confirmClinicalMediaUpload(
       `UPDATE clinical_media_objects
        SET upload_status = 'UPLOADED',
            confirmed_size_bytes = $2,
+           sha256_checksum = $3,
            confirmed_at = NOW()
        WHERE id = $1`,
-      [mediaId, observedSizeBytes],
+      [mediaId, observedSizeBytes, sha256Checksum],
     );
 
     await appendAuditLog(client, {
@@ -1060,12 +1068,14 @@ export async function confirmClinicalMediaUpload(
        patient_user_id AS "patientUserId",
        lab_order_id AS "labOrderId",
        uploaded_by_user_id AS "uploadedByUserId",
+       media_category AS "mediaCategory",
        object_key AS "objectKey",
        file_name AS "fileName",
        mime_type AS "mimeType",
        size_bytes AS "sizeBytes",
        confirmed_size_bytes AS "confirmedSizeBytes",
        upload_status AS "uploadStatus",
+       sha256_checksum AS "sha256Checksum",
        CASE WHEN confirmed_at IS NULL THEN NULL ELSE to_char(confirmed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "confirmedAtIso",
        to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"
      FROM clinical_media_objects WHERE id = $1`,
@@ -1096,12 +1106,14 @@ export async function listClinicalMediaScoped(
        patient_user_id AS "patientUserId",
        lab_order_id AS "labOrderId",
        uploaded_by_user_id AS "uploadedByUserId",
+       media_category AS "mediaCategory",
        object_key AS "objectKey",
        file_name AS "fileName",
        mime_type AS "mimeType",
        size_bytes AS "sizeBytes",
        confirmed_size_bytes AS "confirmedSizeBytes",
        upload_status AS "uploadStatus",
+       sha256_checksum AS "sha256Checksum",
        CASE WHEN confirmed_at IS NULL THEN NULL ELSE to_char(confirmed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "confirmedAtIso",
        to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"
      FROM clinical_media_objects

@@ -2,7 +2,7 @@ import { z } from "zod";
 import { AuditEventSchema } from "./audit.js";
 import { AuthenticatedUserSchema } from "./auth.js";
 import { DispatchStatusSchema } from "./dispatch.js";
-import { UserRoleSchema } from "./roles.js";
+import { AccountStatusSchema, UserRoleSchema } from "./roles.js";
 
 export const DisputeCategorySchema = z.enum([
   "BOOKING_NO_SHOW",
@@ -53,6 +53,28 @@ export const DisputeSummarySchema = z.object({
 });
 export type DisputeSummary = z.infer<typeof DisputeSummarySchema>;
 
+export const AdminCreateUserSchema = z.object({
+  email: z.string().email().max(254),
+  password: z.string().min(8).max(128),
+  fullName: z.string().trim().min(2).max(120),
+  role: UserRoleSchema,
+  countryCode: z.string().regex(/^[A-Z]{2,4}$/),
+  facilityId: z.string().uuid().optional(),
+  phone: z.string().trim().min(6).max(32).optional(),
+  accountStatus: AccountStatusSchema.default("ACTIVE"),
+  credentialVerified: z.boolean().default(true),
+});
+export type AdminCreateUserInput = z.infer<typeof AdminCreateUserSchema>;
+
+export const AdminUpdateUserStatusSchema = z.object({
+  accountStatus: AccountStatusSchema,
+  credentialVerified: z.boolean().optional(),
+  reason: z.string().trim().max(300).optional(),
+});
+export type AdminUpdateUserStatusInput = z.infer<
+  typeof AdminUpdateUserStatusSchema
+>;
+
 export const UpdateUserRoleSchema = z.object({
   role: UserRoleSchema,
   countryCode: z.string().regex(/^[A-Z]{2,4}$/).optional(),
@@ -63,6 +85,8 @@ export type UpdateUserRoleInput = z.infer<typeof UpdateUserRoleSchema>;
 export const AdminUsersQuerySchema = z.object({
   countryCode: z.string().regex(/^[A-Z]{2,4}$/).optional(),
   role: UserRoleSchema.optional(),
+  accountStatus: AccountStatusSchema.optional(),
+  q: z.string().trim().max(120).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 export type AdminUsersQuery = z.infer<typeof AdminUsersQuerySchema>;

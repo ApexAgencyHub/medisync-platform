@@ -7,6 +7,17 @@ export const DirectorySearchQuerySchema = z.object({
   countryCode: z.string().regex(/^[A-Z]{2,4}$/).optional(),
   q: z.string().trim().max(100).optional(),
   kind: FacilityKindSchema.optional(),
+  specialty: z.string().trim().max(80).optional(),
+  insurance: z.string().trim().max(48).optional(),
+  language: z.string().trim().max(16).optional(),
+  telehealthOnly: z
+    .union([z.boolean(), z.enum(["true", "false"])])
+    .optional()
+    .transform((v) => (v === "true" || v === true ? true : undefined)),
+  homeVisitOnly: z
+    .union([z.boolean(), z.enum(["true", "false"])])
+    .optional()
+    .transform((v) => (v === "true" || v === true ? true : undefined)),
   limit: z.coerce.number().int().min(1).max(100).default(30),
 });
 
@@ -42,6 +53,11 @@ export const DirectoryDoctorSummarySchema = z.object({
   facilityId: z.string().uuid().nullable(),
   facilityName: z.string().nullable(),
   consultationFeeMinor: z.number().int().nonnegative(),
+  languagesSpoken: z.array(z.string()).default(["ar", "fr", "en"]),
+  acceptedInsurances: z.array(z.string()).default(["AMO", "CNOPS", "CNSS"]),
+  telehealthEnabled: z.boolean().default(true),
+  homeVisitEnabled: z.boolean().default(false),
+  credentialVerified: z.boolean().default(false),
   avatarUrl: z.string().url().nullable().default(null),
 });
 
@@ -66,6 +82,10 @@ export const DirectoryFacilitySummarySchema = z.object({
   verificationStatus: VerificationStatusSchema,
   openStatus: z.string(),
   address: z.string(),
+  acceptedInsurances: z.array(z.string()).default(["AMO", "CNOPS", "CNSS"]),
+  languagesSpoken: z.array(z.string()).default(["ar", "fr", "en"]),
+  telehealthEnabled: z.boolean().default(true),
+  homeVisitEnabled: z.boolean().default(false),
   lat: z.number(),
   lng: z.number(),
 });

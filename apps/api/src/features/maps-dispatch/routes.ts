@@ -69,6 +69,7 @@ export async function registerMapsDispatchRoutes(
     redis: Redis;
     authSecret: string;
     corsOrigins: readonly string[];
+    requireProviderVerification?: boolean;
   },
 ): Promise<void> {
   app.get("/v1/maps/facilities/viewport", async (request, reply) => {
@@ -86,10 +87,10 @@ export async function registerMapsDispatchRoutes(
   app.patch(
     "/v1/maps/facilities/:id/operational-status",
     async (request, reply) => {
-      const claims = authenticateRequest(
+      const claims = await authenticateRequest(
         request,
         reply,
-        deps.authSecret,
+        { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
         FACILITY_MANAGER_ROLES,
       );
       if (!claims) return;
@@ -138,9 +139,13 @@ export async function registerMapsDispatchRoutes(
   );
 
   app.post("/v1/dispatch/drivers/ping", async (request, reply) => {
-    const claims = authenticateRequest(request, reply, deps.authSecret, [
-      "DRIVER",
-    ]);
+    const claims = await authenticateRequest(
+      request,
+      reply,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
+      ["DRIVER"],
+      { requireVerifiedProvider: deps.requireProviderVerification },
+    );
     if (!claims) return;
 
     const parsed = DriverPingInputSchema.safeParse(request.body);
@@ -164,7 +169,11 @@ export async function registerMapsDispatchRoutes(
   });
 
   app.get("/v1/dispatch/drivers/nearby", async (request, reply) => {
-    const claims = authenticateRequest(request, reply, deps.authSecret);
+    const claims = await authenticateRequest(request, reply, {
+      authSecret: deps.authSecret,
+      pool: deps.pool,
+      redis: deps.redis,
+    });
     if (!claims) return;
 
     const parsed = NearbyDriversQuerySchema.safeParse(request.query);
@@ -198,10 +207,10 @@ export async function registerMapsDispatchRoutes(
   });
 
   app.post("/v1/dispatch/requests", async (request, reply) => {
-    const claims = authenticateRequest(
+    const claims = await authenticateRequest(
       request,
       reply,
-      deps.authSecret,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       DISPATCH_CREATOR_ROLES,
     );
     if (!claims) return;
@@ -245,7 +254,11 @@ export async function registerMapsDispatchRoutes(
   });
 
   app.get("/v1/dispatch/requests", async (request, reply) => {
-    const claims = authenticateRequest(request, reply, deps.authSecret);
+    const claims = await authenticateRequest(request, reply, {
+      authSecret: deps.authSecret,
+      pool: deps.pool,
+      redis: deps.redis,
+    });
     if (!claims) return;
 
     const parsed = DispatchListQuerySchema.safeParse(request.query);
@@ -262,7 +275,13 @@ export async function registerMapsDispatchRoutes(
   });
 
   app.patch("/v1/dispatch/requests/:id/status", async (request, reply) => {
-    const claims = authenticateRequest(request, reply, deps.authSecret);
+    const claims = await authenticateRequest(
+      request,
+      reply,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
+      undefined,
+      { requireVerifiedProvider: deps.requireProviderVerification },
+    );
     if (!claims) return;
 
     const paramParsed = UuidParamSchema.safeParse(request.params);
@@ -330,6 +349,14 @@ export async function registerMapsDispatchRoutes(
     const claims = verifyAuthToken(rawToken, deps.authSecret);
     if (!claims) {
       return reply.status(401).send({ error: "INVALID_OR_EXPIRED_TOKEN" });
+    }
+    if (claims.jti) {
+      const revoked = await deps.redis
+        .get(`medisync:auth:revoked:${claims.jti}`)
+        .catch(() => null);
+      if (revoked) {
+        return reply.status(401).send({ error: "TOKEN_REVOKED" });
+      }
     }
 
     const targetCountry =

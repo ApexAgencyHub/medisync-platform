@@ -24,6 +24,26 @@ const ApiEnvSchema = z.object({
     .default("medisync-dev-s3-secret-key-min-32-chars"),
   S3_PRESIGN_EXPIRES_SECONDS: z.coerce.number().int().min(60).max(86400).default(900),
   RATE_LIMIT_MAX_PER_MIN: z.coerce.number().int().min(10).max(10000).default(600),
+  AUTH_RATE_LIMIT_MAX_PER_MIN: z.coerce.number().int().min(5).max(1000).default(40),
+  WRITE_RATE_LIMIT_MAX_PER_MIN: z.coerce.number().int().min(10).max(5000).default(180),
+  ALLOW_PUBLIC_REGISTRATION: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((value) => value === "true"),
+  REQUIRE_PROVIDER_VERIFICATION: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
+  DB_POOL_MAX: z.coerce.number().int().min(5).max(100).default(25),
+  DB_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(15000),
+  TRUST_PROXY: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
+  ENABLE_REQUEST_LOGS: z
+    .enum(["true", "false"])
+    .optional()
+    .transform((value) => value === "true"),
 });
 
 export type ApiEnv = z.infer<typeof ApiEnvSchema>;

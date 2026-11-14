@@ -6,10 +6,35 @@ export const ALLOWED_MEDIA_MIME_TYPES = [
   "image/png",
   "image/jpeg",
   "image/webp",
+  "image/tiff",
+  "image/heic",
+  "image/heif",
+  "image/bmp",
+  "image/gif",
   "application/dicom",
+  "text/plain",
+  "text/csv",
+  "application/json",
+  "application/fhir+json",
+  "audio/wav",
+  "audio/mpeg",
+  "video/mp4",
 ] as const;
 
-export const MAX_CLINICAL_UPLOAD_BYTES = 10 * 1024 * 1024;
+export const MAX_CLINICAL_UPLOAD_BYTES = 50 * 1024 * 1024;
+
+export const ClinicalMediaCategorySchema = z.enum([
+  "LAB_REPORT",
+  "RADIOLOGY_SCAN",
+  "PRESCRIPTION_SCAN",
+  "INSURANCE_CARD",
+  "DISCHARGE_SUMMARY",
+  "REFERRAL_LETTER",
+  "VOICE_NOTE",
+  "FHIR_BUNDLE",
+  "OTHER",
+]);
+export type ClinicalMediaCategory = z.infer<typeof ClinicalMediaCategorySchema>;
 
 export const ClinicalMediaMimeTypeSchema = z.enum(ALLOWED_MEDIA_MIME_TYPES);
 export type ClinicalMediaMimeType = z.infer<typeof ClinicalMediaMimeTypeSchema>;
@@ -169,6 +194,7 @@ export type LabOrderSummary = z.infer<typeof LabOrderSummarySchema>;
 export const PresignClinicalUploadSchema = z.object({
   patientUserId: z.string().uuid(),
   labOrderId: z.string().uuid().optional(),
+  mediaCategory: ClinicalMediaCategorySchema.default("OTHER"),
   fileName: z.string().trim().min(1).max(160),
   mimeType: ClinicalMediaMimeTypeSchema,
   sizeBytes: z.coerce
@@ -177,7 +203,7 @@ export const PresignClinicalUploadSchema = z.object({
     .min(1)
     .max(MAX_CLINICAL_UPLOAD_BYTES),
 });
-export type PresignClinicalUploadInput = z.infer<
+export type PresignClinicalUploadInput = z.input<
   typeof PresignClinicalUploadSchema
 >;
 
@@ -187,12 +213,14 @@ export const ClinicalMediaObjectSummarySchema = z.object({
   patientUserId: z.string().uuid(),
   labOrderId: z.string().uuid().nullable(),
   uploadedByUserId: z.string().uuid(),
+  mediaCategory: ClinicalMediaCategorySchema.default("OTHER"),
   objectKey: z.string(),
   fileName: z.string(),
   mimeType: ClinicalMediaMimeTypeSchema,
   sizeBytes: z.number().int(),
   confirmedSizeBytes: z.number().int().nullable().default(null),
   uploadStatus: MediaUploadStatusSchema.default("PENDING"),
+  sha256Checksum: z.string().nullable().optional(),
   confirmedAtIso: z.string().datetime().nullable().default(null),
   downloadUrl: z.string().url(),
   createdAtIso: z.string().datetime(),

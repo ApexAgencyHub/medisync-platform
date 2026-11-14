@@ -858,23 +858,75 @@ export async function listPharmacyOrdersScoped(
   const patientOnly =
     actor.role === "PATIENT" || actor.role === "CAREGIVER" ? actor.sub : null;
 
-  const idsRes = await pool.query<{ id: string }>(
-    `SELECT id
-     FROM pharmacy_orders
-     WHERE ($1::text IS NULL OR country_code = $1)
-       AND ($2::uuid IS NULL OR patient_user_id = $2)
-       AND ($3::text IS NULL OR status = $3)
-     ORDER BY created_at DESC
+  const ordersRes = await pool.query<Record<string, unknown>>(
+    `SELECT
+       o.id,
+       o.country_code AS "countryCode",
+       o.patient_user_id AS "patientUserId",
+       u.full_name AS "patientName",
+       o.facility_id AS "facilityId",
+       f.name AS "facilityName",
+       o.prescription_id AS "prescriptionId",
+       o.fulfillment_mode AS "fulfillmentMode",
+       o.delivery_address AS "deliveryAddress",
+       o.dispatch_request_id AS "dispatchRequestId",
+       o.status,
+       o.currency_code AS "currencyCode",
+       o.subtotal_minor AS "subtotalMinor",
+       o.delivery_fee_minor AS "deliveryFeeMinor",
+       o.total_minor AS "totalMinor",
+       o.payment_method AS "paymentMethod",
+       o.payment_reference AS "paymentReference",
+       o.receipt_number AS "receiptNumber",
+       o.notes,
+       to_char(o.paid_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "paidAtIso",
+       to_char(o.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso",
+       to_char(o.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "updatedAtIso"
+     FROM pharmacy_orders o
+     JOIN users u ON u.id = o.patient_user_id
+     JOIN facilities f ON f.id = o.facility_id
+     WHERE ($1::text IS NULL OR o.country_code = $1)
+       AND ($2::uuid IS NULL OR o.patient_user_id = $2)
+       AND ($3::text IS NULL OR o.status = $3)
+     ORDER BY o.created_at DESC
      LIMIT $4`,
     [effectiveCountry, patientOnly, query.status ?? null, query.limit ?? 50],
   );
 
-  const orders: PharmacyOrderSummary[] = [];
-  for (const row of idsRes.rows) {
-    const hydrated = await fetchOrderById(pool, row.id);
-    if (hydrated) orders.push(hydrated);
+  if (ordersRes.rows.length === 0) return [];
+
+  const orderIds = ordersRes.rows.map((row) => String(row.id));
+  const itemsRes = await pool.query<Record<string, unknown> & { orderId: string }>(
+    `SELECT
+       order_id AS "orderId",
+       id,
+       product_id AS "productId",
+       product_name AS "productName",
+       sku,
+       requires_prescription AS "requiresPrescription",
+       quantity,
+       unit_price_minor AS "unitPriceMinor",
+       line_total_minor AS "lineTotalMinor"
+     FROM pharmacy_order_items
+     WHERE order_id = ANY($1::uuid[])
+     ORDER BY order_id ASC, product_name ASC`,
+    [orderIds],
+  );
+
+  const itemsByOrderId = new Map<string, ReturnType<typeof PharmacyOrderItemSummarySchema.parse>[]>();
+  for (const itemRow of itemsRes.rows) {
+    const orderId = String(itemRow.orderId);
+    const list = itemsByOrderId.get(orderId) ?? [];
+    list.push(PharmacyOrderItemSummarySchema.parse(itemRow));
+    itemsByOrderId.set(orderId, list);
   }
-  return orders;
+
+  return ordersRes.rows.map((row) =>
+    PharmacyOrderSummarySchema.parse({
+      ...row,
+      items: itemsByOrderId.get(String(row.id)) ?? [],
+    }),
+  );
 }
 
 export async function updatePharmacyOrderStatusAtomic(

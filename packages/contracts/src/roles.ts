@@ -22,3 +22,20 @@ export const FacilityKindSchema = z.enum([
 ]);
 
 export type FacilityKind = z.infer<typeof FacilityKindSchema>;
+
+export const AccountStatusSchema = z.enum([
+  "ACTIVE",
+  "PENDING_APPROVAL",
+  "SUSPENDED",
+]);
+
+export type AccountStatus = z.infer<typeof AccountStatusSchema>;
+
+export const PlatformOperationalModeSchema = z.enum([
+  "SINGLE_ADMIN",
+  "OPEN_PUBLIC",
+]);
+
+export type PlatformOperationalMode = z.infer<
+  typeof PlatformOperationalModeSchema
+>;

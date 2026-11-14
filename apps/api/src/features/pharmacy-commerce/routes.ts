@@ -11,6 +11,10 @@ import {
   type UserRole,
 } from "@medisync/contracts";
 import type { S3PresignConfig } from "../../shared/storage/s3-presign.js";
+import {
+  DIRECTORY_CACHE_GEN_KEY,
+  withGenerationCache,
+} from "../../shared/redis/cache.js";
 import { authenticateRequest } from "../foundation/index.js";
 import {
   confirmPharmacyOrderPayment,
@@ -82,19 +86,22 @@ export async function registerPharmacyCommerceRoutes(
       });
     }
 
-    const products = await listPharmacyProducts(
-      deps.pool,
-      parsed.data,
-      deps.s3Config,
+    const cacheKey = `pharmacy-products:${JSON.stringify(parsed.data)}`;
+    const products = await withGenerationCache(
+      deps.redis,
+      DIRECTORY_CACHE_GEN_KEY,
+      cacheKey,
+      30,
+      () => listPharmacyProducts(deps.pool, parsed.data, deps.s3Config),
     );
     return { products };
   });
 
   app.post("/v1/pharmacy/products", async (request, reply) => {
-    const claims = authenticateRequest(
+    const claims = await authenticateRequest(
       request,
       reply,
-      deps.authSecret,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       PRODUCT_MANAGER_ROLES,
     );
     if (!claims) return;
@@ -114,6 +121,7 @@ export async function registerPharmacyCommerceRoutes(
         parsed.data,
         deps.s3Config,
       );
+      await deps.redis.incr("medisync:cache:gen:directory").catch(() => undefined);
       return reply.status(201).send({ product });
     } catch (err) {
       return mapPharmacyError(err, reply);
@@ -121,10 +129,10 @@ export async function registerPharmacyCommerceRoutes(
   });
 
   app.patch("/v1/pharmacy/products/:id/stock", async (request, reply) => {
-    const claims = authenticateRequest(
+    const claims = await authenticateRequest(
       request,
       reply,
-      deps.authSecret,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       PRODUCT_MANAGER_ROLES,
     );
     if (!claims) return;
@@ -154,6 +162,7 @@ export async function registerPharmacyCommerceRoutes(
         patch,
         deps.s3Config,
       );
+      await deps.redis.incr("medisync:cache:gen:directory").catch(() => undefined);
       return reply.status(200).send({ product });
     } catch (err) {
       return mapPharmacyError(err, reply);
@@ -161,7 +170,11 @@ export async function registerPharmacyCommerceRoutes(
   });
 
   app.post("/v1/pharmacy/orders", async (request, reply) => {
-    const claims = authenticateRequest(request, reply, deps.authSecret);
+    const claims = await authenticateRequest(request, reply, {
+      authSecret: deps.authSecret,
+      pool: deps.pool,
+      redis: deps.redis,
+    });
     if (!claims) return;
 
     const parsed = CreatePharmacyOrderSchema.safeParse(request.body);
@@ -178,6 +191,7 @@ export async function registerPharmacyCommerceRoutes(
         claims,
         parsed.data,
       );
+      await deps.redis.incr("medisync:cache:gen:directory").catch(() => undefined);
       return reply.status(201).send({ order });
     } catch (err) {
       return mapPharmacyError(err, reply);
@@ -187,7 +201,11 @@ export async function registerPharmacyCommerceRoutes(
   app.post(
     "/v1/pharmacy/orders/:id/confirm-payment",
     async (request, reply) => {
-      const claims = authenticateRequest(request, reply, deps.authSecret);
+      const claims = await authenticateRequest(request, reply, {
+        authSecret: deps.authSecret,
+        pool: deps.pool,
+        redis: deps.redis,
+      });
       if (!claims) return;
 
       const paramsParsed = UuidParamSchema.safeParse(request.params);
@@ -214,7 +232,11 @@ export async function registerPharmacyCommerceRoutes(
   );
 
   app.get("/v1/pharmacy/orders", async (request, reply) => {
-    const claims = authenticateRequest(request, reply, deps.authSecret);
+    const claims = await authenticateRequest(request, reply, {
+      authSecret: deps.authSecret,
+      pool: deps.pool,
+      redis: deps.redis,
+    });
     if (!claims) return;
 
     const parsed = OrdersQuerySchema.safeParse(request.query);
@@ -233,7 +255,11 @@ export async function registerPharmacyCommerceRoutes(
   });
 
   app.patch("/v1/pharmacy/orders/:id/status", async (request, reply) => {
-    const claims = authenticateRequest(request, reply, deps.authSecret);
+    const claims = await authenticateRequest(request, reply, {
+      authSecret: deps.authSecret,
+      pool: deps.pool,
+      redis: deps.redis,
+    });
     if (!claims) return;
 
     const paramsParsed = UuidParamSchema.safeParse(request.params);

@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
+import type { Redis } from "ioredis";
 import type { Pool } from "pg";
 import { z } from "zod";
 import {
@@ -69,6 +70,7 @@ export async function registerMediaCertificationRoutes(
   app: FastifyInstance,
   deps: {
     pool: Pool;
+    redis?: Redis;
     authSecret: string;
     s3Config: S3PresignConfig;
   },
@@ -76,7 +78,11 @@ export async function registerMediaCertificationRoutes(
   app.post<{ Params: { id: string } }>(
     "/v1/facilities/:id/media/presign-upload",
     async (request, reply) => {
-      const claims = authenticateRequest(request, reply, deps.authSecret);
+      const claims = await authenticateRequest(request, reply, {
+        authSecret: deps.authSecret,
+        pool: deps.pool,
+        redis: deps.redis,
+      });
       if (!claims) return;
 
       const params = FacilityParamSchema.safeParse(request.params);
@@ -103,7 +109,11 @@ export async function registerMediaCertificationRoutes(
   app.post<{ Params: { id: string; mediaId: string } }>(
     "/v1/facilities/:id/media/:mediaId/confirm",
     async (request, reply) => {
-      const claims = authenticateRequest(request, reply, deps.authSecret);
+      const claims = await authenticateRequest(request, reply, {
+        authSecret: deps.authSecret,
+        pool: deps.pool,
+        redis: deps.redis,
+      });
       if (!claims) return;
 
       const params = FacilityMediaParamSchema.safeParse(request.params);
@@ -129,7 +139,11 @@ export async function registerMediaCertificationRoutes(
   app.get<{ Params: { id: string } }>(
     "/v1/facilities/:id/media",
     async (request, reply) => {
-      const claims = authenticateRequest(request, reply, deps.authSecret);
+      const claims = await authenticateRequest(request, reply, {
+        authSecret: deps.authSecret,
+        pool: deps.pool,
+        redis: deps.redis,
+      });
       if (!claims) return;
 
       const params = FacilityParamSchema.safeParse(request.params);
@@ -152,10 +166,10 @@ export async function registerMediaCertificationRoutes(
   );
 
   app.get("/v1/admin/facility-media", async (request, reply) => {
-    const claims = authenticateRequest(
+    const claims = await authenticateRequest(
       request,
       reply,
-      deps.authSecret,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       ADMIN_MEDIA_VIEWER_ROLES,
     );
     if (!claims) return;
@@ -181,10 +195,10 @@ export async function registerMediaCertificationRoutes(
   app.patch<{ Params: { mediaId: string } }>(
     "/v1/admin/facility-media/:mediaId/review",
     async (request, reply) => {
-      const claims = authenticateRequest(
+      const claims = await authenticateRequest(
         request,
         reply,
-        deps.authSecret,
+        { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
         OPS_ADMIN_ONLY,
       );
       if (!claims) return;
@@ -211,7 +225,11 @@ export async function registerMediaCertificationRoutes(
   );
 
   app.post("/v1/users/me/media/presign-upload", async (request, reply) => {
-    const claims = authenticateRequest(request, reply, deps.authSecret);
+    const claims = await authenticateRequest(request, reply, {
+      authSecret: deps.authSecret,
+      pool: deps.pool,
+      redis: deps.redis,
+    });
     if (!claims) return;
 
     const body = PresignUserMediaSchema.safeParse(request.body);
@@ -238,7 +256,11 @@ export async function registerMediaCertificationRoutes(
   app.post<{ Params: { mediaId: string } }>(
     "/v1/users/me/media/:mediaId/confirm",
     async (request, reply) => {
-      const claims = authenticateRequest(request, reply, deps.authSecret);
+      const claims = await authenticateRequest(request, reply, {
+        authSecret: deps.authSecret,
+        pool: deps.pool,
+        redis: deps.redis,
+      });
       if (!claims) return;
 
       const params = MediaIdParamSchema.safeParse(request.params);
@@ -261,7 +283,11 @@ export async function registerMediaCertificationRoutes(
   );
 
   app.get("/v1/users/me/media", async (request, reply) => {
-    const claims = authenticateRequest(request, reply, deps.authSecret);
+    const claims = await authenticateRequest(request, reply, {
+      authSecret: deps.authSecret,
+      pool: deps.pool,
+      redis: deps.redis,
+    });
     if (!claims) return;
 
     try {
@@ -280,10 +306,10 @@ export async function registerMediaCertificationRoutes(
   app.get<{ Params: { id: string } }>(
     "/v1/admin/users/:id/media",
     async (request, reply) => {
-      const claims = authenticateRequest(
+      const claims = await authenticateRequest(
         request,
         reply,
-        deps.authSecret,
+        { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
         ADMIN_MEDIA_VIEWER_ROLES,
       );
       if (!claims) return;
@@ -310,10 +336,10 @@ export async function registerMediaCertificationRoutes(
   app.patch<{ Params: { mediaId: string } }>(
     "/v1/admin/user-media/:mediaId/review",
     async (request, reply) => {
-      const claims = authenticateRequest(
+      const claims = await authenticateRequest(
         request,
         reply,
-        deps.authSecret,
+        { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
         OPS_ADMIN_ONLY,
       );
       if (!claims) return;
@@ -331,6 +357,7 @@ export async function registerMediaCertificationRoutes(
           claims,
           deps.s3Config,
           body.data,
+          deps.redis,
         );
         return { document };
       } catch (err) {
