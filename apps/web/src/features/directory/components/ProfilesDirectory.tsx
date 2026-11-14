@@ -27,6 +27,7 @@ import {
   resolveVehiclePicture,
 } from "@/shared/ui/EntityAvatar";
 import { EntityMediaPair } from "@/shared/ui/EntityMediaPair";
+import { BookmarkButton } from "@/shared/ui/BookmarkButton";
 import { useImageLightbox } from "@/shared/ui/ImageLightboxProvider";
 import {
   RegionTabs,
@@ -361,7 +362,22 @@ export function ProfilesDirectory({
                     </div>
                   </div>
 
-                  <div className="flex justify-end border-t border-slate-100 pt-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
+                    <BookmarkButton
+                      compact
+                      entry={{
+                        id: doc.id,
+                        kind: "DOCTOR",
+                        countryCode: doc.countryCode,
+                        title: doc.fullName,
+                        subtitle: `${doc.specialty} · ${doc.facilityName ?? doc.countryCode}`,
+                        ...(doc.facilityId ? { facilityId: doc.facilityId } : {}),
+                        ...(doc.facilityName
+                          ? { facilityName: doc.facilityName }
+                          : {}),
+                        href: `/booking?country=${doc.countryCode}&doctorId=${doc.id}`,
+                      }}
+                    />
                     <Link
                       href={`/booking?country=${doc.countryCode}&doctorId=${doc.id}`}
                       className="inline-flex min-h-[36px] items-center rounded-lg bg-teal-800 px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-teal-900"
@@ -449,7 +465,24 @@ export function ProfilesDirectory({
                     </div>
                   </div>
 
-                  <div className="flex justify-end border-t border-slate-100 pt-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
+                    <BookmarkButton
+                      compact
+                      entry={{
+                        id: nurse.id,
+                        kind: "NURSE",
+                        countryCode: nurse.countryCode,
+                        title: nurse.fullName,
+                        subtitle: `${nurse.specialty} · ${nurse.facilityName ?? nurse.countryCode}`,
+                        ...(nurse.facilityId
+                          ? { facilityId: nurse.facilityId }
+                          : {}),
+                        ...(nurse.facilityName
+                          ? { facilityName: nurse.facilityName }
+                          : {}),
+                        href: `/booking?country=${nurse.countryCode}&doctorId=${nurse.id}&provider=nurse`,
+                      }}
+                    />
                     <Link
                       href={`/booking?country=${nurse.countryCode}&doctorId=${nurse.id}&provider=nurse`}
                       className="inline-flex min-h-[36px] items-center rounded-lg bg-teal-800 px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-teal-900"
@@ -657,7 +690,27 @@ export function ProfilesDirectory({
                     </div>
                   </div>
 
-                  <div className="flex justify-end border-t border-slate-100 pt-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
+                    <BookmarkButton
+                      compact
+                      entry={{
+                        id: fac.id,
+                        kind:
+                          fac.kind === "PHARMACY"
+                            ? "PHARMACY"
+                            : fac.kind === "DIAGNOSTIC_LAB"
+                              ? "LAB"
+                              : fac.kind === "HOSPITAL"
+                                ? "HOSPITAL"
+                                : "CLINIC",
+                        countryCode: fac.countryCode,
+                        title: fac.name,
+                        subtitle: `${kindLabel} · ${fac.address}`,
+                        facilityId: fac.id,
+                        facilityName: fac.name,
+                        href: targetHref,
+                      }}
+                    />
                     <Link
                       href={targetHref}
                       className="inline-flex min-h-[36px] items-center rounded-lg border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-800 transition-colors hover:border-teal-700 hover:text-teal-900"

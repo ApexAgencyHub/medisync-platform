@@ -949,7 +949,70 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
           ) : null}
 
           {activeTab === "register" ? (
-            <form onSubmit={handleRegisterSubmit} className="mt-6 space-y-4">
+            <form onSubmit={handleRegisterSubmit} className="mt-6 space-y-5">
+              {/* Visual Role Cards for Simple Multi-Portal Onboarding */}
+              <div className="space-y-2">
+                <p className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                  Choose Your Role on the Platform
+                </p>
+                <div
+                  role="radiogroup"
+                  aria-label="Account role cards"
+                  className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3"
+                >
+                  {PublicSelfRegisterRoleSchema.options.map((roleOption) => {
+                    const selected = regRole === roleOption;
+                    const needsVerification =
+                      roleOption === "DOCTOR" ||
+                      roleOption === "DRIVER" ||
+                      roleOption === "PHARMACIST" ||
+                      roleOption === "LAB_TECH";
+                    const summaryMap: Record<PublicSelfRegisterRole, string> = {
+                      PATIENT: "Book visits, fast-book transport & save docs",
+                      CAREGIVER: "Coordinate care, slots & rides for family",
+                      DOCTOR: "Publish schedule, notes & QR prescriptions",
+                      DRIVER: "Receive live Fast Book pings & route fees",
+                      CLINIC_STAFF: "Manage clinic doctors & intake queue",
+                      HOSPITAL_ADMIN: "Manage emergency hub beds & fleet",
+                      PHARMACIST: "Verify QR scripts & fulfill storefront orders",
+                      LAB_TECH: "Receive diagnostic panels & upload reports",
+                    };
+                    return (
+                      <button
+                        key={roleOption}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        onClick={() => setRegRole(roleOption)}
+                        className={`flex flex-col items-start rounded-xl border p-3 text-left transition-colors active:scale-[0.99] ${
+                          selected
+                            ? "border-teal-800 bg-teal-50/70 ring-1 ring-teal-800"
+                            : "border-slate-200 bg-slate-50/60 hover:border-teal-700"
+                        }`}
+                      >
+                        <div className="flex w-full items-center justify-between gap-1.5">
+                          <span className="text-xs font-bold text-slate-900">
+                            {ROLE_LABELS[roleOption]}
+                          </span>
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                              needsVerification
+                                ? "bg-amber-100 text-amber-900"
+                                : "bg-emerald-100 text-emerald-900"
+                            }`}
+                          >
+                            {needsVerification ? "ID Verified" : "Instant"}
+                          </span>
+                        </div>
+                        <span className="mt-1 text-[11px] leading-snug text-slate-600">
+                          {summaryMap[roleOption]}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <label
@@ -1032,11 +1095,22 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
                 </div>
               </div>
 
-              <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                Your profile will be registered for{" "}
-                <strong className="font-semibold text-slate-900">{selectedCountry}</strong>{" "}
-                care services. Administrative staff accounts are provisioned internally.
-              </p>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs text-slate-700">
+                <p>
+                  Registered for{" "}
+                  <strong className="font-semibold text-slate-900">
+                    {selectedCountry}
+                  </strong>{" "}
+                  network.{" "}
+                  {regRole === "DOCTOR"
+                    ? "Verification step: After signing up, upload your National Medical License and Clinic photo in the Facility & Credentials tab so Ops Admin activates your public booking slots."
+                    : regRole === "DRIVER"
+                      ? "Verification step: After signing up, upload your Driver License and Vehicle Inspection Photo so Ops Admin unlocks live Fast-Book dispatch alerts & payouts."
+                      : regRole === "PHARMACIST" || regRole === "LAB_TECH"
+                        ? "Verification step: Upload your Pharmacy or Lab certification in the credentials tab before dispensing or reporting."
+                        : "Patients & Caregivers activate immediately — saved bookmarks, visit deadlines, and doctor-shared documents sync once signed in."}
+                </p>
+              </div>
 
               <button
                 type="submit"
