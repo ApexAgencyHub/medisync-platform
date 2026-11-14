@@ -12,12 +12,15 @@ import {
   type VisitMode,
 } from "@medisync/contracts";
 import { checkBackendOnline } from "@/shared/api/directory-client";
+import { ensureGuestPatientSession } from "@/shared/auth/guest-session";
 import {
   clearStoredSession,
   readStoredSession,
 } from "@/shared/auth/session-storage";
 import { formatVisitMode } from "@/shared/i18n/human-labels";
 import { useLocale } from "@/shared/i18n/locale-store";
+import { addGuestActivityPass } from "@/shared/patient/patient-local-store";
+import { BookmarkButton } from "@/shared/ui/BookmarkButton";
 import {
   resolveDefaultAvatar,
   resolveFacilityPicture,
@@ -251,7 +254,8 @@ export function BookingWorkspace({
     return Array.from(map.values());
   }, [slots, doctorIdFilter, providerFilter]);
 
-  async function refreshSlotsAndAppointments() {
+  async function refreshSlotsAndAppointments(tokenOverride?: string | null) {
+    const activeToken = tokenOverride ?? session?.token;
     const [slotsRes, apptsRes] = await Promise.all([
       fetchAvailableSlots(apiBaseUrl, {
         date: selectedDate,
@@ -261,8 +265,8 @@ export function BookingWorkspace({
         ...(visitModeFilter !== "ALL" ? { visitMode: visitModeFilter } : {}),
         includeBooked,
       }),
-      session?.token
-        ? fetchAppointments(apiBaseUrl, session.token, selectedCountry)
+      activeToken
+        ? fetchAppointments(apiBaseUrl, activeToken, selectedCountry)
         : Promise.resolve(null),
     ]);
 
@@ -296,17 +300,43 @@ export function BookingWorkspace({
   }
 
   async function handleBookSlot(slot: AvailableSlot) {
-    if (!session?.token) {
-      setBanner({
-        tone: "error",
-        text: "Sign in on the Care Portal first to confirm a consultation slot.",
-      });
-      return;
+    let activeToken = session?.token ?? null;
+    if (!activeToken) {
+      if (apiOnline) {
+        setBusy(true);
+        const guestSession = await ensureGuestPatientSession(
+          apiBaseUrl,
+          selectedCountry,
+        );
+        if (guestSession) {
+          setSession(guestSession);
+          activeToken = guestSession.token;
+        }
+      }
+      if (!activeToken) {
+        const trackingCode = `VISIT-${Math.floor(1000 + Math.random() * 9000)}`;
+        addGuestActivityPass({
+          id: `appt-${slot.scheduleId}-${slot.slotStartIso}`,
+          kind: "APPOINTMENT",
+          countryCode: slot.countryCode,
+          title: `${slot.doctorName} (${formatVisitMode(slot.visitMode)})`,
+          landmarkOrFacility: slot.facilityName,
+          scheduledAtIso: slot.slotStartIso,
+          trackingCode,
+          statusLabel: "Guest Visit Pass Held",
+        });
+        setBusy(false);
+        setBanner({
+          tone: "success",
+          text: `Saved Guest Visit Pass ${trackingCode} for ${slot.doctorName} (${slot.facilityName}). Check countdown & details in My Care.`,
+        });
+        return;
+      }
     }
 
     setBusy(true);
     const trimmedReason = bookingReason.trim();
-    const res = await createAppointment(apiBaseUrl, session.token, {
+    const res = await createAppointment(apiBaseUrl, activeToken, {
       scheduleId: slot.scheduleId,
       slotStartIso: slot.slotStartIso,
       visitMode: slot.visitMode,
@@ -330,7 +360,7 @@ export function BookingWorkspace({
       tone: "success",
       text: `Confirmed ${formatVisitMode(res.data.appointment.visitMode)} booking with ${res.data.appointment.doctorName} at ${res.data.appointment.facilityName}.`,
     });
-    await refreshSlotsAndAppointments();
+    await refreshSlotsAndAppointments(activeToken);
   }
 
   async function handleTransitionStatus(
@@ -656,6 +686,20 @@ export function BookingWorkspace({
                             </p>
                           </div>
                         </div>
+
+                        <BookmarkButton
+                          compact
+                          entry={{
+                            id: group.doctorUserId,
+                            kind: nurseTrack ? "NURSE" : "DOCTOR",
+                            countryCode: group.countryCode,
+                            title: group.doctorName,
+                            subtitle: `${group.specialty} · ${group.facilityName}`,
+                            facilityId: group.facilityId,
+                            facilityName: group.facilityName,
+                            href: `/booking?doctorId=${encodeURIComponent(group.doctorUserId)}`,
+                          }}
+                        />
                       </div>
 
                       <div className="mt-3 flex flex-wrap gap-1.5 border-t border-slate-200/80 pt-3">
@@ -753,15 +797,24 @@ export function BookingWorkspace({
             {!session ? (
               <div className="mt-4 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
                 <p>
-                  Sign in via the Care Portal to reserve open time slots and
-                  manage upcoming clinic or video visits.
+                  Tap any time slot on the left and hit{" "}
+                  <strong className="font-semibold text-slate-900">Reserve Visit</strong>{" "}
+                  immediately without creating an account, or sign in via the Care Portal to sync history across devices.
                 </p>
-                <Link
-                  href="/portal"
-                  className="inline-flex min-h-[36px] items-center rounded-lg bg-teal-800 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-teal-900"
-                >
-                  Open Sign-In Portal
-                </Link>
+                <div className="flex flex-wrap gap-2">
+                  <Link
+                    href="/patient"
+                    className="inline-flex min-h-[36px] items-center rounded-lg bg-teal-800 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-teal-900"
+                  >
+                    Open My Care & Deadlines
+                  </Link>
+                  <Link
+                    href="/portal"
+                    className="inline-flex min-h-[36px] items-center rounded-lg border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-800 hover:border-teal-700"
+                  >
+                    Care Portal Sign-In
+                  </Link>
+                </div>
               </div>
             ) : appointments.length === 0 ? (
               <p className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">

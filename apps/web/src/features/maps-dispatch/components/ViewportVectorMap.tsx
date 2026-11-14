@@ -27,6 +27,7 @@ import {
   Plus,
   RotateCcw,
   Search,
+  Stethoscope,
 } from "lucide-react";
 import {
   formatDriverStatus,
@@ -44,16 +45,29 @@ import {
   type ViewportBox,
 } from "../presets";
 
+export interface LiveDoctorPin {
+  id: string;
+  name: string;
+  specialty: string;
+  facilityId: string;
+  facilityName: string;
+  lat: number;
+  lng: number;
+}
+
 interface ViewportVectorMapProps {
   countryCode: string;
   viewport: ViewportBox;
   facilities: readonly ViewportFacilityItem[];
   drivers: readonly LiveDriverMarker[];
+  doctorPins?: readonly LiveDoctorPin[];
   selectedFacilityId: string | null;
+  selectedDoctorId?: string | null;
   postgisQueryMs: number | null;
   redisQueryMs: number | null;
   busy: boolean;
   onSelectFacility: (facilityId: string) => void;
+  onSelectDoctor?: (doctorId: string) => void;
   onZoom: (factor: number) => void;
   onPan: (dLat: number, dLng: number) => void;
   onReset: () => void;
@@ -92,11 +106,14 @@ export function ViewportVectorMap({
   viewport,
   facilities,
   drivers,
+  doctorPins = [],
   selectedFacilityId,
+  selectedDoctorId = null,
   postgisQueryMs,
   redisQueryMs,
   busy,
   onSelectFacility,
+  onSelectDoctor,
   onZoom,
   onPan,
   onReset,
@@ -467,7 +484,40 @@ export function ViewportVectorMap({
           );
         })}
 
-        {facilities.length === 0 && drivers.length === 0 ? (
+        {/* Nearby Verified Doctor Pins (anchored near their clinic) */}
+        {doctorPins.map((doc) => {
+          const px = lngToWorldPx(doc.lng, zoom) - originX;
+          const py = latToWorldPx(doc.lat, zoom) - originY;
+          if (
+            px < -40 ||
+            px > size.width + 40 ||
+            py < -40 ||
+            py > size.height + 40
+          ) {
+            return null;
+          }
+          const isSelected = doc.id === selectedDoctorId;
+          return (
+            <button
+              key={`doc-${doc.id}`}
+              type="button"
+              onClick={() => onSelectDoctor?.(doc.id)}
+              style={{ left: `${px}px`, top: `${py}px` }}
+              title={`${doc.name} · ${doc.specialty}`}
+              aria-label={`Select doctor ${doc.name}`}
+              className={`absolute -translate-x-1/2 -translate-y-1/2 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold shadow-sm transition-transform hover:scale-105 ${
+                isSelected
+                  ? "z-25 scale-105 border-slate-900 bg-emerald-700 text-white ring-2 ring-slate-900 ring-offset-1"
+                  : "z-15 border-emerald-700 bg-white text-emerald-950"
+              }`}
+            >
+              <Stethoscope className="h-3 w-3 shrink-0" aria-hidden="true" />
+              <span className="max-w-[96px] truncate">{doc.name}</span>
+            </button>
+          );
+        })}
+
+        {facilities.length === 0 && drivers.length === 0 && doctorPins.length === 0 ? (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-6 text-center">
             <p className="max-w-sm rounded-xl border border-slate-200 bg-white/95 px-4 py-3 text-xs leading-relaxed text-slate-600 shadow-sm backdrop-blur-xs">
               {t("map.emptyOverlay")}

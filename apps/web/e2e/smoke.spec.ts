@@ -189,6 +189,16 @@ for (const vp of VIEWPORTS) {
     await page.getByRole("tab", { name: /Register$/i }).click();
     await expect(page.getByLabel("Account Type")).toBeVisible();
     await expect(page.getByLabel("Account Type")).not.toContainText("OPS_ADMIN");
+    await expect(
+      page.getByRole("radiogroup", { name: "Account role cards" }),
+    ).toBeVisible();
+    await page
+      .getByRole("radio", { name: /Medical Transport/i })
+      .click();
+    await expect(
+      page.getByText(/upload your Driver License and Vehicle Inspection Photo/i),
+    ).toBeVisible();
+    await page.getByRole("radio", { name: /Patient/i }).first().click();
 
     await page.getByRole("tab", { name: /Register Facility/i }).click();
     const licenseInput = page.getByLabel(/Ministry License \(MA\)/i);
@@ -243,6 +253,17 @@ for (const vp of VIEWPORTS) {
     await expect(page.getByText(/Casablanca Central Metro/i)).toBeVisible();
     await page.getByRole("button", { name: "Hospitals", exact: true }).click();
     await page.getByRole("button", { name: "Zoom in viewport" }).click();
+
+    await expect(
+      page.getByRole("heading", { name: /1-Tap Fast Book/i }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Doctors & Nurses" }).click();
+    await expect(page.getByText(/Nearby Doctors & Nurses \(/i)).toBeVisible();
+
+    const saveButtonsOnMap = page.locator('button[aria-label^="Save "]');
+    if ((await saveButtonsOnMap.count()) > 0) {
+      await saveButtonsOnMap.first().click();
+    }
 
     const hasOverflowMap = await page.evaluate(
       () => document.documentElement.scrollWidth > window.innerWidth,
@@ -395,10 +416,57 @@ for (const vp of VIEWPORTS) {
       () => document.documentElement.scrollWidth > window.innerWidth,
     );
 
+    // Navigate from /admin to Phase 6 Patient Care Hub (/patient)
+    await navigateTo("My Care");
+    await expect(
+      page.getByRole("heading", {
+        name: /My Saved Doctors, Deadlines & Shared Documents/i,
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(/Your private clinical documents stay protected/i),
+    ).toBeVisible();
+
+    const hasOverflowPatient = await page.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth,
+    );
+
+    // Trigger 1-Tap Fast Book from /map and verify live pickup tracking persists across reload on /patient
+    await page.getByRole("link", { name: /1-Tap Fast Book Ride/i }).click();
+    await expect(
+      page.getByRole("heading", { name: /1-Tap Fast Book/i }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: /Fast Book Nearest Driver/i })
+      .click();
+    await expect(
+      page.getByText(/1-Tap Fast Book.*broadcasted/i),
+    ).toBeVisible();
+
+    await navigateTo("My Care");
+    await page.waitForURL("**/patient");
+    await expect(
+      page.getByRole("heading", {
+        name: /My Saved Doctors, Deadlines & Shared Documents/i,
+      }),
+    ).toBeVisible();
+    await page.reload();
+    await expect(
+      page.getByRole("heading", {
+        name: /My Saved Doctors, Deadlines & Shared Documents/i,
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(/Medical Pickup (Alert|Request)/i).first(),
+    ).toBeVisible();
+
     expect(pageErrors, "Unexpected uncaught page errors").toEqual([]);
     expect(consoleErrors, "Unexpected console.error logs").toEqual([]);
     expect(badResponses, "Unexpected >= 400 HTTP responses").toEqual([]);
     expect(hasOverflowAdmin, "Horizontal scroll overflow on /admin").toBe(
+      false,
+    );
+    expect(hasOverflowPatient, "Horizontal scroll overflow on /patient").toBe(
       false,
     );
   });

@@ -7,6 +7,7 @@ import {
   FacilityKindSchema,
   type AuthResponse,
   type CountryPack,
+  type DirectoryDoctorSummary,
   type DirectoryDriverSummary,
   type DispatchRequestSummary,
   type DispatchUrgency,
@@ -17,8 +18,10 @@ import {
 } from "@medisync/contracts";
 import {
   checkBackendOnline,
+  fetchDirectoryDoctors,
   fetchDirectoryDrivers,
 } from "@/shared/api/directory-client";
+import { ensureGuestPatientSession } from "@/shared/auth/guest-session";
 import {
   clearStoredSession,
   readStoredSession,
@@ -30,6 +33,8 @@ import {
   formatUrgencyLabel,
 } from "@/shared/i18n/human-labels";
 import { useLocale } from "@/shared/i18n/locale-store";
+import { addGuestActivityPass } from "@/shared/patient/patient-local-store";
+import { BookmarkButton } from "@/shared/ui/BookmarkButton";
 import {
   resolveDefaultAvatar,
   resolveFacilityPicture,
@@ -52,6 +57,8 @@ import {
   Navigation,
   Radio,
   Siren,
+  Stethoscope,
+  Zap,
 } from "lucide-react";
 import {
   createDispatchRequest,
@@ -68,18 +75,21 @@ import {
   zoomViewport,
   type ViewportBox,
 } from "../presets";
-import { ViewportVectorMap } from "./ViewportVectorMap";
+import { ViewportVectorMap, type LiveDoctorPin } from "./ViewportVectorMap";
 
 interface DispatchConsoleProps {
   packs: readonly CountryPack[];
   apiBaseUrl: string;
 }
 
+type MapSectorFilter = FacilityKind | "ALL" | "DOCTOR";
+
 const SECTOR_FILTER_OPTIONS: ReadonlyArray<{
   label: string;
-  value: FacilityKind | "ALL";
+  value: MapSectorFilter;
 }> = [
   { label: "All Sectors", value: "ALL" },
+  { label: "Doctors & Nurses", value: "DOCTOR" },
   { label: "Hospitals", value: "HOSPITAL" },
   { label: "Clinics", value: "CLINIC" },
   { label: "Pharmacies", value: "PHARMACY" },
@@ -94,16 +104,22 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
   const [viewport, setViewport] = useState<ViewportBox>(() =>
     getPresetForCountry(defaultCode),
   );
-  const [sectorFilter, setSectorFilter] = useState<FacilityKind | "ALL">("ALL");
+  const [sectorFilter, setSectorFilter] = useState<MapSectorFilter>("ALL");
   const [openNowOnly, setOpenNowOnly] = useState(false);
 
   const [facilities, setFacilities] = useState<ViewportFacilityItem[]>([]);
+  const [directoryDoctors, setDirectoryDoctors] = useState<
+    DirectoryDoctorSummary[]
+  >([]);
   const [directoryDrivers, setDirectoryDrivers] = useState<
     DirectoryDriverSummary[]
   >([]);
   const [selectedFacilityId, setSelectedFacilityId] = useState<string | null>(
     null,
   );
+  const [selectedDoctorId, setSelectedDoctorId] = useState<string | null>(null);
+  const [guestPhone, setGuestPhone] = useState("");
+  const [showManualCoords, setShowManualCoords] = useState(false);
   const [postgisQueryMs, setPostgisQueryMs] = useState<number | null>(null);
 
   const [session, setSession] = useState<AuthResponse | null>(null);
@@ -177,7 +193,7 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
     if (!apiOnline) return;
     let active = true;
     const kindParam =
-      sectorFilter === "ALL"
+      sectorFilter === "ALL" || sectorFilter === "DOCTOR"
         ? undefined
         : FacilityKindSchema.parse(sectorFilter);
 
@@ -191,6 +207,14 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
       if (vpRes.data.facilities[0] && !selectedFacilityId) {
         setSelectedFacilityId(vpRes.data.facilities[0].id);
       }
+    });
+
+    fetchDirectoryDoctors(apiBaseUrl, {
+      countryCode: selectedCountry,
+      limit: 15,
+    }).then((docsRes) => {
+      if (!active || !docsRes.ok) return;
+      setDirectoryDoctors(docsRes.doctors);
     });
 
     fetchDirectoryDrivers(apiBaseUrl, { countryCode: selectedCountry }).then(
@@ -327,7 +351,7 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
     setBanner(null);
 
     const kindParam =
-      sectorFilter === "ALL"
+      sectorFilter === "ALL" || sectorFilter === "DOCTOR"
         ? undefined
         : FacilityKindSchema.parse(sectorFilter);
 
@@ -373,16 +397,62 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
     });
   }
 
-  async function handleDispatchSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!sessionToken || !currentUser) return;
+  async function broadcastFastOrManualDispatch(options: {
+    address: string;
+    lat: number;
+    lng: number;
+    dispatchUrgency: DispatchUrgency;
+    phoneHint?: string;
+    isFastBook?: boolean;
+  }) {
+    const cleanAddress = options.address.trim() || `${activePack?.name ?? selectedCountry} Center Pickup`;
+    let activeToken = sessionToken;
+
+    if (!activeToken && apiOnline) {
+      setBusy(true);
+      const guestSession = await ensureGuestPatientSession(
+        apiBaseUrl,
+        selectedCountry,
+        options.phoneHint,
+      );
+      if (guestSession) {
+        setSession(guestSession);
+        activeToken = guestSession.token;
+      }
+    }
+
+    if (!activeToken || !apiOnline) {
+      setBusy(false);
+      const trackingCode = `FAST-${Math.floor(1000 + Math.random() * 9000)}`;
+      addGuestActivityPass({
+        id: `fast-${Date.now()}`,
+        kind: "FAST_BOOK",
+        countryCode: selectedCountry,
+        title:
+          options.dispatchUrgency === "URGENT"
+            ? "Urgent 1-Tap Fast Book"
+            : "1-Tap Medical Pickup Alert",
+        landmarkOrFacility: cleanAddress,
+        ...(options.phoneHint?.trim()
+          ? { phoneContact: options.phoneHint.trim() }
+          : {}),
+        scheduledAtIso: new Date(Date.now() + 12 * 60_000).toISOString(),
+        trackingCode,
+        statusLabel: `${availableDriversCount} nearby drivers alerted`,
+      });
+      setBanner({
+        tone: "success",
+        text: `1-Tap Fast Book alert broadcasted (Tracking #${trackingCode}). View live countdown & pass in My Care.`,
+      });
+      return;
+    }
 
     setBusy(true);
-    const res = await createDispatchRequest(apiBaseUrl, sessionToken, {
-      pickupLat: Number(pickupLat),
-      pickupLng: Number(pickupLng),
-      pickupAddress,
-      urgency,
+    const res = await createDispatchRequest(apiBaseUrl, activeToken, {
+      pickupLat: options.lat,
+      pickupLng: options.lng,
+      pickupAddress: cleanAddress,
+      urgency: options.dispatchUrgency,
       ...(selectedFacilityId ? { targetFacilityId: selectedFacilityId } : {}),
     });
     setBusy(false);
@@ -402,7 +472,60 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
     ]);
     setBanner({
       tone: "success",
-      text: `Dispatch request broadcasted (${res.data.dispatch.urgency}).`,
+      text: options.isFastBook
+        ? `1-Tap Fast Book broadcasted to ${availableDriversCount} nearby active driver(s)! Waiting for instant pickup claim.`
+        : `Dispatch request broadcasted (${res.data.dispatch.urgency}).`,
+    });
+  }
+
+  async function handleDispatchSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await broadcastFastOrManualDispatch({
+      address: pickupAddress,
+      lat: Number(pickupLat),
+      lng: Number(pickupLng),
+      dispatchUrgency: urgency,
+      phoneHint: guestPhone,
+      isFastBook: false,
+    });
+  }
+
+  async function handleFastBookNow(urgent: boolean) {
+    const selectedFacility =
+      facilities.find((f) => f.id === selectedFacilityId) ?? null;
+    await broadcastFastOrManualDispatch({
+      address:
+        pickupAddress.trim() ||
+        selectedFacility?.address ||
+        `${activePack?.name ?? selectedCountry} Center Pickup`,
+      lat: selectedFacility?.lat ?? Number(pickupLat),
+      lng: selectedFacility?.lng ?? Number(pickupLng),
+      dispatchUrgency: urgent ? "URGENT" : "ROUTINE",
+      phoneHint: guestPhone,
+      isFastBook: true,
+    });
+  }
+
+  async function handleQuickDriverStatus(nextStatus: DriverStatus) {
+    setDriverStatus(nextStatus);
+    if (!sessionToken || currentUser?.role !== "DRIVER") return;
+    setBusy(true);
+    const res = await sendDriverLocationPing(apiBaseUrl, sessionToken, {
+      lat: Number(driverLat),
+      lng: Number(driverLng),
+      status: nextStatus,
+    });
+    setBusy(false);
+    if (!res.ok) {
+      setBanner({
+        tone: "error",
+        text: `Status update failed (${res.error}).`,
+      });
+      return;
+    }
+    setBanner({
+      tone: "success",
+      text: `Driver status set to ${res.data.driver.status} and broadcast on live street map.`,
     });
   }
 
@@ -459,6 +582,32 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
     );
   }
 
+  const availableDriversCount = useMemo(
+    () =>
+      drivers.filter((d) => d.status === "AVAILABLE").length ||
+      directoryDrivers.length,
+    [drivers, directoryDrivers.length],
+  );
+
+  const doctorPins = useMemo<LiveDoctorPin[]>(() => {
+    const facMap = new Map(facilities.map((fac) => [fac.id, fac]));
+    const center = getViewportCenter(viewport);
+    return directoryDoctors.map((doc, idx) => {
+      const matched = doc.facilityId ? facMap.get(doc.facilityId) : undefined;
+      const spreadLat = (((idx % 3) - 1) * 0.0022);
+      const spreadLng = ((Math.floor(idx / 3) % 3) - 1) * 0.0026;
+      return {
+        id: doc.id,
+        name: doc.fullName,
+        specialty: doc.specialty,
+        facilityId: doc.facilityId ?? "",
+        facilityName: doc.facilityName ?? selectedCountry,
+        lat: matched ? matched.lat + spreadLat : center.lat + spreadLat * 2,
+        lng: matched ? matched.lng + spreadLng : center.lng + spreadLng * 2,
+      };
+    });
+  }, [directoryDoctors, facilities, selectedCountry, viewport]);
+
   const activePack =
     packs.find((p) => p.code === selectedCountry) ?? packs[0] ?? null;
 
@@ -499,7 +648,7 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
 
         <SessionAccountBar
           session={session}
-          prompt="Sign in on the Care Portal to request medical transport or track live ambulances."
+          prompt="Browse clinics, doctors, and nearby drivers or use 1-Tap Fast Book without an account. Sign in to sync live dispatch streams."
           onSignOut={() => {
             clearStoredSession();
             setSession(null);
@@ -546,13 +695,26 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
           <ViewportVectorMap
             countryCode={selectedCountry}
             viewport={viewport}
-            facilities={facilities}
+            facilities={sectorFilter === "DOCTOR" ? [] : facilities}
             drivers={drivers}
+            doctorPins={
+              sectorFilter === "ALL" || sectorFilter === "DOCTOR"
+                ? doctorPins
+                : []
+            }
             selectedFacilityId={selectedFacilityId}
+            selectedDoctorId={selectedDoctorId}
             postgisQueryMs={postgisQueryMs}
             redisQueryMs={redisQueryMs}
             busy={busy}
-            onSelectFacility={(id) => setSelectedFacilityId(id)}
+            onSelectFacility={(id) => {
+              setSelectedDoctorId(null);
+              setSelectedFacilityId(id);
+            }}
+            onSelectDoctor={(id) => {
+              setSelectedFacilityId(null);
+              setSelectedDoctorId(id);
+            }}
             onZoom={(factor) => setViewport((box) => zoomViewport(box, factor))}
             onPan={(dLat, dLng) =>
               setViewport((box) => panViewport(box, dLat, dLng))
@@ -561,6 +723,89 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
             onSearchViewport={() => void handleSearchViewport()}
             onViewportChange={setViewport}
           />
+
+          {/* Selected Doctor Pin Details */}
+          {(() => {
+            const activeDoctor =
+              directoryDoctors.find((d) => d.id === selectedDoctorId) ?? null;
+            if (!activeDoctor) return null;
+            const docPin = doctorPins.find((p) => p.id === activeDoctor.id);
+            return (
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3.5 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <EntityMediaPair
+                      primarySrc={resolveDefaultAvatar(
+                        activeDoctor.fullName,
+                        "DOCTOR",
+                        activeDoctor.specialty,
+                      )}
+                      primaryAlt={activeDoctor.fullName}
+                      primaryLabel="Doctor Portrait"
+                      secondarySrc={resolveFacilityPicture("CLINIC")}
+                      secondaryAlt={
+                        activeDoctor.facilityName ?? selectedCountry
+                      }
+                      secondaryLabel="Practicing Center"
+                      title={activeDoctor.fullName}
+                      subtitle={`${activeDoctor.specialty} · ${activeDoctor.facilityName ?? selectedCountry}`}
+                      badge="Verified Practitioner"
+                    />
+                    <div className="min-w-0 space-y-0.5">
+                      <p className="truncate font-bold text-emerald-950">
+                        <bdi dir="auto">{activeDoctor.fullName}</bdi>
+                      </p>
+                      <p className="truncate text-emerald-900">
+                        {activeDoctor.specialty} ·{" "}
+                        <bdi dir="auto">
+                          {activeDoctor.facilityName ?? selectedCountry}
+                        </bdi>
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <BookmarkButton
+                      compact
+                      entry={{
+                        id: activeDoctor.id,
+                        kind: "DOCTOR",
+                        countryCode: activeDoctor.countryCode,
+                        title: activeDoctor.fullName,
+                        subtitle: `${activeDoctor.specialty} · ${activeDoctor.facilityName ?? activeDoctor.countryCode}`,
+                        ...(activeDoctor.facilityId
+                          ? { facilityId: activeDoctor.facilityId }
+                          : {}),
+                        ...(activeDoctor.facilityName
+                          ? { facilityName: activeDoctor.facilityName }
+                          : {}),
+                        href: `/booking?country=${encodeURIComponent(activeDoctor.countryCode)}&doctorId=${encodeURIComponent(activeDoctor.id)}`,
+                      }}
+                    />
+                    <UiButton
+                      size="sm"
+                      onClick={() => {
+                        setPickupAddress(
+                          activeDoctor.facilityName ?? activeDoctor.fullName,
+                        );
+                        if (docPin) {
+                          setPickupLat(String(docPin.lat));
+                          setPickupLng(String(docPin.lng));
+                        }
+                      }}
+                    >
+                      Set Pickup Near Doctor
+                    </UiButton>
+                    <Link
+                      href={`/booking?country=${encodeURIComponent(activeDoctor.countryCode)}&doctorId=${encodeURIComponent(activeDoctor.id)}`}
+                      className="text-xs font-semibold text-teal-800 hover:underline"
+                    >
+                      Book Visit →
+                    </Link>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {(() => {
             const activeFacility =
@@ -621,6 +866,26 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
+                    <BookmarkButton
+                      compact
+                      entry={{
+                        id: activeFacility.id,
+                        kind:
+                          activeFacility.kind === "PHARMACY"
+                            ? "PHARMACY"
+                            : activeFacility.kind === "DIAGNOSTIC_LAB"
+                              ? "LAB"
+                              : activeFacility.kind === "HOSPITAL"
+                                ? "HOSPITAL"
+                                : "CLINIC",
+                        countryCode: activeFacility.countryCode,
+                        title: activeFacility.name,
+                        subtitle: `${formatFacilityKind(activeFacility.kind)} · ${activeFacility.address}`,
+                        facilityId: activeFacility.id,
+                        facilityName: activeFacility.name,
+                        href: `/map?country=${encodeURIComponent(activeFacility.countryCode)}&facilityId=${encodeURIComponent(activeFacility.id)}`,
+                      }}
+                    />
                     <UiButton
                       size="sm"
                       variant="primary"
@@ -643,6 +908,122 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
               </div>
             );
           })()}
+
+          {/* Nearby Doctors Section (visible under All Sectors & Doctors filter) */}
+          {sectorFilter === "ALL" || sectorFilter === "DOCTOR" ? (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wider text-slate-700">
+                  <Stethoscope className="h-4 w-4 text-emerald-700" aria-hidden="true" />
+                  <span>Nearby Doctors & Nurses ({directoryDoctors.length})</span>
+                </h2>
+                <Link
+                  href="/profiles"
+                  className="text-xs font-semibold text-teal-800 hover:underline"
+                >
+                  All Profiles →
+                </Link>
+              </div>
+              {directoryDoctors.length === 0 ? (
+                <p className="text-xs text-slate-500">
+                  {apiOnline
+                    ? "No verified practitioners found for this region yet."
+                    : "Connect backend API to view nearby practicing doctors & nurses."}
+                </p>
+              ) : (
+                <ul className="grid gap-2.5 sm:grid-cols-2">
+                  {directoryDoctors.slice(0, 6).map((doc) => (
+                    <li
+                      key={doc.id}
+                      onClick={() => {
+                        setSelectedFacilityId(null);
+                        setSelectedDoctorId(doc.id);
+                      }}
+                      className={`cursor-pointer rounded-xl border p-3 text-xs transition-colors ${
+                        selectedDoctorId === doc.id
+                          ? "border-emerald-700 bg-emerald-50/50"
+                          : "border-slate-200 bg-slate-50/70 hover:border-teal-700"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex min-w-0 items-center gap-2.5">
+                          <img
+                            src={resolveDefaultAvatar(
+                              doc.fullName,
+                              "DOCTOR",
+                              doc.specialty,
+                            )}
+                            alt={doc.fullName}
+                            className="h-10 w-10 shrink-0 rounded-full border border-slate-200 object-cover"
+                          />
+                          <div className="min-w-0">
+                            <p className="truncate font-bold text-slate-900">
+                              <bdi dir="auto">{doc.fullName}</bdi>
+                            </p>
+                            <p className="truncate text-[11px] font-medium text-emerald-800">
+                              {doc.specialty}
+                            </p>
+                            <p className="truncate text-[11px] text-slate-500">
+                              <bdi dir="auto">
+                                {doc.facilityName ?? doc.countryCode}
+                              </bdi>
+                            </p>
+                          </div>
+                        </div>
+                        <div
+                          className="shrink-0"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <BookmarkButton
+                            compact
+                            entry={{
+                              id: doc.id,
+                              kind: "DOCTOR",
+                              countryCode: doc.countryCode,
+                              title: doc.fullName,
+                              subtitle: `${doc.specialty} · ${doc.facilityName ?? doc.countryCode}`,
+                              ...(doc.facilityId
+                                ? { facilityId: doc.facilityId }
+                                : {}),
+                              ...(doc.facilityName
+                                ? { facilityName: doc.facilityName }
+                                : {}),
+                              href: `/booking?country=${encodeURIComponent(doc.countryCode)}&doctorId=${encodeURIComponent(doc.id)}`,
+                            }}
+                          />
+                        </div>
+                      </div>
+                      <div
+                        className="mt-2.5 flex items-center justify-between gap-2 border-t border-slate-200/70 pt-2"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Link
+                          href={`/booking?country=${encodeURIComponent(doc.countryCode)}&doctorId=${encodeURIComponent(doc.id)}`}
+                          className="font-semibold text-teal-800 hover:underline"
+                        >
+                          Book Visit →
+                        </Link>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPickupAddress(doc.facilityName ?? doc.fullName);
+                            const pin = doctorPins.find((p) => p.id === doc.id);
+                            if (pin) {
+                              setPickupLat(String(pin.lat));
+                              setPickupLng(String(pin.lng));
+                            }
+                          }}
+                          className="font-semibold text-slate-700 hover:text-teal-900"
+                        >
+                          Pickup Here
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ) : null}
 
           <div className="space-y-2">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-700">
@@ -704,6 +1085,150 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
 
         {/* Right: Live Transport Fleet, Driver/Requester Tools & Active Dispatches */}
         <aside className="min-w-0 space-y-4 lg:col-span-5">
+          {/* Primary 1-Tap Fast Book Card (works for both Guests & Signed-In Users) */}
+          {currentUser?.role !== "DRIVER" ? (
+            <section className="rounded-2xl border border-teal-200 bg-white p-5 shadow-xs space-y-3.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-teal-800 text-white">
+                    <Zap className="h-4 w-4" aria-hidden="true" />
+                  </span>
+                  <div>
+                    <h2 className="text-base font-bold text-slate-900">
+                      1-Tap Fast Book
+                    </h2>
+                    <p className="text-[11px] text-slate-600">
+                      Alerts all nearby available medical drivers at once
+                    </p>
+                  </div>
+                </div>
+                <UiBadge tone="emerald">
+                  {availableDriversCount} Drivers Ready
+                </UiBadge>
+              </div>
+
+              <div className="space-y-2.5">
+                <UiInput
+                  type="text"
+                  value={pickupAddress}
+                  onChange={(e) => setPickupAddress(e.target.value)}
+                  placeholder="Pickup landmark, street, or tap a map pin (optional)"
+                  aria-label="Fast book pickup landmark"
+                />
+
+                {!currentUser ? (
+                  <UiInput
+                    type="tel"
+                    value={guestPhone}
+                    onChange={(e) => setGuestPhone(e.target.value)}
+                    placeholder="Phone or name for driver contact (optional, no account needed)"
+                    aria-label="Guest contact phone"
+                  />
+                ) : null}
+
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <UiButton
+                    variant="primary"
+                    size="lg"
+                    disabled={busy}
+                    onClick={() => void handleFastBookNow(false)}
+                    className="w-full"
+                  >
+                    <Zap className="h-4 w-4" aria-hidden="true" />
+                    <span>Fast Book Nearest Driver</span>
+                  </UiButton>
+                  <UiButton
+                    variant="danger"
+                    size="lg"
+                    disabled={busy}
+                    onClick={() => void handleFastBookNow(true)}
+                    className="w-full"
+                  >
+                    <Siren className="h-4 w-4" aria-hidden="true" />
+                    <span>Urgent Pickup Alert</span>
+                  </UiButton>
+                </div>
+              </div>
+
+              {/* Optional Pinpoint Coordinates Form for Power Users */}
+              <div className="border-t border-slate-100 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowManualCoords((prev) => !prev)}
+                  className="text-xs font-semibold text-teal-800 hover:underline"
+                >
+                  {showManualCoords
+                    ? "Hide custom GPS pinpoint fields"
+                    : "Adjust exact GPS pinpoint & urgency (optional)"}
+                </button>
+                {showManualCoords ? (
+                  <form
+                    onSubmit={handleDispatchSubmit}
+                    className="mt-3 space-y-2.5"
+                  >
+                    <UiInput
+                      type="text"
+                      required
+                      value={pickupAddress}
+                      onChange={(e) => setPickupAddress(e.target.value)}
+                      placeholder="Pickup street address"
+                      aria-label="Pickup address"
+                    />
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <UiInput
+                        type="number"
+                        step="any"
+                        required
+                        aria-label="Pickup latitude"
+                        value={pickupLat}
+                        onChange={(e) => setPickupLat(e.target.value)}
+                        className="font-mono-tabular"
+                      />
+                      <UiInput
+                        type="number"
+                        step="any"
+                        required
+                        aria-label="Pickup longitude"
+                        value={pickupLng}
+                        onChange={(e) => setPickupLng(e.target.value)}
+                        className="font-mono-tabular"
+                      />
+                    </div>
+                    <UiSelect
+                      aria-label="Dispatch urgency"
+                      value={urgency}
+                      onChange={(e) =>
+                        setUrgency(e.target.value as DispatchUrgency)
+                      }
+                    >
+                      <option value="ROUTINE">Standard Medical Transfer</option>
+                      <option value="URGENT">Urgent Care Pickup</option>
+                      <option value="EMERGENCY">Emergency Dispatch</option>
+                    </UiSelect>
+                    <UiButton
+                      type="submit"
+                      variant="secondary"
+                      disabled={busy}
+                      className="w-full"
+                    >
+                      Request Medical Pickup
+                    </UiButton>
+                  </form>
+                ) : null}
+              </div>
+
+              <div className="flex items-center justify-between border-t border-slate-100 pt-2 text-[11px] text-slate-600">
+                <span>Track active requests & saved places</span>
+                <Link
+                  href="/patient"
+                  className="font-semibold text-teal-800 hover:underline"
+                >
+                  Open My Care →
+                </Link>
+              </div>
+            </section>
+          ) : null}
+
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-4">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
@@ -800,14 +1325,53 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
           </section>
 
           {currentUser?.role === "DRIVER" ? (
-            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
-              <div className="flex items-center gap-2">
-                <Navigation className="h-4 w-4 text-teal-800" aria-hidden="true" />
-                <h2 className="text-base font-semibold text-slate-900">
-                  {t("map.driverBeaconTitle")}
-                </h2>
+            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Navigation className="h-4 w-4 text-teal-800" aria-hidden="true" />
+                  <h2 className="text-base font-semibold text-slate-900">
+                    {t("map.driverBeaconTitle")}
+                  </h2>
+                </div>
+                <UiBadge
+                  tone={
+                    driverStatus === "AVAILABLE"
+                      ? "emerald"
+                      : driverStatus === "OFF_DUTY"
+                        ? "slate"
+                        : "amber"
+                  }
+                >
+                  {driverStatus}
+                </UiBadge>
               </div>
-              <form onSubmit={handleDriverPingSubmit} className="mt-3 space-y-3">
+              <div className="grid grid-cols-3 gap-2">
+                <UiButton
+                  size="sm"
+                  variant={driverStatus === "AVAILABLE" ? "primary" : "secondary"}
+                  disabled={busy}
+                  onClick={() => void handleQuickDriverStatus("AVAILABLE")}
+                >
+                  Go Online
+                </UiButton>
+                <UiButton
+                  size="sm"
+                  variant={driverStatus === "EN_ROUTE" ? "primary" : "secondary"}
+                  disabled={busy}
+                  onClick={() => void handleQuickDriverStatus("EN_ROUTE")}
+                >
+                  En Route
+                </UiButton>
+                <UiButton
+                  size="sm"
+                  variant={driverStatus === "OFF_DUTY" ? "primary" : "secondary"}
+                  disabled={busy}
+                  onClick={() => void handleQuickDriverStatus("OFF_DUTY")}
+                >
+                  Off Duty
+                </UiButton>
+              </div>
+              <form onSubmit={handleDriverPingSubmit} className="space-y-3 border-t border-slate-100 pt-3">
                 <div className="grid grid-cols-2 gap-3">
                   <UiInput
                     type="number"
@@ -844,70 +1408,6 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
                   className="w-full"
                 >
                   Update Ambulance Location
-                </UiButton>
-              </form>
-            </section>
-          ) : null}
-
-          {currentUser &&
-          ["PATIENT", "CAREGIVER", "CLINIC_STAFF", "HOSPITAL_ADMIN", "OPS_ADMIN"].includes(
-            currentUser.role,
-          ) ? (
-            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
-              <div className="flex items-center gap-2">
-                <Siren className="h-4 w-4 text-red-700" aria-hidden="true" />
-                <h2 className="text-base font-semibold text-slate-900">
-                  Request Medical Transport
-                </h2>
-              </div>
-              <form onSubmit={handleDispatchSubmit} className="mt-3 space-y-3">
-                <p className="text-[11px] text-slate-500">
-                  Tip: Click any hospital or clinic on the map to auto-fill pickup details.
-                </p>
-                <UiInput
-                  type="text"
-                  required
-                  value={pickupAddress}
-                  onChange={(e) => setPickupAddress(e.target.value)}
-                  placeholder="Pickup street address"
-                  aria-label="Pickup address"
-                />
-                <div className="grid grid-cols-2 gap-3">
-                  <UiInput
-                    type="number"
-                    step="any"
-                    required
-                    aria-label="Pickup latitude"
-                    value={pickupLat}
-                    onChange={(e) => setPickupLat(e.target.value)}
-                    className="font-mono-tabular"
-                  />
-                  <UiInput
-                    type="number"
-                    step="any"
-                    required
-                    aria-label="Pickup longitude"
-                    value={pickupLng}
-                    onChange={(e) => setPickupLng(e.target.value)}
-                    className="font-mono-tabular"
-                  />
-                </div>
-                <UiSelect
-                  aria-label="Dispatch urgency"
-                  value={urgency}
-                  onChange={(e) => setUrgency(e.target.value as DispatchUrgency)}
-                >
-                  <option value="ROUTINE">Standard Medical Transfer</option>
-                  <option value="URGENT">Urgent Care Pickup</option>
-                  <option value="EMERGENCY">Emergency Dispatch</option>
-                </UiSelect>
-                <UiButton
-                  type="submit"
-                  variant="danger"
-                  disabled={busy}
-                  className="w-full"
-                >
-                  Request Medical Pickup
                 </UiButton>
               </form>
             </section>

@@ -18,7 +18,14 @@ const TRANSLATIONS: Record<LocaleCode, Record<string, string>> = {
     "menu.navigation": "Care Workspaces",
     "menu.language": "Language & Reading Direction",
     "nav.overview": "Overview",
+    "nav.patient": "My Care",
     "nav.profiles": "Profiles",
+
+    // Patient Care Hub (/patient)
+    "patient.eyebrow": "Personal Patient Care & Visit Tracker",
+    "patient.heading": "My Saved Doctors, Deadlines & Shared Documents",
+    "patient.subtitle":
+      "View bookmarked doctors and clinics, monitor upcoming visit and ride deadlines, and inspect doctor-shared notes, lab reports, and digital prescriptions.",
     "nav.map": "Live Map",
     "nav.booking": "Booking",
     "nav.clinical": "Clinical",
@@ -146,7 +153,14 @@ const TRANSLATIONS: Record<LocaleCode, Record<string, string>> = {
     "menu.navigation": "Espaces de soins",
     "menu.language": "Langue et sens de lecture",
     "nav.overview": "Aperçu",
+    "nav.patient": "Mon Espace Soins",
     "nav.profiles": "Profils",
+
+    // Patient Care Hub (/patient)
+    "patient.eyebrow": "Suivi Personnel des Soins & Rendez-vous",
+    "patient.heading": "Mes Médecins Favoris, Échéances & Documents",
+    "patient.subtitle":
+      "Retrouvez vos médecins et cliniques enregistrés, suivez les délais de vos visites et courses, et consultez vos comptes-rendus, bilans et ordonnances QR.",
     "nav.map": "Carte Live",
     "nav.booking": "Rendez-vous",
     "nav.clinical": "Clinique",
@@ -274,7 +288,14 @@ const TRANSLATIONS: Record<LocaleCode, Record<string, string>> = {
     "menu.navigation": "أقسام الرعاية الصحية",
     "menu.language": "اللغة واتجاه القراءة",
     "nav.overview": "نظرة عامة",
+    "nav.patient": "رعايتي الطبية",
     "nav.profiles": "الملفات",
+
+    // Patient Care Hub (/patient)
+    "patient.eyebrow": "لوحة المريض الشخصية والمواعيد",
+    "patient.heading": "أطبائي المفضلون، المواعيد القادمة، والوثائق الطبية",
+    "patient.subtitle":
+      "استعرض الأطباء والعيادات المحفوظة، وتابع المواعيد القادمة وحالة النقل، واطلع على الوصفات الرقمية وتقارير المختبر والزيارات.",
     "nav.map": "الخريطة الحية",
     "nav.booking": "الحجوزات",
     "nav.clinical": "السجل السريري",

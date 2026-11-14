@@ -6,6 +6,7 @@ import {
   Building2,
   CalendarCheck2,
   Globe,
+  HeartHandshake,
   Home,
   Map as MapIcon,
   Menu,
@@ -21,6 +22,7 @@ import { useLocale } from "../i18n/locale-store";
 
 export type AppRouteKey =
   | "/"
+  | "/patient"
   | "/profiles"
   | "/portal"
   | "/map"
@@ -37,6 +39,7 @@ interface NavItem {
 
 const NAV_ITEMS: readonly NavItem[] = [
   { href: "/", labelKey: "nav.overview", icon: Home },
+  { href: "/patient", labelKey: "nav.patient", icon: HeartHandshake },
   { href: "/profiles", labelKey: "nav.profiles", icon: Users },
   { href: "/map", labelKey: "nav.map", icon: MapIcon },
   { href: "/booking", labelKey: "nav.booking", icon: CalendarCheck2 },
