@@ -72,18 +72,62 @@ for (const vp of VIEWPORTS) {
     }, mediaPaths);
     expect(decodedCount).toBe(mediaPaths.length);
 
-    // Verify immediate care action launcher above the fold & multilingual toggle
+    // Helper: clicks visible desktop header nav link or opens the Sidebar Menu on smaller screens
+    const navigateTo = async (linkLabel: string) => {
+      const desktopNav = page
+        .getByRole("navigation", { name: "Primary Workspace Navigation" })
+        .getByRole("link", { name: linkLabel, exact: true });
+      if (await desktopNav.isVisible()) {
+        await desktopNav.click();
+        return;
+      }
+      await page
+        .getByRole("button", { name: /Open navigation and language menu/i })
+        .click();
+      await page
+        .getByRole("navigation", { name: "Sidebar Workspace Navigation" })
+        .getByRole("link", { name: linkLabel, exact: true })
+        .click();
+    };
+
+    // Verify top header does NOT render inline language toggles, and hero image opens zoom lightbox
+    await expect(
+      page
+        .locator("header")
+        .getByRole("group", { name: "Interface language selector" }),
+    ).toHaveCount(0);
+
+    await page
+      .getByRole("button", { name: /Zoom Connected Medical Care District/i })
+      .click();
+    const lightbox = page.getByRole("dialog", { name: /Image preview:/i });
+    await expect(lightbox).toBeVisible();
+    await expect(lightbox.getByText("100%")).toBeVisible();
+    await lightbox.getByRole("button", { name: "Zoom in image" }).click();
+    await expect(lightbox.getByText("150%")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(lightbox).toBeHidden();
+
+    // Verify immediate care action launcher above the fold & sidebar multilingual switcher
     await expect(
       page.getByRole("link", { name: /Find Care on Map/i }),
     ).toBeVisible();
+    await page
+      .getByRole("button", { name: /Open navigation and language menu/i })
+      .click();
     const langGroup = page.getByRole("group", {
       name: "Interface language selector",
     });
-    await langGroup.getByRole("button", { name: "FR", exact: true }).click();
+    await langGroup.getByRole("button", { name: /Français/i }).click();
+    await page.getByRole("button", { name: /Fermer le menu/i }).click();
     await expect(
       page.getByRole("link", { name: /Explorer la carte des soins/i }),
     ).toBeVisible();
-    await langGroup.getByRole("button", { name: "EN", exact: true }).click();
+    await page
+      .getByRole("button", { name: /Ouvrir le menu et les langues/i })
+      .click();
+    await langGroup.getByRole("button", { name: /English/i }).click();
+    await page.getByRole("button", { name: /Close menu/i }).click();
 
     // Interactive check: switch Care Region to Morocco (MA) and verify hotline 141
     await page.getByRole("button", { name: "MA", exact: true }).click();
@@ -96,7 +140,7 @@ for (const vp of VIEWPORTS) {
     expect(hasOverflowHome, "Horizontal scroll overflow on /").toBe(false);
 
     // Navigate to Clinical & Ops Access Portal (/portal)
-    await page.getByRole("link", { name: "Portal", exact: true }).click();
+    await navigateTo("Portal");
     await expect(
       page.getByRole("heading", { name: /Clinical & Ops Access Portal/i }),
     ).toBeVisible();
@@ -140,7 +184,7 @@ for (const vp of VIEWPORTS) {
     );
 
     // Navigate from /portal to Live Medical Map & Dispatch Console (/map)
-    await page.getByRole("link", { name: "Live Map", exact: true }).click();
+    await navigateTo("Live Map");
     await expect(
       page.getByRole("heading", { name: /Live Medical Map & Dispatch Console/i }),
     ).toBeVisible();
@@ -169,7 +213,7 @@ for (const vp of VIEWPORTS) {
     expect(hasOverflowMap, "Horizontal scroll overflow on /map").toBe(false);
 
     // Navigate from /map to Multi-Clinic Booking Engine (/booking)
-    await page.getByRole("link", { name: "Booking", exact: true }).click();
+    await navigateTo("Booking");
     await expect(
       page.getByRole("heading", {
         name: /Doctor Appointments & Clinic Hours/i,
@@ -201,7 +245,7 @@ for (const vp of VIEWPORTS) {
     );
 
     // Navigate from /booking to Clinical Care & Diagnostic Labs Workspace (/clinical)
-    await page.getByRole("link", { name: "Clinical", exact: true }).click();
+    await navigateTo("Clinical");
     await expect(
       page.getByRole("heading", {
         name: /Clinical Care, QR E-Prescriptions & Diagnostic Labs/i,
@@ -236,7 +280,7 @@ for (const vp of VIEWPORTS) {
     );
 
     // Navigate from /clinical to Pharmacy Storefront (/pharmacy)
-    await page.getByRole("link", { name: "Pharmacy", exact: true }).click();
+    await navigateTo("Pharmacy");
     await expect(
       page.getByRole("heading", {
         name: /Online Pharmacy Catalog & Courier Checkout/i,
@@ -258,11 +302,15 @@ for (const vp of VIEWPORTS) {
         .toBe(true);
     }
 
-    // Verify EN / FR / AR bilingual toggle updates document dir="rtl" cleanly then resets to EN
-    await page.getByRole("button", { name: "AR", exact: true }).click();
+    // Verify EN / FR / AR bilingual toggle in Sidebar Menu updates document dir="rtl" cleanly then resets to EN
+    await page
+      .getByRole("button", { name: /Open navigation and language menu/i })
+      .click();
+    await langGroup.getByRole("button", { name: /العربية/i }).click();
     const htmlDir = await page.evaluate(() => document.documentElement.dir);
     expect(htmlDir).toBe("rtl");
-    await page.getByRole("button", { name: "EN", exact: true }).click();
+    await langGroup.getByRole("button", { name: /English/i }).click();
+    await page.getByRole("button", { name: /Close menu/i }).click();
 
     const hasOverflowPharmacy = await page.evaluate(
       () => document.documentElement.scrollWidth > window.innerWidth,
@@ -272,7 +320,7 @@ for (const vp of VIEWPORTS) {
     );
 
     // Navigate from /pharmacy to Slice 5 Master Operations & Compliance Center (/admin)
-    await page.getByRole("link", { name: "Admin", exact: true }).click();
+    await navigateTo("Admin");
     await expect(
       page.getByRole("heading", {
         name: /Master Operations & Compliance Center/i,

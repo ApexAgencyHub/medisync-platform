@@ -1145,17 +1145,33 @@ export function ClinicalWorkspace({
                           >
                             <div className="flex min-w-0 items-center gap-2.5">
                               {isImg && media.uploadStatus === "UPLOADED" ? (
-                                <img
-                                  src={media.downloadUrl}
-                                  alt={media.fileName}
-                                  className="h-10 w-10 shrink-0 rounded-lg border border-slate-200 object-cover"
-                                />
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setPreviewMedia({
+                                      fileName: media.fileName,
+                                      mimeType: media.mimeType,
+                                      sizeBytes:
+                                        media.confirmedSizeBytes ?? media.sizeBytes,
+                                      downloadUrl: media.downloadUrl,
+                                      subtitle: `Clinical Media · ${media.uploadStatus}`,
+                                    })
+                                  }
+                                  aria-label={`Zoom scan ${media.fileName}`}
+                                  className="h-14 w-14 shrink-0 cursor-zoom-in overflow-hidden rounded-lg border border-slate-200 bg-white transition hover:border-teal-700"
+                                >
+                                  <img
+                                    src={media.downloadUrl}
+                                    alt={media.fileName}
+                                    className="h-full w-full object-cover"
+                                  />
+                                </button>
                               ) : (
-                                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-teal-800">
+                                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-teal-800">
                                   {isImg ? (
-                                    <ImageIcon className="h-4 w-4" aria-hidden="true" />
+                                    <ImageIcon className="h-5 w-5" aria-hidden="true" />
                                   ) : (
-                                    <FileText className="h-4 w-4" aria-hidden="true" />
+                                    <FileText className="h-5 w-5" aria-hidden="true" />
                                   )}
                                 </div>
                               )}

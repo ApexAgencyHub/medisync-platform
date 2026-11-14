@@ -12,6 +12,11 @@ let initializedFromStorage = false;
 const TRANSLATIONS: Record<LocaleCode, Record<string, string>> = {
   en: {
     "brand.tagline": "Connected Care Network",
+    "menu.open": "Open navigation and language menu",
+    "menu.close": "Close menu",
+    "menu.title": "Menu",
+    "menu.navigation": "Care Workspaces",
+    "menu.language": "Language & Reading Direction",
     "nav.overview": "Overview",
     "nav.map": "Live Map",
     "nav.booking": "Booking",
@@ -127,6 +132,11 @@ const TRANSLATIONS: Record<LocaleCode, Record<string, string>> = {
   },
   fr: {
     "brand.tagline": "Réseau de Soins Connecté",
+    "menu.open": "Ouvrir le menu et les langues",
+    "menu.close": "Fermer le menu",
+    "menu.title": "Menu",
+    "menu.navigation": "Espaces de soins",
+    "menu.language": "Langue et sens de lecture",
     "nav.overview": "Aperçu",
     "nav.map": "Carte Live",
     "nav.booking": "Rendez-vous",
@@ -242,6 +252,11 @@ const TRANSLATIONS: Record<LocaleCode, Record<string, string>> = {
   },
   ar: {
     "brand.tagline": "شبكة الرعاية الصحية المتصلة",
+    "menu.open": "فتح القائمة واللغة",
+    "menu.close": "إغلاق القائمة",
+    "menu.title": "القائمة",
+    "menu.navigation": "أقسام الرعاية الصحية",
+    "menu.language": "اللغة واتجاه القراءة",
     "nav.overview": "نظرة عامة",
     "nav.map": "الخريطة الحية",
     "nav.booking": "الحجوزات",

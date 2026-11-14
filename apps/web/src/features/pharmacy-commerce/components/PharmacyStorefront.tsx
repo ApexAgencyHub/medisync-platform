@@ -729,15 +729,16 @@ export function PharmacyStorefront({
                     className="flex flex-col justify-between rounded-2xl border border-slate-200 bg-white p-4 shadow-xs"
                   >
                     <div>
-                      <div className="relative mb-3 overflow-hidden rounded-xl border border-slate-100 bg-slate-50">
+                      <div className="relative mb-3">
                         <ProductThumbnail
                           name={product.name}
                           category={product.category}
+                          subtitle={`${product.facilityName} · ${formatMinorMoney(product.priceMinor, product.currencyCode)}`}
                           imageUrl={product.imageUrl}
-                          className="h-36 w-full border-0"
+                          className="h-52 sm:h-56 w-full"
                         />
                         <span
-                          className={`absolute top-2 left-2 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase shadow-xs ${
+                          className={`pointer-events-none absolute top-2.5 left-2.5 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase shadow-xs ${
                             product.requiresPrescription
                               ? "border border-amber-300 bg-amber-50 text-amber-900"
                               : "border border-teal-200 bg-white/95 text-teal-900"
@@ -822,8 +823,9 @@ export function PharmacyStorefront({
                         <ProductThumbnail
                           name={line.product.name}
                           category={line.product.category}
+                          subtitle={line.product.facilityName}
                           imageUrl={line.product.imageUrl}
-                          className="h-10 w-10 shrink-0 rounded-lg"
+                          className="h-14 w-14 shrink-0 rounded-lg"
                         />
                         <div className="min-w-0">
                           <p className="truncate text-xs font-semibold text-slate-900">
@@ -1252,8 +1254,9 @@ export function PharmacyStorefront({
                     <ProductThumbnail
                       name={prod.name}
                       category={prod.category}
+                      subtitle={prod.facilityName}
                       imageUrl={prod.imageUrl}
-                      className="h-10 w-10 shrink-0 rounded-lg"
+                      className="h-14 w-14 shrink-0 rounded-lg"
                     />
                     <div className="min-w-0">
                       <p className="truncate font-semibold text-slate-900">{prod.name}</p>
