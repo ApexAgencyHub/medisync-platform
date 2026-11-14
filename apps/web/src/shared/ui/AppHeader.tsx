@@ -73,7 +73,7 @@ export function AppHeader({ activeRoute, statusPill }: AppHeaderProps) {
   return (
     <>
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur-xs">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
           <Link href="/" className="min-w-0 shrink-0">
             <BrandMark />
           </Link>

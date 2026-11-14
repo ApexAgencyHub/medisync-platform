@@ -17,7 +17,7 @@ export default function HomePage() {
         statusPill={`${packs.length} Regions · 24/7 Care Network`}
       />
 
-      <main className="mx-auto max-w-6xl space-y-8 px-4 py-8 sm:px-6 lg:px-8">
+      <main className="mx-auto max-w-7xl space-y-8 px-4 py-7 sm:px-6 lg:px-8">
         {/* Hero Band */}
         <section className="grid items-center gap-8 lg:grid-cols-12">
           <HomeCareLaunchpad />

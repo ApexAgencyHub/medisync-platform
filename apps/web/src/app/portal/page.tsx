@@ -15,7 +15,7 @@ export default function PortalPage() {
     <div className="min-h-screen bg-slate-50 text-slate-900">
       <AppHeader activeRoute="/portal" />
 
-      <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">
+      <main className="mx-auto max-w-7xl px-4 py-7 sm:px-6 lg:px-8">
         <PortalWorkspace packs={packs} apiBaseUrl={apiBaseUrl} />
       </main>
     </div>

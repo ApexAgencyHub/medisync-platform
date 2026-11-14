@@ -1,59 +1,57 @@
 "use client";
 
 import Link from "next/link";
-import {
-  Activity,
-  Ambulance,
-  ArrowUpRight,
-  Building2,
-  FlaskConical,
-  Pill,
-  ShieldAlert,
-  Stethoscope,
-  Users,
-} from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import { useLocale } from "@/shared/i18n/locale-store";
 
 const ECOSYSTEM_PORTALS = [
   {
     id: "patient",
-    href: "/booking",
-    icon: Users,
+    href: "/patient",
+    imageSrc: "/media/avatars/patient.webp",
+    imageAlt: "Patient care portal",
   },
   {
     id: "doctor",
-    href: "/clinical",
-    icon: Stethoscope,
+    href: "/booking",
+    imageSrc: "/media/avatars/doctor-female.webp",
+    imageAlt: "Medical specialist consultation",
   },
   {
     id: "clinic",
-    href: "/clinical",
-    icon: Building2,
+    href: "/profiles",
+    imageSrc: "/media/facilities/clinic-interior.webp",
+    imageAlt: "Verified medical clinic",
   },
   {
     id: "hospital",
     href: "/map",
-    icon: Activity,
+    imageSrc: "/media/facilities/hospital-hub.webp",
+    imageAlt: "Emergency hospital care center",
   },
   {
     id: "driver",
     href: "/map",
-    icon: Ambulance,
+    imageSrc: "/media/vehicles/ambulance-van.webp",
+    imageAlt: "Medical ambulance and transport fleet",
   },
   {
     id: "pharmacy",
     href: "/pharmacy",
-    icon: Pill,
+    imageSrc: "/media/facilities/pharmacy-interior.webp",
+    imageAlt: "Dispensing pharmacy storefront",
   },
   {
     id: "lab",
     href: "/clinical",
-    icon: FlaskConical,
+    imageSrc: "/media/avatars/lab-tech.webp",
+    imageAlt: "Diagnostic lab and scans",
   },
   {
     id: "admin",
     href: "/admin",
-    icon: ShieldAlert,
+    imageSrc: "/media/avatars/driver-ems.webp",
+    imageAlt: "Operations compliance center",
   },
 ] as const;
 
@@ -76,22 +74,25 @@ export function EcosystemSlicesGrid() {
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {ECOSYSTEM_PORTALS.map((portal) => {
-          const Icon = portal.icon;
           const titleKey = `ecosystem.role.${portal.id}.title`;
           const summaryKey = `ecosystem.role.${portal.id}.summary`;
           return (
             <Link
               key={portal.id}
               href={portal.href}
-              className="group flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-5 transition-all hover:border-teal-700/60 hover:bg-slate-50/40 active:scale-[0.99]"
+              className="group flex h-full flex-col justify-between rounded-2xl border border-slate-200 bg-white p-4 shadow-xs transition-all hover:border-teal-700/60 hover:bg-slate-50/40 active:scale-[0.99]"
             >
               <div>
-                <div className="flex items-center justify-between">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-teal-50 text-teal-800">
-                    <Icon className="h-5 w-5" aria-hidden="true" />
+                <div className="flex items-start justify-between gap-2">
+                  <div className="h-12 w-12 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
+                    <img
+                      src={portal.imageSrc}
+                      alt={portal.imageAlt}
+                      className="h-full w-full object-cover transition-transform duration-150 group-hover:scale-105"
+                    />
                   </div>
                   <ArrowUpRight
-                    className="h-4 w-4 text-slate-400 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-teal-800"
+                    className="h-4 w-4 shrink-0 text-slate-400 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-teal-800"
                     aria-hidden="true"
                   />
                 </div>

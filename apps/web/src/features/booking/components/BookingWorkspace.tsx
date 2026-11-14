@@ -28,7 +28,11 @@ import {
 } from "@/shared/ui/EntityAvatar";
 import { EntityMediaPair } from "@/shared/ui/EntityMediaPair";
 import {
-  RegionTabs,
+  ACTIVE_COUNTRY_CODE,
+  resolveActivePack,
+} from "@/shared/config/deployment";
+import {
+  ActiveRegionPill,
   SessionAccountBar,
   StatusBanner,
   UiBadge,
@@ -36,7 +40,6 @@ import {
   UiInput,
   UiSelect,
   UiSwitch,
-  type RegionTabOption,
 } from "@/shared/ui/primitives";
 import { CalendarClock, Search, Stethoscope, Video } from "lucide-react";
 import {
@@ -110,7 +113,7 @@ export function BookingWorkspace({
   apiBaseUrl,
 }: BookingWorkspaceProps) {
   const { t } = useLocale();
-  const defaultCode = packs[0]?.code ?? "INTL";
+  const defaultCode = resolveActivePack(packs)?.code ?? ACTIVE_COUNTRY_CODE;
 
   const [selectedCountry, setSelectedCountry] = useState<string>(defaultCode);
   const [selectedDate, setSelectedDate] = useState<string>(
@@ -143,15 +146,6 @@ export function BookingWorkspace({
 
   const activePack =
     packs.find((pack) => pack.code === selectedCountry) ?? packs[0];
-
-  const regionOptions: readonly RegionTabOption[] = useMemo(
-    () =>
-      packs.map((pack) => ({
-        code: pack.code,
-        label: `${pack.code} · ${pack.name}`,
-      })),
-    [packs],
-  );
 
   useEffect(() => {
     const stored = readStoredSession();
@@ -422,16 +416,11 @@ export function BookingWorkspace({
             </p>
           </div>
 
-          <RegionTabs
-            value={selectedCountry}
-            onChange={(nextCountry) => {
-              setSelectedCountry(nextCountry);
-              setDoctorIdFilter("");
-              setFacilityFilterId("");
-              setSlots([]);
-              setBanner(null);
-            }}
-            options={regionOptions}
+          <ActiveRegionPill
+            code={selectedCountry}
+            name={activePack?.name ?? "Morocco"}
+            currencyCode={activePack?.currencyCode}
+            emergencyHotline={activePack?.emergencyHotlines.ambulance}
           />
         </div>
 
@@ -702,7 +691,7 @@ export function BookingWorkspace({
                         />
                       </div>
 
-                      <div className="mt-3 flex flex-wrap gap-1.5 border-t border-slate-200/80 pt-3">
+                      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 border-t border-slate-200/80 pt-3">
                         {group.slots.map((slot) => {
                           const slotKey = `${slot.scheduleId}-${slot.slotStartIso}`;
                           const isSelected =
@@ -776,7 +765,7 @@ export function BookingWorkspace({
           </section>
         </div>
 
-        <aside className="min-w-0 space-y-5 lg:col-span-5">
+        <aside className="min-w-0 space-y-5 lg:col-span-5 lg:sticky lg:top-20 self-start">
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
             <div className="flex items-center justify-between gap-2 border-b border-slate-200 pb-3">
               <h2 className="text-base font-bold text-slate-900">

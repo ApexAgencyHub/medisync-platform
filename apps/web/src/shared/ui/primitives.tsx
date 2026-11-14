@@ -8,7 +8,14 @@ import type {
   SelectHTMLAttributes,
 } from "react";
 import type { AuthResponse } from "@medisync/contracts";
-import { AlertCircle, CheckCircle2, Info, LogOut, UserCheck } from "lucide-react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  Globe,
+  Info,
+  LogOut,
+  UserCheck,
+} from "lucide-react";
 import { formatRoleLabel } from "../i18n/human-labels";
 import { EntityAvatar } from "./EntityAvatar";
 
@@ -205,6 +212,39 @@ export function StatusBanner({
 export interface RegionTabOption {
   code: string;
   label: string;
+}
+
+/**
+ * Compact read-only active region indicator for single-country deployments (Morocco MA default).
+ * Replaces multi-button country switchers to keep workspace chrome clean and focused.
+ */
+export function ActiveRegionPill({
+  code,
+  name,
+  currencyCode,
+  emergencyHotline,
+}: {
+  code: string;
+  name: string;
+  currencyCode?: string | undefined;
+  emergencyHotline?: string | undefined;
+}) {
+  return (
+    <div className="inline-flex flex-wrap items-center gap-2 rounded-full border border-teal-200 bg-teal-50/70 px-3 py-1 text-xs font-medium text-teal-950">
+      <Globe className="h-3.5 w-3.5 shrink-0 text-teal-800" aria-hidden="true" />
+      <span>
+        Care Region: <strong className="font-semibold">{name}</strong> ({code})
+      </span>
+      {currencyCode ? (
+        <span className="font-mono-tabular text-teal-800">· {currencyCode}</span>
+      ) : null}
+      {emergencyHotline ? (
+        <span className="font-mono-tabular font-semibold text-red-700">
+          · Emergency {emergencyHotline}
+        </span>
+      ) : null}
+    </div>
+  );
 }
 
 export const DEFAULT_REGION_TABS: readonly RegionTabOption[] = [

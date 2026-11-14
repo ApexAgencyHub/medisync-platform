@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 
 const VIEWPORTS = [
   { name: "desktop", width: 1440, height: 900 },
+  { name: "widescreen", width: 1920, height: 1080 },
   { name: "mobile", width: 390, height: 844 },
 ] as const;
 
@@ -139,10 +140,12 @@ for (const vp of VIEWPORTS) {
     await langGroup.getByRole("button", { name: /English/i }).click();
     await page.getByRole("button", { name: /Close menu/i }).click();
 
-    // Interactive check: switch Care Region to Morocco (MA) and verify hotline 141
-    await page.getByRole("button", { name: /^MA(\s·|$)/ }).first().click();
+    // Verify Morocco (MA) is active natively with hotline 141 and no region switcher buttons
     await expect(page.getByText(/Care Region: Morocco/i)).toBeVisible();
     await expect(page.getByText(/141 \/ 15/)).toBeVisible();
+    await expect(
+      page.getByRole("group", { name: "Country region switcher" }),
+    ).toHaveCount(0);
 
     const hasOverflowHome = await page.evaluate(
       () => document.documentElement.scrollWidth > window.innerWidth,
@@ -156,7 +159,7 @@ for (const vp of VIEWPORTS) {
         name: /Care Providers, Clinics, Hospitals & Transport Units/i,
       }),
     ).toBeVisible();
-    await page.getByRole("button", { name: /^MA(\s·|$)/ }).first().click();
+    await expect(page.getByText("Morocco", { exact: true }).first()).toBeVisible();
 
     const inspectTriggers = page.getByRole("button", {
       name: /^Inspect /i,
@@ -182,9 +185,8 @@ for (const vp of VIEWPORTS) {
       page.getByRole("heading", { name: /Clinical & Ops Access Portal/i }),
     ).toBeVisible();
 
-    // Switch Care Region to Morocco (MA) and test tabs + live license validation
-    await page.getByRole("button", { name: /^MA(\s·|$)/ }).first().click();
-    await expect(page.getByText(/Care Region:\s*Morocco/i)).toBeVisible();
+    // Verify Care Region defaults cleanly to Morocco (MA) and test tabs + live license validation
+    await expect(page.getByText(/Care Region:\s*Morocco/i).first()).toBeVisible();
 
     await page.getByRole("tab", { name: /Register$/i }).click();
     await expect(page.getByLabel("Account Type")).toBeVisible();
@@ -249,8 +251,22 @@ for (const vp of VIEWPORTS) {
       )
       .toBe(true);
 
-    await page.getByRole("button", { name: /^MA(\s·|$)/ }).first().click();
     await expect(page.getByText(/Casablanca Central Metro/i)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Pan north" })).toHaveCount(0);
+
+    const mapPhotoPins = page.locator('[role="region"] img[src*="/media/"]');
+    if ((await mapPhotoPins.count()) > 0) {
+      await expect
+        .poll(async () =>
+          mapPhotoPins
+            .first()
+            .evaluate(
+              (img: HTMLImageElement) => img.complete && img.naturalWidth > 0,
+            ),
+        )
+        .toBe(true);
+    }
+
     await page.getByRole("button", { name: "Hospitals", exact: true }).click();
     await page.getByRole("button", { name: "Zoom in viewport" }).click();
 
@@ -281,7 +297,6 @@ for (const vp of VIEWPORTS) {
       page.getByText(/Publish Multi-Clinic Shift Window/i),
     ).toHaveCount(0);
 
-    await page.getByRole("button", { name: /^MA(\s·|$)/ }).first().click();
     await expect(
       page.getByText(/Available Practitioners & Time Windows/i),
     ).toBeVisible();
@@ -400,7 +415,6 @@ for (const vp of VIEWPORTS) {
       }),
     ).toBeVisible();
 
-    await page.getByRole("button", { name: /^MA(\s·|$)/ }).first().click();
     await expect(page.getByText("MAD", { exact: true })).toBeVisible();
     await page.getByRole("tab", { name: /Disputes/i }).click();
     await expect(

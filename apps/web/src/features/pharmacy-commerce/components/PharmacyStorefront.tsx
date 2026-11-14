@@ -29,14 +29,17 @@ import {
 } from "@/shared/ui/EntityAvatar";
 import { useImageLightbox } from "@/shared/ui/ImageLightboxProvider";
 import {
-  RegionTabs,
+  ACTIVE_COUNTRY_CODE,
+  resolveActivePack,
+} from "@/shared/config/deployment";
+import {
+  ActiveRegionPill,
   SessionAccountBar,
   StatusBanner,
   UiBadge,
   UiButton,
   UiInput,
   UiSelect,
-  type RegionTabOption,
 } from "@/shared/ui/primitives";
 import {
   PharmacyProductCategorySchema,
@@ -95,7 +98,7 @@ export function PharmacyStorefront({
 }: PharmacyStorefrontProps) {
   const { t } = useLocale();
   const { openImage } = useImageLightbox();
-  const defaultCountry = packs[0]?.code ?? "INTL";
+  const defaultCountry = resolveActivePack(packs)?.code ?? ACTIVE_COUNTRY_CODE;
 
   const [selectedCountry, setSelectedCountry] = useState<string>(defaultCountry);
   const [selectedCategory, setSelectedCategory] = useState<
@@ -113,15 +116,6 @@ export function PharmacyStorefront({
   const sessionCountry = session?.user.countryCode ?? null;
   const canManageStock =
     sessionRole === "PHARMACIST" || sessionRole === "OPS_ADMIN";
-
-  const regionOptions: readonly RegionTabOption[] = useMemo(
-    () =>
-      packs.map((pack) => ({
-        code: pack.code,
-        label: `${pack.code} · ${pack.currencyCode}`,
-      })),
-    [packs],
-  );
 
   const [facilities, setFacilities] = useState<DirectoryFacilitySummary[]>([]);
   const [products, setProducts] = useState<PharmacyProductSummary[]>([]);
@@ -491,13 +485,7 @@ export function PharmacyStorefront({
     );
   }
 
-  const currencyCode = activePack?.currencyCode ?? "USD";
-  const visibleRegionOptions = useMemo(() => {
-    if (sessionCountry && sessionRole !== "OPS_ADMIN") {
-      return regionOptions.filter((opt) => opt.code === sessionCountry);
-    }
-    return regionOptions;
-  }, [regionOptions, sessionCountry, sessionRole]);
+  const currencyCode = activePack?.currencyCode ?? "MAD";
 
   return (
     <div className="space-y-6">
@@ -515,20 +503,11 @@ export function PharmacyStorefront({
             </p>
           </div>
 
-          <RegionTabs
-            value={effectiveCountry}
-            options={visibleRegionOptions}
-            onChange={(code) => {
-              setSelectedCountry(code);
-              setSelectedFacilityId("");
-              void loadCatalogAndOrders(
-                code,
-                sessionToken,
-                "",
-                selectedCategory,
-                searchText,
-              );
-            }}
+          <ActiveRegionPill
+            code={effectiveCountry}
+            name={activePack?.name ?? "Morocco"}
+            currencyCode={currencyCode}
+            emergencyHotline={activePack?.emergencyHotlines.ambulance}
           />
         </div>
 
