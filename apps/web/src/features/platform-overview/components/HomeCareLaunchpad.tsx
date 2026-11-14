@@ -71,6 +71,15 @@ export function HomeCareLaunchpad() {
             <span>{t("home.ctaPortal")}</span>
           </Link>
         </div>
+
+        <div className="mt-3 border-t border-slate-100 pt-2.5 text-center sm:text-start">
+          <Link
+            href="/profiles"
+            className="text-xs font-semibold text-teal-800 hover:text-teal-950 hover:underline"
+          >
+            Browse Doctors, Nurses (Infirmiers), Clinics &amp; Medical Vehicles →
+          </Link>
+        </div>
       </div>
     </div>
   );

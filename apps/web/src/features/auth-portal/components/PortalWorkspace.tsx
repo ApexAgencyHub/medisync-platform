@@ -12,6 +12,7 @@ import {
   getLicenseExample,
 } from "@/shared/i18n/human-labels";
 import { EntityAvatar } from "@/shared/ui/EntityAvatar";
+import { useImageLightbox } from "@/shared/ui/ImageLightboxProvider";
 import { useLocale } from "@/shared/i18n/locale-store";
 import {
   ALLOWED_AVATAR_MIME_TYPES,
@@ -41,14 +42,12 @@ import {
 } from "@/shared/api/directory-client";
 import {
   FileUploadDropzone,
-  MediaPreviewModal,
   formatByteSize,
   inferUploadMimeType,
   listFacilityMedia,
   listMyUserMedia,
   uploadFacilityMediaEndToEnd,
   uploadUserMediaEndToEnd,
-  type PreviewableMediaItem,
 } from "@/features/media-certifications";
 import {
   Building2,
@@ -102,6 +101,7 @@ const FACILITY_KIND_LABELS: Record<FacilityKind, string> = {
 
 export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
   const { t } = useLocale();
+  const { openImage } = useImageLightbox();
   const defaultPackCode = packs[0]?.code ?? "INTL";
   const [activeTab, setActiveTab] = useState<PortalTab>("signin");
   const [selectedCountry, setSelectedCountry] = useState<string>(defaultPackCode);
@@ -173,9 +173,6 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
   const [facilityDocsByFac, setFacilityDocsByFac] = useState<
     Record<string, FacilityMediaDocument[]>
   >({});
-  const [previewMedia, setPreviewMedia] = useState<PreviewableMediaItem | null>(
-    null,
-  );
 
   // Account Verification & Password Recovery State
   const [recoveryEmail, setRecoveryEmail] = useState("");
@@ -900,7 +897,7 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
                       1-Click Switch
                     </span>
                   </div>
-                  <div className="grid gap-2 sm:grid-cols-2">
+                  <div className="grid min-w-0 w-full gap-2 sm:grid-cols-2">
                     {demoPersonas
                       .filter(
                         (p) =>
@@ -910,13 +907,13 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
                       .map((persona) => (
                         <div
                           key={persona.id}
-                          className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-2.5 transition-colors hover:border-teal-700 hover:bg-teal-50/40"
+                          className="flex min-w-0 w-full items-center gap-2.5 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 p-2.5 transition-colors hover:border-teal-700 hover:bg-teal-50/40"
                         >
                           <EntityAvatar
                             name={persona.fullName}
                             role={persona.role}
                             subtitle={`${formatRoleLabel(persona.role)} · ${persona.countryCode}`}
-                            size="md"
+                            size="sm"
                           />
                           <button
                             type="button"
@@ -931,7 +928,7 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
                             }}
                             className="min-w-0 flex-1 text-left focus:outline-none disabled:opacity-60"
                           >
-                            <div className="flex items-center justify-between gap-1.5">
+                            <div className="flex min-w-0 flex-wrap items-center justify-between gap-1">
                               <span className="truncate text-xs font-semibold text-slate-900">
                                 {persona.fullName}
                               </span>
@@ -1510,12 +1507,14 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
                         <button
                           type="button"
                           onClick={() =>
-                            setPreviewMedia({
-                              fileName: doc.fileName,
-                              mimeType: doc.mimeType,
-                              sizeBytes: doc.confirmedSizeBytes ?? doc.sizeBytes,
+                            openImage({
+                              src: doc.downloadUrl,
                               downloadUrl: doc.downloadUrl,
+                              mimeType: doc.mimeType,
+                              alt: doc.fileName,
+                              title: doc.fileName,
                               subtitle: `${doc.category} · ${doc.reviewStatus}`,
+                              badge: doc.reviewStatus,
                             })
                           }
                           className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:border-teal-700"
@@ -1660,13 +1659,14 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
                             <button
                               type="button"
                               onClick={() =>
-                                setPreviewMedia({
-                                  fileName: doc.fileName,
-                                  mimeType: doc.mimeType,
-                                  sizeBytes:
-                                    doc.confirmedSizeBytes ?? doc.sizeBytes,
+                                openImage({
+                                  src: doc.downloadUrl,
                                   downloadUrl: doc.downloadUrl,
+                                  mimeType: doc.mimeType,
+                                  alt: doc.fileName,
+                                  title: doc.fileName,
                                   subtitle: `${doc.category} · ${doc.reviewStatus}`,
+                                  badge: doc.reviewStatus,
                                 })
                               }
                               className="font-semibold text-teal-800 hover:underline"
@@ -1684,11 +1684,6 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
           </section>
         </aside>
       </div>
-
-      <MediaPreviewModal
-        item={previewMedia}
-        onClose={() => setPreviewMedia(null)}
-      />
     </div>
   );
 }

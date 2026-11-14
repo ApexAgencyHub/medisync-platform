@@ -12,7 +12,3 @@ export {
   uploadUserMediaEndToEnd,
 } from "./api-client";
 export { FileUploadDropzone, formatByteSize } from "./components/FileUploadDropzone";
-export {
-  MediaPreviewModal,
-  type PreviewableMediaItem,
-} from "./components/MediaPreviewModal";

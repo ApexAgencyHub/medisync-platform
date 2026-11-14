@@ -1,9 +1,46 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import {
+  Building2,
+  Package,
+  Pill,
+  Plus,
+  Printer,
+  RefreshCw,
+  Search,
+  ShoppingCart,
+  Trash2,
+  Truck,
+} from "lucide-react";
+import {
+  checkBackendOnline,
+  fetchDirectoryFacilities,
+} from "@/shared/api/directory-client";
+import {
+  clearStoredSession,
+  readStoredSession,
+} from "@/shared/auth/session-storage";
+import { useLocale } from "@/shared/i18n/locale-store";
+import {
+  ProductThumbnail,
+  resolveFacilityPicture,
+  resolveProductPicture,
+} from "@/shared/ui/EntityAvatar";
+import { useImageLightbox } from "@/shared/ui/ImageLightboxProvider";
+import {
+  RegionTabs,
+  SessionAccountBar,
+  StatusBanner,
+  UiBadge,
+  UiButton,
+  UiInput,
+  UiSelect,
+  type RegionTabOption,
+} from "@/shared/ui/primitives";
+import {
   PharmacyProductCategorySchema,
+  type AuthResponse,
   type CountryPack,
   type DirectoryFacilitySummary,
   type FulfillmentMode,
@@ -13,24 +50,6 @@ import {
   type PharmacyProductSummary,
   type PrescriptionSummary,
 } from "@medisync/contracts";
-import {
-  CheckCircle2,
-  Package,
-  Pill,
-  Plus,
-  Printer,
-  RefreshCw,
-  Search,
-  ShieldAlert,
-  ShoppingCart,
-  Trash2,
-  Truck,
-} from "lucide-react";
-import { checkBackendOnline, fetchDirectoryFacilities } from "@/shared/api/directory-client";
-import { readStoredSession } from "@/shared/auth/session-storage";
-import { formatRoleLabel } from "@/shared/i18n/human-labels";
-import { useLocale } from "@/shared/i18n/locale-store";
-import { ProductThumbnail } from "@/shared/ui/EntityAvatar";
 import {
   confirmPharmacyOrderPayment,
   createPharmacyOrder,
@@ -75,6 +94,7 @@ export function PharmacyStorefront({
   apiBaseUrl,
 }: PharmacyStorefrontProps) {
   const { t } = useLocale();
+  const { openImage } = useImageLightbox();
   const defaultCountry = packs[0]?.code ?? "INTL";
 
   const [selectedCountry, setSelectedCountry] = useState<string>(defaultCountry);
@@ -87,9 +107,21 @@ export function PharmacyStorefront({
     "store",
   );
 
-  const [sessionToken, setSessionToken] = useState<string | null>(null);
-  const [sessionRole, setSessionRole] = useState<string | null>(null);
-  const [sessionCountry, setSessionCountry] = useState<string | null>(null);
+  const [session, setSession] = useState<AuthResponse | null>(null);
+  const sessionToken = session?.token ?? null;
+  const sessionRole = session?.user.role ?? null;
+  const sessionCountry = session?.user.countryCode ?? null;
+  const canManageStock =
+    sessionRole === "PHARMACIST" || sessionRole === "OPS_ADMIN";
+
+  const regionOptions: readonly RegionTabOption[] = useMemo(
+    () =>
+      packs.map((pack) => ({
+        code: pack.code,
+        label: `${pack.code} · ${pack.currencyCode}`,
+      })),
+    [packs],
+  );
 
   const [facilities, setFacilities] = useState<DirectoryFacilitySummary[]>([]);
   const [products, setProducts] = useState<PharmacyProductSummary[]>([]);
@@ -182,19 +214,23 @@ export function PharmacyStorefront({
 
   useEffect(() => {
     const stored = readStoredSession();
+    const params = new URLSearchParams(window.location.search);
+    const urlCountry = params.get("country");
+    const urlFacilityId = params.get("facilityId") ?? "";
     const initialToken = stored?.token ?? null;
-    const initialCountry = stored?.user.countryCode ?? defaultCountry;
-    setSessionToken(initialToken);
-    setSessionRole(stored?.user.role ?? null);
-    setSessionCountry(stored?.user.countryCode ?? null);
-    if (stored?.user.countryCode) {
-      setSelectedCountry(stored.user.countryCode);
-    }
+    const lockedCountry =
+      stored?.user.countryCode && stored.user.role !== "OPS_ADMIN"
+        ? stored.user.countryCode
+        : null;
+    const initialCountry = lockedCountry ?? urlCountry ?? defaultCountry;
+    setSession(stored);
+    setSelectedCountry(initialCountry);
+    setSelectedFacilityId(urlFacilityId);
 
     void loadCatalogAndOrders(
       initialCountry,
       initialToken,
-      "",
+      urlFacilityId,
       "ALL",
       "",
     );
@@ -456,14 +492,16 @@ export function PharmacyStorefront({
   }
 
   const currencyCode = activePack?.currencyCode ?? "USD";
-  const canManageCatalog =
-    sessionRole === "PHARMACIST" ||
-    sessionRole === "HOSPITAL_ADMIN" ||
-    sessionRole === "OPS_ADMIN";
+  const visibleRegionOptions = useMemo(() => {
+    if (sessionCountry && sessionRole !== "OPS_ADMIN") {
+      return regionOptions.filter((opt) => opt.code === sessionCountry);
+    }
+    return regionOptions;
+  }, [regionOptions, sessionCountry, sessionRole]);
 
   return (
     <div className="space-y-6">
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs">
+      <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-xs">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <p className="font-mono-tabular text-xs font-semibold uppercase tracking-wider text-teal-800">
@@ -477,53 +515,46 @@ export function PharmacyStorefront({
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            {packs.map((pack) => {
-              const active = pack.code === selectedCountry;
-              const disabled =
-                Boolean(sessionCountry) &&
-                sessionRole !== "OPS_ADMIN" &&
-                pack.code !== sessionCountry;
-              return (
-                <button
-                  key={pack.code}
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => {
-                    setSelectedCountry(pack.code);
-                    setSelectedFacilityId("");
-                    void loadCatalogAndOrders(
-                      pack.code,
-                      sessionToken,
-                      "",
-                      selectedCategory,
-                      searchText,
-                    );
-                  }}
-                  className={`min-h-[38px] rounded-xl px-3 py-1.5 font-mono-tabular text-xs font-semibold transition-colors ${
-                    active
-                      ? "bg-teal-800 text-white"
-                      : "border border-slate-200 bg-slate-50 text-slate-700 hover:border-teal-700 disabled:opacity-45"
-                  }`}
-                >
-                  {pack.code} · {pack.currencyCode}
-                </button>
+          <RegionTabs
+            value={effectiveCountry}
+            options={visibleRegionOptions}
+            onChange={(code) => {
+              setSelectedCountry(code);
+              setSelectedFacilityId("");
+              void loadCatalogAndOrders(
+                code,
+                sessionToken,
+                "",
+                selectedCategory,
+                searchText,
               );
-            })}
-          </div>
+            }}
+          />
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
+        <SessionAccountBar
+          session={session}
+          prompt="Sign in on the Care Portal to check out Rx items or track pharmacy deliveries."
+          onSignOut={() => {
+            clearStoredSession();
+            setSession(null);
+            setOrders([]);
+            setPrescriptions([]);
+            setActiveMode("store");
+          }}
+        />
+
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
           <div className="flex flex-wrap gap-2" role="tablist">
             <button
               type="button"
               role="tab"
               aria-selected={activeMode === "store"}
               onClick={() => setActiveMode("store")}
-              className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold ${
+              className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
                 activeMode === "store"
                   ? "bg-teal-800 text-white"
-                  : "border border-slate-200 bg-white text-slate-700"
+                  : "border border-slate-200 bg-white text-slate-700 hover:border-teal-700"
               }`}
             >
               <Pill className="h-3.5 w-3.5" aria-hidden="true" />
@@ -534,83 +565,53 @@ export function PharmacyStorefront({
               role="tab"
               aria-selected={activeMode === "orders"}
               onClick={() => setActiveMode("orders")}
-              className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold ${
+              className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
                 activeMode === "orders"
                   ? "bg-teal-800 text-white"
-                  : "border border-slate-200 bg-white text-slate-700"
+                  : "border border-slate-200 bg-white text-slate-700 hover:border-teal-700"
               }`}
             >
               <Package className="h-3.5 w-3.5" aria-hidden="true" />
               <span>Orders & Receipts ({orders.length})</span>
             </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeMode === "manage"}
-              onClick={() => setActiveMode("manage")}
-              className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold ${
-                activeMode === "manage"
-                  ? "bg-teal-800 text-white"
-                  : "border border-slate-200 bg-white text-slate-700"
-              }`}
-            >
-              <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>Pharmacist Stock Manager</span>
-            </button>
+            {canManageStock ? (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeMode === "manage"}
+                onClick={() => setActiveMode("manage")}
+                className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                  activeMode === "manage"
+                    ? "bg-teal-800 text-white"
+                    : "border border-slate-200 bg-white text-slate-700 hover:border-teal-700"
+                }`}
+              >
+                <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>Pharmacist Stock Manager</span>
+              </button>
+            ) : null}
           </div>
 
-          <div className="flex items-center gap-2 text-xs text-slate-600">
-            <button
-              type="button"
-              onClick={() =>
-                void loadCatalogAndOrders(
-                  effectiveCountry,
-                  sessionToken,
-                  selectedFacilityId,
-                  selectedCategory,
-                  searchText,
-                )
-              }
-              className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1 font-semibold text-slate-700 hover:border-teal-700"
-            >
-              <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>Refresh</span>
-            </button>
-            {!sessionToken ? (
-              <Link
-                href="/portal"
-                className="inline-flex min-h-[36px] items-center rounded-lg bg-amber-50 border border-amber-200 px-3 py-1 font-semibold text-amber-900 hover:bg-amber-100"
-              >
-                Sign In to Checkout →
-              </Link>
-            ) : (
-              <span className="rounded-lg border border-teal-200 bg-teal-50 px-2.5 py-1 text-xs font-semibold text-teal-900">
-                {formatRoleLabel(sessionRole)} · {effectiveCountry}
-              </span>
-            )}
-          </div>
+          <UiButton
+            variant="secondary"
+            size="sm"
+            onClick={() =>
+              void loadCatalogAndOrders(
+                effectiveCountry,
+                sessionToken,
+                selectedFacilityId,
+                selectedCategory,
+                searchText,
+              )
+            }
+          >
+            <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>Refresh</span>
+          </UiButton>
         </div>
       </section>
 
-      {banner ? (
-        <div
-          role="status"
-          className={`flex items-center gap-2 rounded-xl border px-4 py-3 text-sm font-medium ${
-            banner.tone === "error"
-              ? "border-rose-200 bg-rose-50 text-rose-900"
-              : banner.tone === "success"
-                ? "border-teal-200 bg-teal-50 text-teal-900"
-                : "border-slate-200 bg-white text-slate-800"
-          }`}
-        >
-          {banner.tone === "error" ? (
-            <ShieldAlert className="h-4 w-4 shrink-0" aria-hidden="true" />
-          ) : (
-            <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
-          )}
-          <span>{banner.text}</span>
-        </div>
-      ) : null}
+      {banner ? <StatusBanner tone={banner.tone} message={banner.text} /> : null}
 
       {activeMode === "store" ? (
         <div className="grid gap-6 lg:grid-cols-12">
@@ -622,7 +623,7 @@ export function PharmacyStorefront({
                     className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-400"
                     aria-hidden="true"
                   />
-                  <input
+                  <UiInput
                     id="pharma-search"
                     type="search"
                     value={searchText}
@@ -638,11 +639,11 @@ export function PharmacyStorefront({
                       );
                     }}
                     placeholder={t("pharma.searchPlaceholder")}
-                    className="w-full rounded-xl border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-teal-700 focus:outline-none"
+                    className="pl-9"
                   />
                 </div>
 
-                <select
+                <UiSelect
                   id="pharma-facility-filter"
                   aria-label="Dispensing Pharmacy Filter"
                   value={selectedFacilityId}
@@ -657,7 +658,6 @@ export function PharmacyStorefront({
                       searchText,
                     );
                   }}
-                  className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-teal-700 focus:outline-none"
                 >
                   <option value="">All Pharmacies ({facilities.length})</option>
                   {facilities.map((fac) => (
@@ -665,7 +665,7 @@ export function PharmacyStorefront({
                       {fac.name} ({fac.licenseNumber})
                     </option>
                   ))}
-                </select>
+                </UiSelect>
               </div>
 
               <div className="mt-3 flex flex-wrap gap-1.5">
@@ -723,72 +723,127 @@ export function PharmacyStorefront({
               </div>
             ) : (
               <div className="grid gap-4 sm:grid-cols-2">
-                {products.map((product) => (
-                  <article
-                    key={product.id}
-                    className="flex flex-col justify-between rounded-2xl border border-slate-200 bg-white p-4 shadow-xs"
-                  >
-                    <div>
-                      <div className="relative mb-3">
-                        <ProductThumbnail
-                          name={product.name}
-                          category={product.category}
-                          subtitle={`${product.facilityName} · ${formatMinorMoney(product.priceMinor, product.currencyCode)}`}
-                          imageUrl={product.imageUrl}
-                          className="h-52 sm:h-56 w-full"
-                        />
-                        <span
-                          className={`pointer-events-none absolute top-2.5 left-2.5 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase shadow-xs ${
-                            product.requiresPrescription
-                              ? "border border-amber-300 bg-amber-50 text-amber-900"
-                              : "border border-teal-200 bg-white/95 text-teal-900"
-                          }`}
-                        >
-                          {product.requiresPrescription ? "Rx Required" : "OTC"}
-                        </span>
-                      </div>
-                      <div className="flex items-start justify-between gap-2">
-                        <h2 className="text-sm font-bold text-slate-900">
-                          {product.name}
-                        </h2>
-                        <span className="shrink-0 font-mono-tabular text-[11px] font-medium text-slate-500">
-                          {product.sku}
-                        </span>
-                      </div>
-                      <p className="mt-0.5 text-xs text-slate-600">
-                        {product.genericName ?? product.dosageForm} ·{" "}
-                        {product.strength}
-                      </p>
-                      <p className="mt-1 truncate text-[11px] font-medium text-slate-500">
-                        {product.facilityName}
-                      </p>
-                    </div>
-
-                    <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3">
+                {products.map((product) => {
+                  const pharmacyInterior = resolveFacilityPicture("PHARMACY");
+                  const productPackshot = resolveProductPicture(
+                    product.category,
+                    product.imageUrl,
+                  );
+                  return (
+                    <article
+                      key={product.id}
+                      className="flex flex-col justify-between rounded-2xl border border-slate-200 bg-white p-4 shadow-xs"
+                    >
                       <div>
-                        <p className="font-mono-tabular text-base font-bold text-slate-900">
-                          {formatMinorMoney(
-                            product.priceMinor,
-                            product.currencyCode,
-                          )}
+                        <div className="relative mb-3">
+                          <ProductThumbnail
+                            name={product.name}
+                            category={product.category}
+                            subtitle={`${product.facilityName} · ${formatMinorMoney(product.priceMinor, product.currencyCode)}`}
+                            imageUrl={product.imageUrl}
+                            className="h-52 sm:h-56 w-full"
+                          />
+                          <UiBadge
+                            tone={product.requiresPrescription ? "amber" : "teal"}
+                            className="pointer-events-none absolute left-2.5 top-2.5 uppercase shadow-xs"
+                          >
+                            {product.requiresPrescription ? "Rx Required" : "OTC"}
+                          </UiBadge>
+                        </div>
+                        <div className="flex items-start justify-between gap-2">
+                          <h2 className="text-sm font-bold text-slate-900">
+                            {product.name}
+                          </h2>
+                          <span className="shrink-0 font-mono-tabular text-[11px] font-medium text-slate-500">
+                            {product.sku}
+                          </span>
+                        </div>
+                        <p className="mt-0.5 text-xs text-slate-600">
+                          {product.genericName ?? product.dosageForm} ·{" "}
+                          {product.strength}
                         </p>
-                        <p className="font-mono-tabular text-[11px] text-slate-500">
-                          Stock: {product.stockQty} units
-                        </p>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            openImage({
+                              src: productPackshot,
+                              alt: product.name,
+                              primaryLabel: "Product Packshot",
+                              secondarySrc: pharmacyInterior,
+                              secondaryAlt: product.facilityName,
+                              secondaryLabel: "Dispensing Pharmacy",
+                              initialView: "secondary",
+                              title: product.name,
+                              subtitle: `${product.facilityName} · ${formatMinorMoney(product.priceMinor, product.currencyCode)}`,
+                              badge: product.requiresPrescription
+                                ? "Rx Required"
+                                : "OTC",
+                              specs: [
+                                {
+                                  label: "Generic",
+                                  value:
+                                    product.genericName ?? product.dosageForm,
+                                },
+                                { label: "Strength", value: product.strength },
+                                {
+                                  label: "Stock",
+                                  value: `${product.stockQty} units`,
+                                },
+                                {
+                                  label: "Pharmacy",
+                                  value: product.facilityName,
+                                },
+                              ],
+                            })
+                          }
+                          aria-label={`Inspect ${product.facilityName} dispensary`}
+                          className="mt-2.5 flex w-full items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-left transition-colors hover:border-teal-700 hover:bg-teal-50/40"
+                        >
+                          <img
+                            src={pharmacyInterior}
+                            alt={product.facilityName}
+                            className="h-8 w-10 shrink-0 rounded object-cover"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-[11px] font-semibold text-slate-800">
+                              {product.facilityName}
+                            </p>
+                            <p className="flex items-center gap-1 text-[10px] text-teal-800">
+                              <Building2
+                                className="h-3 w-3 shrink-0"
+                                aria-hidden="true"
+                              />
+                              <span>View dispensing pharmacy</span>
+                            </p>
+                          </div>
+                        </button>
                       </div>
 
-                      <button
-                        type="button"
-                        disabled={product.stockQty === 0}
-                        onClick={() => addToCart(product)}
-                        className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl bg-teal-800 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-teal-900 disabled:opacity-45"
-                      >
-                        <ShoppingCart className="h-3.5 w-3.5" aria-hidden="true" />
-                        <span>{t("pharma.addToCart")}</span>
-                      </button>
-                    </div>
-                  </article>
-                ))}
+                      <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3">
+                        <div>
+                          <p className="font-mono-tabular text-base font-bold text-slate-900">
+                            {formatMinorMoney(
+                              product.priceMinor,
+                              product.currencyCode,
+                            )}
+                          </p>
+                          <p className="font-mono-tabular text-[11px] text-slate-500">
+                            Stock: {product.stockQty} units
+                          </p>
+                        </div>
+
+                        <UiButton
+                          size="sm"
+                          disabled={product.stockQty === 0}
+                          onClick={() => addToCart(product)}
+                        >
+                          <ShoppingCart className="h-3.5 w-3.5" aria-hidden="true" />
+                          <span>{t("pharma.addToCart")}</span>
+                        </UiButton>
+                      </div>
+                    </article>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1120,7 +1175,7 @@ export function PharmacyStorefront({
                       >
                         Receipt
                       </button>
-                      {canManageCatalog && order.status === "PAID" ? (
+                      {canManageStock && order.status === "PAID" ? (
                         <button
                           type="button"
                           onClick={() =>
@@ -1131,7 +1186,7 @@ export function PharmacyStorefront({
                           Prepare
                         </button>
                       ) : null}
-                      {canManageCatalog && order.status === "PREPARING" ? (
+                      {canManageStock && order.status === "PREPARING" ? (
                         <button
                           type="button"
                           onClick={() =>
@@ -1151,7 +1206,7 @@ export function PharmacyStorefront({
         </section>
       ) : null}
 
-      {activeMode === "manage" ? (
+      {activeMode === "manage" && canManageStock ? (
         <div className="grid gap-6 lg:grid-cols-12">
           <form
             onSubmit={(e) => void handleAddCatalogProduct(e)}
@@ -1160,67 +1215,61 @@ export function PharmacyStorefront({
             <h2 className="text-base font-bold text-slate-900">
               Add Pharmacy Medication ({effectiveCountry})
             </h2>
-            {!canManageCatalog ? (
-              <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-                Sign in with a Pharmacist, Hospital Coordinator, or Operations account
-                on the Portal to add or restock medications.
-              </p>
-            ) : null}
             <div className="grid gap-3 sm:grid-cols-2">
-              <input
+              <UiInput
                 type="text"
                 required
                 placeholder="Product Code (e.g. MA-AZITH-500)"
                 value={newSku}
                 onChange={(e) => setNewSku(e.target.value)}
-                className="rounded-xl border border-slate-300 px-3 py-2 text-xs"
+                className="text-xs"
               />
-              <select
+              <UiSelect
                 value={newCategory}
                 onChange={(e) =>
                   setNewCategory(e.target.value as PharmacyProductCategory)
                 }
-                className="rounded-xl border border-slate-300 px-3 py-2 text-xs"
+                className="text-xs"
               >
                 {PharmacyProductCategorySchema.options.map((cat) => (
                   <option key={cat} value={cat}>
                     {CATEGORY_LABELS[cat]}
                   </option>
                 ))}
-              </select>
+              </UiSelect>
             </div>
-            <input
+            <UiInput
               type="text"
               required
               placeholder="Medication / Product Name"
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
-              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-xs"
+              className="text-xs"
             />
-            <input
+            <UiInput
               type="text"
               placeholder="Generic Active Ingredient (optional)"
               value={newGeneric}
               onChange={(e) => setNewGeneric(e.target.value)}
-              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-xs"
+              className="text-xs"
             />
             <div className="grid gap-3 sm:grid-cols-2">
-              <input
+              <UiInput
                 type="number"
                 step="0.01"
                 required
                 placeholder={`Price (${currencyCode})`}
                 value={newPriceMajor}
                 onChange={(e) => setNewPriceMajor(e.target.value)}
-                className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-mono-tabular"
+                className="font-mono-tabular text-xs"
               />
-              <input
+              <UiInput
                 type="number"
                 required
                 placeholder="Initial Stock Qty"
                 value={newStockQty}
                 onChange={(e) => setNewStockQty(e.target.value)}
-                className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-mono-tabular"
+                className="font-mono-tabular text-xs"
               />
             </div>
             <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
@@ -1231,20 +1280,20 @@ export function PharmacyStorefront({
               />
               <span>Requires verified Doctor E-Prescription (Rx)</span>
             </label>
-            <button
+            <UiButton
               type="submit"
-              disabled={busy || !canManageCatalog}
-              className="min-h-[42px] w-full rounded-xl bg-teal-800 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+              disabled={busy}
+              className="w-full"
             >
               Add to Pharmacy Catalog
-            </button>
+            </UiButton>
           </form>
 
           <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-6 shadow-xs lg:col-span-7">
             <h2 className="text-base font-bold text-slate-900">
               Live Inventory Controls
             </h2>
-            <div className="space-y-2 max-h-96 overflow-y-auto">
+            <div className="max-h-96 space-y-2 overflow-y-auto">
               {products.map((prod) => (
                 <div
                   key={prod.id}
@@ -1266,14 +1315,15 @@ export function PharmacyStorefront({
                       </p>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    disabled={busy || !canManageCatalog}
+                  <UiButton
+                    variant="secondary"
+                    size="sm"
+                    disabled={busy}
                     onClick={() => void handleRestock(prod, 10)}
-                    className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 font-semibold text-teal-800 hover:border-teal-700 disabled:opacity-45"
+                    className="text-teal-800"
                   >
                     +10 Units
-                  </button>
+                  </UiButton>
                 </div>
               ))}
             </div>

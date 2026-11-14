@@ -28,14 +28,13 @@ import { listDispatchRequests } from "@/features/maps-dispatch";
 import { formatRoleLabel } from "@/shared/i18n/human-labels";
 import { useLocale } from "@/shared/i18n/locale-store";
 import { EntityAvatar } from "@/shared/ui/EntityAvatar";
+import { useImageLightbox } from "@/shared/ui/ImageLightboxProvider";
 import {
-  MediaPreviewModal,
   formatByteSize,
   listAdminFacilityMedia,
   listAdminUserMedia,
   reviewFacilityMediaDocument,
   reviewUserMediaDocument,
-  type PreviewableMediaItem,
 } from "@/features/media-certifications";
 import { checkBackendOnline } from "@/shared/api/directory-client";
 import { EntityPicker } from "@/shared/ui/EntityPicker";
@@ -102,6 +101,7 @@ const ROLE_BADGE_COLORS: Record<UserRole, string> = {
 
 export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
   const { t } = useLocale();
+  const { openImage } = useImageLightbox();
   const [selectedScope, setSelectedScope] = useState<string>("ALL");
   const [activeTab, setActiveTab] = useState<AdminTab>("overview");
 
@@ -124,9 +124,6 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
   const [userMediaByUser, setUserMediaByUser] = useState<
     Record<string, UserMediaDocument[]>
   >({});
-  const [previewMedia, setPreviewMedia] = useState<PreviewableMediaItem | null>(
-    null,
-  );
   const [apiOnline, setApiOnline] = useState(false);
 
   // User Role Governance Editor State
@@ -1117,14 +1114,14 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                                     <button
                                       type="button"
                                       onClick={() =>
-                                        setPreviewMedia({
-                                          fileName: doc.fileName,
-                                          mimeType: doc.mimeType,
-                                          sizeBytes:
-                                            doc.confirmedSizeBytes ??
-                                            doc.sizeBytes,
+                                        openImage({
+                                          src: doc.downloadUrl,
                                           downloadUrl: doc.downloadUrl,
+                                          mimeType: doc.mimeType,
+                                          alt: doc.fileName,
+                                          title: doc.fileName,
                                           subtitle: `${fac.name} · ${doc.category} · ${doc.reviewStatus}`,
+                                          badge: doc.reviewStatus,
                                         })
                                       }
                                       className="inline-flex min-h-[30px] items-center gap-1 rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:border-teal-700"
@@ -1277,14 +1274,14 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                                     <button
                                       type="button"
                                       onClick={() =>
-                                        setPreviewMedia({
-                                          fileName: doc.fileName,
-                                          mimeType: doc.mimeType,
-                                          sizeBytes:
-                                            doc.confirmedSizeBytes ??
-                                            doc.sizeBytes,
+                                        openImage({
+                                          src: doc.downloadUrl,
                                           downloadUrl: doc.downloadUrl,
+                                          mimeType: doc.mimeType,
+                                          alt: doc.fileName,
+                                          title: doc.fileName,
                                           subtitle: `${user.fullName} · ${doc.category}`,
+                                          badge: doc.reviewStatus,
                                         })
                                       }
                                       className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700"
@@ -1749,11 +1746,6 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
           ) : null}
         </section>
       </div>
-
-      <MediaPreviewModal
-        item={previewMedia}
-        onClose={() => setPreviewMedia(null)}
-      />
     </div>
   );
 }

@@ -1,16 +1,21 @@
+import type { Redis } from "ioredis";
 import type { Pool } from "pg";
 import {
   DemoPersonaSummarySchema,
   DirectoryDoctorSummarySchema,
+  DirectoryDriverSummarySchema,
   DirectoryFacilitySummarySchema,
   DirectoryPatientSummarySchema,
   type DemoPersonaSummary,
   type DirectoryDoctorSummary,
+  type DirectoryDriverSummary,
   type DirectoryFacilitySummary,
   type DirectoryPatientSummary,
   type DirectorySearchQuery,
+  type VehicleType,
 } from "@medisync/contracts";
 import type { AuthTokenClaims } from "../foundation/index.js";
+import { readDriverStatuses } from "../maps-dispatch/index.js";
 import {
   createSigV4PresignedUrl,
   type S3PresignConfig,
@@ -161,6 +166,116 @@ export async function listDirectoryFacilitiesPublic(
   return res.rows.map((r) => DirectoryFacilitySummarySchema.parse(r));
 }
 
+const DRIVER_FLEET_METADATA: Readonly<
+  Record<
+    string,
+    { vehicleType: VehicleType; vehicleLabel: string; serviceZone: string }
+  >
+> = {
+  "driver.ma@medisync.global": {
+    vehicleType: "AMBULANCE",
+    vehicleLabel: "EMS Rapid Sprinter · Unit 04",
+    serviceZone: "Casablanca Emergency District",
+  },
+  "courier.ma@medisync.global": {
+    vehicleType: "MEDICAL_SHUTTLE",
+    vehicleLabel: "Patient Care Shuttle · Hybrid SUV",
+    serviceZone: "Anfa & Maarif Patient Transfers",
+  },
+  "driver.intl@medisync.global": {
+    vehicleType: "AMBULANCE",
+    vehicleLabel: "Geneva EMS Unit 01 · Mobile ICU",
+    serviceZone: "Geneva Canton & Cross-Border",
+  },
+};
+
+function resolveDriverFleet(
+  email: string,
+  countryCode: string,
+  facilityName: string | null,
+): { vehicleType: VehicleType; vehicleLabel: string; serviceZone: string } {
+  const known = DRIVER_FLEET_METADATA[email];
+  if (known) return known;
+  const isShuttle = /shuttle|courier|car|sedan/i.test(email);
+  return {
+    vehicleType: isShuttle ? "MEDICAL_SHUTTLE" : "AMBULANCE",
+    vehicleLabel: isShuttle
+      ? "Patient Care Shuttle · Hybrid Transport"
+      : "Medical Emergency Sprinter",
+    serviceZone: facilityName ?? `${countryCode} Regional Coverage`,
+  };
+}
+
+export async function listDirectoryDriversPublic(
+  pool: Pool,
+  redis: Redis | undefined,
+  query: DirectorySearchQuery,
+  s3Config?: S3PresignConfig,
+): Promise<DirectoryDriverSummary[]> {
+  const searchPattern = query.q ? `%${query.q}%` : null;
+
+  const res = await pool.query<{
+    id: string;
+    fullName: string;
+    email: string;
+    countryCode: string;
+    facilityId: string | null;
+    facilityName: string | null;
+    avatarObjectKey: string | null;
+  }>(
+    `SELECT
+       u.id,
+       u.full_name AS "fullName",
+       u.email,
+       u.country_code AS "countryCode",
+       u.facility_id AS "facilityId",
+       f.name AS "facilityName",
+       u.avatar_object_key AS "avatarObjectKey"
+     FROM users u
+     LEFT JOIN facilities f ON f.id = u.facility_id
+     WHERE u.role = 'DRIVER'
+       AND ($1::text IS NULL OR u.country_code = $1)
+       AND (
+         $2::text IS NULL
+         OR u.full_name ILIKE $2
+         OR u.email ILIKE $2
+         OR COALESCE(f.name, '') ILIKE $2
+       )
+     ORDER BY u.country_code DESC, u.full_name ASC
+     LIMIT $3`,
+    [query.countryCode ?? null, searchPattern, query.limit],
+  );
+
+  const liveStatuses = redis
+    ? await readDriverStatuses(
+        redis,
+        res.rows.map((r) => ({ driverId: r.id, countryCode: r.countryCode })),
+      )
+    : new Map();
+
+  return res.rows.map((row) => {
+    const withAvatar = withAvatarUrl(row, s3Config);
+    const fleet = resolveDriverFleet(
+      row.email,
+      row.countryCode,
+      row.facilityName,
+    );
+    return DirectoryDriverSummarySchema.parse({
+      id: row.id,
+      fullName: row.fullName,
+      email: row.email,
+      countryCode: row.countryCode,
+      facilityId: row.facilityId,
+      facilityName: row.facilityName,
+      vehicleType: fleet.vehicleType,
+      vehicleLabel: fleet.vehicleLabel,
+      serviceZone: fleet.serviceZone,
+      liveStatus: liveStatuses.get(row.id) ?? null,
+      avatarUrl: withAvatar.avatarUrl,
+    });
+  });
+}
+
 export const SEEDED_DEMO_PASSWORD = "DemoPass!2026";
 
 export const SEEDED_DEMO_METADATA: Readonly<
@@ -170,37 +285,46 @@ export const SEEDED_DEMO_METADATA: Readonly<
     headline: "Casablanca Patient · View Slots, QR Prescriptions & Labs",
   },
   "doctor.ma@medisync.global": {
-    headline: "Cardiologist @ Clinique Anfa · SOAP Notes, Rx QR & Shifts",
+    headline: "Cardiologist @ Clinique Anfa · Clinical Notes, Rx QR & Shifts",
+  },
+  "nurse.ma@medisync.global": {
+    headline: "State Infirmier @ CHU Ibn Rochd · Home Nursing & Wound Care",
   },
   "pharmacist.ma@medisync.global": {
     headline: "Pharmacie Maarif 24/7 · Verify & Dispense Prescriptions",
   },
   "lab.ma@medisync.global": {
-    headline: "Labo BioCasablanca · Diagnostic Orders & S3 Uploads",
+    headline: "Labo BioCasablanca · Diagnostic Orders & Lab Reports",
   },
   "driver.ma@medisync.global": {
-    headline: "Casablanca EMS Unit · Redis Geo Live Telemetry & Dispatches",
+    headline: "Casablanca EMS Unit · Live GPS Dispatch & Ambulance",
+  },
+  "courier.ma@medisync.global": {
+    headline: "Casablanca Shuttle Driver · Patient Transfers & Care Rides",
   },
   "hospital.ma@medisync.global": {
-    headline: "CHU Ibn Rochd Director · Facility Ops & Staffing",
+    headline: "CHU Ibn Rochd Director · Facility Management & Staffing",
   },
   "patient.intl@medisync.global": {
-    headline: "Geneva Patient · Multi-Clinic Telehealth & Prescriptions",
+    headline: "Geneva Patient · Multi-Clinic Video Visits & Prescriptions",
   },
   "doctor.intl@medisync.global": {
     headline: "Internal Medicine @ Geneva Clinic · Visits & Orders",
+  },
+  "nurse.intl@medisync.global": {
+    headline: "Registered Infirmier @ Geneva Hub · Home Visits & Care",
   },
   "pharmacist.intl@medisync.global": {
     headline: "Pharmacie du Léman 24/7 · Dispensing Desk",
   },
   "lab.intl@medisync.global": {
-    headline: "BioGen Diagnostics Lab · Direct S3 Lab PDFs",
+    headline: "BioGen Diagnostics Lab · Direct Lab Report PDFs",
   },
   "driver.intl@medisync.global": {
-    headline: "Geneva Ambulance Unit 01 · Live SSE Dispatch",
+    headline: "Geneva Ambulance Unit 01 · Live Medical Dispatch",
   },
   "ops.admin@medisync.global": {
-    headline: "Sovereign Ministry Admin · Verify Licenses, Disputes & Audit",
+    headline: "Ministry Governance Admin · Verify Licenses & Resolve Disputes",
   },
 };
 
