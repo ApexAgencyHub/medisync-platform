@@ -102,6 +102,7 @@ export async function listDirectoryDoctorsScoped(
   s3Config?: S3PresignConfig,
 ): Promise<DirectoryDoctorSummary[]> {
   const searchPattern = query.q ? `%${query.q}%` : null;
+  const specialtyPattern = query.specialty ? `%${query.specialty}%` : null;
 
   const res = await pool.query(
     `SELECT
@@ -113,11 +114,17 @@ export async function listDirectoryDoctorsScoped(
        u.facility_id AS "facilityId",
        f.name AS "facilityName",
        COALESCE(dp.consultation_fee_minor, 0)::int AS "consultationFeeMinor",
+       COALESCE(dp.languages_spoken, ARRAY['ar', 'fr', 'en']::text[]) AS "languagesSpoken",
+       COALESCE(dp.accepted_insurances, ARRAY['AMO', 'CNOPS', 'CNSS']::text[]) AS "acceptedInsurances",
+       COALESCE(dp.telehealth_enabled, TRUE) AS "telehealthEnabled",
+       COALESCE(dp.home_visit_enabled, FALSE) AS "homeVisitEnabled",
+       u.credential_verified AS "credentialVerified",
        u.avatar_object_key AS "avatarObjectKey"
      FROM users u
      LEFT JOIN doctor_profiles dp ON dp.doctor_user_id = u.id
      LEFT JOIN facilities f ON f.id = u.facility_id
      WHERE u.role = 'DOCTOR'
+       AND u.account_status = 'ACTIVE'
        AND ($1::text IS NULL OR u.country_code = $1)
        AND (
          $2::text IS NULL
@@ -125,9 +132,23 @@ export async function listDirectoryDoctorsScoped(
          OR COALESCE(dp.specialty, '') ILIKE $2
          OR COALESCE(f.name, '') ILIKE $2
        )
+       AND ($3::text IS NULL OR COALESCE(dp.specialty, '') ILIKE $3)
+       AND ($4::text IS NULL OR $4 = ANY(COALESCE(dp.accepted_insurances, ARRAY[]::text[])))
+       AND ($5::text IS NULL OR $5 = ANY(COALESCE(dp.languages_spoken, ARRAY[]::text[])))
+       AND ($6::boolean IS NOT TRUE OR COALESCE(dp.telehealth_enabled, TRUE) = TRUE)
+       AND ($7::boolean IS NOT TRUE OR COALESCE(dp.home_visit_enabled, FALSE) = TRUE)
      ORDER BY u.full_name ASC
-     LIMIT $3`,
-    [query.countryCode ?? null, searchPattern, query.limit],
+     LIMIT $8`,
+    [
+      query.countryCode ?? null,
+      searchPattern,
+      specialtyPattern,
+      query.insurance ?? null,
+      query.language ?? null,
+      query.telehealthOnly ?? false,
+      query.homeVisitOnly ?? false,
+      query.limit,
+    ],
   );
 
   return res.rows.map((r) =>
@@ -140,6 +161,7 @@ export async function listDirectoryFacilitiesPublic(
   query: DirectorySearchQuery,
 ): Promise<DirectoryFacilitySummary[]> {
   const searchPattern = query.q ? `%${query.q}%` : null;
+  const specialtyPattern = query.specialty ? `%${query.specialty}%` : null;
 
   const res = await pool.query(
     `SELECT
@@ -151,6 +173,10 @@ export async function listDirectoryFacilitiesPublic(
        verification_status AS "verificationStatus",
        open_status AS "openStatus",
        address,
+       accepted_insurances AS "acceptedInsurances",
+       languages_spoken AS "languagesSpoken",
+       telehealth_enabled AS "telehealthEnabled",
+       home_visit_enabled AS "homeVisitEnabled",
        lat,
        lng
      FROM facilities
@@ -158,9 +184,27 @@ export async function listDirectoryFacilitiesPublic(
        AND ($1::text IS NULL OR country_code = $1)
        AND ($2::text IS NULL OR kind = $2)
        AND ($3::text IS NULL OR name ILIKE $3 OR address ILIKE $3)
+       AND ($4::text IS NULL OR $4 = ANY(accepted_insurances))
+       AND ($5::text IS NULL OR $5 = ANY(languages_spoken))
+       AND ($6::boolean IS NOT TRUE OR telehealth_enabled = TRUE)
+       AND ($7::boolean IS NOT TRUE OR home_visit_enabled = TRUE)
+       AND (
+         $8::text IS NULL
+         OR EXISTS (SELECT 1 FROM unnest(specialties) s WHERE s ILIKE $8)
+       )
      ORDER BY name ASC
-     LIMIT $4`,
-    [query.countryCode ?? null, query.kind ?? null, searchPattern, query.limit],
+     LIMIT $9`,
+    [
+      query.countryCode ?? null,
+      query.kind ?? null,
+      searchPattern,
+      query.insurance ?? null,
+      query.language ?? null,
+      query.telehealthOnly ?? false,
+      query.homeVisitOnly ?? false,
+      specialtyPattern,
+      query.limit,
+    ],
   );
 
   return res.rows.map((r) => DirectoryFacilitySummarySchema.parse(r));

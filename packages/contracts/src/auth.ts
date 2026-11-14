@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { UserRoleSchema } from "./roles.js";
+import { AccountStatusSchema, UserRoleSchema } from "./roles.js";
 
 export const PublicSelfRegisterRoleSchema = z.enum([
   "PATIENT",
@@ -45,6 +45,9 @@ export const AuthenticatedUserSchema = z.object({
   emailVerified: z.boolean().default(false),
   phone: z.string().nullable().default(null),
   phoneVerified: z.boolean().default(false),
+  accountStatus: AccountStatusSchema.default("ACTIVE"),
+  credentialVerified: z.boolean().default(false),
+  lastLoginAtIso: z.string().datetime().nullable().optional(),
   createdAtIso: z.string().datetime(),
 });
 
@@ -56,6 +59,12 @@ export const AuthResponseSchema = z.object({
 });
 
 export type AuthResponse = z.infer<typeof AuthResponseSchema>;
+
+export const LogoutResponseSchema = z.object({
+  revoked: z.boolean(),
+});
+
+export type LogoutResponse = z.infer<typeof LogoutResponseSchema>;
 
 export const RecoveryPurposeSchema = z.enum([
   "VERIFY_EMAIL",

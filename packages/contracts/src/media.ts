@@ -5,15 +5,21 @@ export const ALLOWED_CERTIFICATION_MIME_TYPES = [
   "image/png",
   "image/jpeg",
   "image/webp",
+  "image/tiff",
+  "image/heic",
+  "image/heif",
+  "image/bmp",
 ] as const;
 
 export const ALLOWED_AVATAR_MIME_TYPES = [
   "image/png",
   "image/jpeg",
   "image/webp",
+  "image/heic",
+  "image/heif",
 ] as const;
 
-export const MAX_MEDIA_UPLOAD_BYTES = 10 * 1024 * 1024;
+export const MAX_MEDIA_UPLOAD_BYTES = 15 * 1024 * 1024;
 
 export const MediaUploadStatusSchema = z.enum([
   "PENDING",
@@ -33,6 +39,10 @@ export const FacilityMediaCategorySchema = z.enum([
   "MINISTRY_LICENSE",
   "ACCREDITATION",
   "FACILITY_PHOTO",
+  "HYGIENE_INSPECTION",
+  "FIRE_SAFETY_CERT",
+  "PHARMACY_PERMIT",
+  "LAB_ISO_CERT",
 ]);
 export type FacilityMediaCategory = z.infer<typeof FacilityMediaCategorySchema>;
 
@@ -41,6 +51,11 @@ export const UserMediaCategorySchema = z.enum([
   "MEDICAL_DEGREE",
   "PRACTITIONER_LICENSE",
   "DRIVER_LICENSE",
+  "VEHICLE_INSPECTION",
+  "NATIONAL_ID",
+  "INSURANCE_CERTIFICATE",
+  "BOARD_CERTIFICATION",
+  "MALPRACTICE_POLICY",
 ]);
 export type UserMediaCategory = z.infer<typeof UserMediaCategorySchema>;
 
@@ -74,7 +89,7 @@ export const PresignUserMediaSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["mimeType"],
-        message: "Avatars must be PNG, JPEG, or WebP images.",
+        message: "Avatars must be PNG, JPEG, WebP, or HEIC/HEIF images.",
       });
     }
   });
@@ -115,6 +130,7 @@ export const FacilityMediaDocumentSchema = z.object({
   reviewerNote: z.string().nullable(),
   reviewedByUserId: z.string().uuid().nullable(),
   reviewedAtIso: z.string().datetime().nullable(),
+  sha256Checksum: z.string().nullable().optional(),
   downloadUrl: z.string().url(),
   createdAtIso: z.string().datetime(),
 });
@@ -135,6 +151,7 @@ export const UserMediaDocumentSchema = z.object({
   reviewerNote: z.string().nullable(),
   reviewedByUserId: z.string().uuid().nullable(),
   reviewedAtIso: z.string().datetime().nullable(),
+  sha256Checksum: z.string().nullable().optional(),
   downloadUrl: z.string().url(),
   createdAtIso: z.string().datetime(),
 });

@@ -6,6 +6,10 @@ import {
   type UserRole,
 } from "@medisync/contracts";
 import { authenticateRequest } from "../foundation/index.js";
+import {
+  DIRECTORY_CACHE_GEN_KEY,
+  withGenerationCache,
+} from "../../shared/redis/cache.js";
 import type { S3PresignConfig } from "../../shared/storage/s3-presign.js";
 import {
   listDirectoryDoctorsScoped,
@@ -36,10 +40,10 @@ export async function registerDirectoryRoutes(
   },
 ): Promise<void> {
   app.get("/v1/directory/patients", async (request, reply) => {
-    const claims = authenticateRequest(
+    const claims = await authenticateRequest(
       request,
       reply,
-      deps.authSecret,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       PATIENT_PICKER_ROLES,
     );
     if (!claims) return;
@@ -70,10 +74,13 @@ export async function registerDirectoryRoutes(
       });
     }
 
-    const doctors = await listDirectoryDoctorsScoped(
-      deps.pool,
-      parsed.data,
-      deps.s3Config,
+    const cacheKey = `doctors:${JSON.stringify(parsed.data)}`;
+    const doctors = await withGenerationCache(
+      deps.redis,
+      DIRECTORY_CACHE_GEN_KEY,
+      cacheKey,
+      30,
+      () => listDirectoryDoctorsScoped(deps.pool, parsed.data, deps.s3Config),
     );
     return { doctors };
   });
@@ -87,9 +94,13 @@ export async function registerDirectoryRoutes(
       });
     }
 
-    const facilities = await listDirectoryFacilitiesPublic(
-      deps.pool,
-      parsed.data,
+    const cacheKey = `facilities:${JSON.stringify(parsed.data)}`;
+    const facilities = await withGenerationCache(
+      deps.redis,
+      DIRECTORY_CACHE_GEN_KEY,
+      cacheKey,
+      30,
+      () => listDirectoryFacilitiesPublic(deps.pool, parsed.data),
     );
     return { facilities };
   });

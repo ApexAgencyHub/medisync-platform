@@ -78,6 +78,9 @@ export async function registerUserRecoveryRoutes(
       );
       return reply.status(200).send({ user });
     } catch (err) {
+      if (err instanceof RecoveryRateLimitError) {
+        return reply.status(429).send({ error: err.message });
+      }
       if (err instanceof RecoveryBadRequestError) {
         return reply.status(400).send({ error: err.message });
       }
@@ -99,9 +102,13 @@ export async function registerUserRecoveryRoutes(
         deps.pool,
         deps.authSecret,
         parsed.data,
+        deps.redis,
       );
       return reply.status(200).send(result);
     } catch (err) {
+      if (err instanceof RecoveryRateLimitError) {
+        return reply.status(429).send({ error: err.message });
+      }
       if (err instanceof RecoveryBadRequestError) {
         return reply.status(400).send({ error: err.message });
       }
@@ -110,7 +117,11 @@ export async function registerUserRecoveryRoutes(
   });
 
   app.patch("/v1/auth/profile", async (request, reply) => {
-    const claims = authenticateRequest(request, reply, deps.authSecret);
+    const claims = await authenticateRequest(request, reply, {
+      authSecret: deps.authSecret,
+      pool: deps.pool,
+      redis: deps.redis,
+    });
     if (!claims) return;
 
     const parsed = UpdateProfileSchema.safeParse(request.body);

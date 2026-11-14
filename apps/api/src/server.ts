@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import type { Redis } from "ioredis";
@@ -15,6 +16,7 @@ import {
 } from "./features/directory/index.js";
 import { registerUserRecoveryRoutes } from "./features/user-recovery/index.js";
 import { registerPharmacyCommerceRoutes } from "./features/pharmacy-commerce/index.js";
+import { registerMedicalPlatformRoutes } from "./features/medical-platform/index.js";
 import {
   registerApiRateLimiterHook,
   registerSystemOpsRoutes,
@@ -39,25 +41,66 @@ export interface BuildServerOptions {
   runDbMigrations?: boolean;
   seedDemoWorld?: boolean;
   rateLimitMaxPerMinute?: number;
+  authRateLimitMaxPerMinute?: number;
   rateLimitKeyPrefix?: string;
+  allowPublicRegistration?: boolean;
+  requireProviderVerification?: boolean;
+  dbPoolMax?: number;
+  dbStatementTimeoutMs?: number;
+  trustProxy?: boolean;
+  enableRequestLogs?: boolean;
 }
 
 export async function buildApiServer(
   options: BuildServerOptions,
 ): Promise<FastifyInstance> {
+  const loggerConfig = options.enableRequestLogs
+    ? {
+        level: process.env.NODE_ENV === "production" ? "info" : "debug",
+        redact: {
+          paths: [
+            "req.headers.authorization",
+            "req.headers.cookie",
+            "*.password",
+            "*.newPassword",
+            "*.code",
+            "*.qrToken",
+          ],
+          remove: true,
+        },
+      }
+    : false;
+
   const app = Fastify({
-    logger: false,
+    logger: loggerConfig,
+    trustProxy: options.trustProxy ?? false,
+    requestTimeout: 30_000,
+    connectionTimeout: 10_000,
+    keepAliveTimeout: 65_000,
     bodyLimit: 1_048_576,
   });
 
-  app.addHook("onSend", async (_request, reply) => {
+  app.addHook("onSend", async (request, reply) => {
+    reply.header("x-request-id", request.id);
     reply.header("X-Content-Type-Options", "nosniff");
     reply.header("X-Frame-Options", "DENY");
     reply.header("Referrer-Policy", "strict-origin-when-cross-origin");
     reply.header("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    reply.header(
+      "Content-Security-Policy",
+      "default-src 'none'; frame-ancestors 'none'",
+    );
+    reply.header("Cross-Origin-Opener-Policy", "same-origin");
+    reply.header("Cross-Origin-Resource-Policy", "cross-origin");
+    if (process.env.NODE_ENV === "production") {
+      reply.header(
+        "Strict-Transport-Security",
+        "max-age=31536000; includeSubDomains",
+      );
+    }
   });
 
-  app.setErrorHandler((error, _request, reply) => {
+  app.setErrorHandler((error, request, reply) => {
     const errWithStatus = error as { statusCode?: number; message?: string };
     const statusCode =
       typeof errWithStatus.statusCode === "number" &&
@@ -67,6 +110,7 @@ export async function buildApiServer(
         : 500;
 
     if (statusCode >= 500) {
+      request.log.error({ err: error, reqId: request.id }, "Unhandled API error");
       return reply.status(500).send({ error: "INTERNAL_SERVER_ERROR" });
     }
 
@@ -77,7 +121,14 @@ export async function buildApiServer(
   });
   const ownsPool = !options.pool;
   const ownsRedis = !options.redis;
-  const pool = options.pool ?? createDbPool(options.databaseUrl);
+  const pool =
+    options.pool ??
+    createDbPool(options.databaseUrl, {
+      ...(options.dbPoolMax !== undefined ? { max: options.dbPoolMax } : {}),
+      ...(options.dbStatementTimeoutMs !== undefined
+        ? { statementTimeoutMs: options.dbStatementTimeoutMs }
+        : {}),
+    });
   const redis =
     options.redis ??
     createRedisClient(
@@ -111,18 +162,50 @@ export async function buildApiServer(
     options.rateLimitMaxPerMinute ??
     (Number.isFinite(envRateLimit) && envRateLimit > 0 ? envRateLimit : 600);
 
+  const envAuthRateLimit = Number.parseInt(
+    process.env.AUTH_RATE_LIMIT_MAX_PER_MIN ?? "40",
+    10,
+  );
+  const isTestEnv =
+    process.env.VITEST === "true" || process.env.NODE_ENV === "test";
+  const authMaxRequestsPerMinute =
+    options.authRateLimitMaxPerMinute ??
+    (options.rateLimitMaxPerMinute !== undefined
+      ? options.rateLimitMaxPerMinute
+      : isTestEnv
+        ? maxRequestsPerMinute
+        : Number.isFinite(envAuthRateLimit) && envAuthRateLimit > 0
+          ? envAuthRateLimit
+          : 40);
+
+  const allowPublicRegistration =
+    options.allowPublicRegistration ??
+    process.env.ALLOW_PUBLIC_REGISTRATION !== "false";
+  const requireProviderVerification =
+    options.requireProviderVerification ??
+    process.env.REQUIRE_PROVIDER_VERIFICATION === "true";
+
+  const resolvedRateLimitKeyPrefix =
+    options.rateLimitKeyPrefix ??
+    (isTestEnv
+      ? `medisync:ratelimit:test:${crypto.randomBytes(4).toString("hex")}`
+      : undefined);
+
   registerApiRateLimiterHook(app, {
     redis,
     maxRequestsPerMinute,
-    ...(options.rateLimitKeyPrefix
-      ? { keyPrefix: options.rateLimitKeyPrefix }
+    authMaxRequestsPerMinute,
+    ...(resolvedRateLimitKeyPrefix
+      ? { keyPrefix: resolvedRateLimitKeyPrefix }
       : {}),
   });
 
   await registerFoundationRoutes(app, {
     pool,
+    redis,
     authSecret: options.authSecret,
     s3Config,
+    allowPublicRegistration,
   });
   await registerCountryPackRoutes(app);
   await registerMapsDispatchRoutes(app, {
@@ -130,15 +213,26 @@ export async function buildApiServer(
     redis,
     authSecret: options.authSecret,
     corsOrigins: allowedOrigins,
+    requireProviderVerification,
   });
   await registerBookingRoutes(app, {
     pool,
+    redis,
     authSecret: options.authSecret,
+    requireProviderVerification,
   });
   await registerClinicalRoutes(app, {
     pool,
+    redis,
     authSecret: options.authSecret,
     s3Config,
+    requireProviderVerification,
+  });
+  await registerMedicalPlatformRoutes(app, {
+    pool,
+    redis,
+    authSecret: options.authSecret,
+    requireProviderVerification,
   });
   await registerAdminOpsRoutes(app, {
     pool,
@@ -148,6 +242,7 @@ export async function buildApiServer(
   });
   await registerMediaCertificationRoutes(app, {
     pool,
+    redis,
     authSecret: options.authSecret,
     s3Config,
   });

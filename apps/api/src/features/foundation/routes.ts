@@ -1,10 +1,12 @@
 import type { FastifyInstance } from "fastify";
+import type { Redis } from "ioredis";
 import type { Pool } from "pg";
 import { z } from "zod";
 import {
   CreateFacilitySchema,
   FacilityListQuerySchema,
   LoginSchema,
+  LogoutResponseSchema,
   RegisterUserSchema,
   UserRoleSchema,
   VerifyFacilitySchema,
@@ -16,8 +18,11 @@ import {
   signAuthToken,
   verifyPassword,
 } from "./auth-crypto.js";
-import { authenticateRequest } from "./guard.js";
-import type { S3PresignConfig } from "../../shared/storage/s3-presign.js";
+import { authenticateRequest, revokeJwtToken } from "./guard.js";
+import {
+  checkS3Health,
+  type S3PresignConfig,
+} from "../../shared/storage/s3-presign.js";
 import {
   appendAuditLog,
   DuplicateConflictError,
@@ -28,6 +33,7 @@ import {
   listAuditLogs,
   listFacilitiesScoped,
   pingDatabase,
+  recordUserLoginTimestamp,
   updateFacilityVerification,
 } from "./store.js";
 
@@ -51,10 +57,16 @@ const AuditQuerySchema = z.object({
 
 export async function registerFoundationRoutes(
   app: FastifyInstance,
-  deps: { pool: Pool; authSecret: string; s3Config?: S3PresignConfig },
+  deps: {
+    pool: Pool;
+    redis?: Redis;
+    authSecret: string;
+    s3Config?: S3PresignConfig;
+    allowPublicRegistration?: boolean;
+  },
 ): Promise<void> {
   app.get("/health", async (_request, reply) => {
-    const dbOk = await pingDatabase(deps.pool);
+    const dbOk = await pingDatabase(deps.pool).catch(() => false);
     if (!dbOk) {
       return reply.status(503).send({ status: "degraded", db: false });
     }
@@ -67,7 +79,47 @@ export async function registerFoundationRoutes(
     };
   });
 
+  app.get("/ready", async (_request, reply) => {
+    const dbOk = await pingDatabase(deps.pool).catch(() => false);
+
+    let redisStatus: "OK" | "DEGRADED" | "SKIPPED" = "SKIPPED";
+    if (deps.redis) {
+      try {
+        redisStatus = (await deps.redis.ping()) === "PONG" ? "OK" : "DEGRADED";
+      } catch {
+        redisStatus = "DEGRADED";
+      }
+    }
+
+    const s3Health = deps.s3Config
+      ? await checkS3Health(deps.s3Config)
+      : { status: "SKIPPED" as const, bucketReady: false };
+
+    const allHealthy =
+      dbOk && redisStatus !== "DEGRADED" && s3Health.status !== "DEGRADED";
+
+    return reply.status(allHealthy ? 200 : 503).send({
+      status: allHealthy ? "ready" : "degraded",
+      service: "medisync-api",
+      checks: {
+        postgres: dbOk ? "OK" : "DEGRADED",
+        redis: redisStatus,
+        minio: s3Health.status,
+        minioBucketReady: s3Health.bucketReady,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  });
+
   app.post("/v1/auth/register", async (request, reply) => {
+    if (deps.allowPublicRegistration === false) {
+      return reply.status(403).send({
+        error: "PUBLIC_REGISTRATION_DISABLED",
+        message:
+          "Public self-registration is disabled in organization mode. Contact OPS_ADMIN to provision an account.",
+      });
+    }
+
     const parsed = RegisterUserSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({
@@ -89,7 +141,21 @@ export async function registerFoundationRoutes(
         resourceId: user.id,
       });
 
-      const token = signAuthToken(user, deps.authSecret);
+      if (user.role === "DOCTOR") {
+        await deps.redis?.incr("medisync:cache:gen:directory").catch(() => undefined);
+      }
+
+      const token = signAuthToken(
+        {
+          sub: user.id,
+          role: user.role,
+          countryCode: user.countryCode,
+          facilityId: user.facilityId,
+          email: user.email,
+          ver: 1,
+        },
+        deps.authSecret,
+      );
       return reply.status(201).send({ token, user });
     } catch (err) {
       if (err instanceof DuplicateConflictError) {
@@ -125,6 +191,16 @@ export async function registerFoundationRoutes(
       return reply.status(401).send({ error: "INVALID_CREDENTIALS" });
     }
 
+    if (stored.accountStatus === "SUSPENDED") {
+      return reply.status(403).send({
+        error: "ACCOUNT_SUSPENDED",
+        message: "This account has been suspended by an administrator.",
+      });
+    }
+
+    const loginIso = new Date().toISOString();
+    await recordUserLoginTimestamp(deps.pool, stored.id);
+
     const user = {
       id: stored.id,
       email: stored.email,
@@ -136,6 +212,9 @@ export async function registerFoundationRoutes(
       emailVerified: stored.emailVerified,
       phone: stored.phone,
       phoneVerified: stored.phoneVerified,
+      accountStatus: stored.accountStatus,
+      credentialVerified: stored.credentialVerified,
+      lastLoginAtIso: loginIso,
       createdAtIso: stored.createdAtIso,
     };
 
@@ -148,12 +227,47 @@ export async function registerFoundationRoutes(
       resourceId: user.id,
     });
 
-    const token = signAuthToken(user, deps.authSecret);
+    const token = signAuthToken(
+      {
+        sub: user.id,
+        role: user.role,
+        countryCode: user.countryCode,
+        facilityId: user.facilityId,
+        email: user.email,
+        ver: stored.tokenVersion,
+      },
+      deps.authSecret,
+    );
     return { token, user };
   });
 
+  app.post("/v1/auth/logout", async (request, reply) => {
+    const claims = await authenticateRequest(request, reply, {
+      authSecret: deps.authSecret,
+      pool: deps.pool,
+      redis: deps.redis,
+    });
+    if (!claims) return;
+
+    await revokeJwtToken(deps.redis, claims);
+    await appendAuditLog(deps.pool, {
+      countryCode: claims.countryCode,
+      actorId: claims.sub,
+      actorRole: claims.role,
+      action: "USER_LOGOUT",
+      resourceType: "user",
+      resourceId: claims.sub,
+    });
+
+    return LogoutResponseSchema.parse({ revoked: true });
+  });
+
   app.get("/v1/auth/me", async (request, reply) => {
-    const claims = authenticateRequest(request, reply, deps.authSecret);
+    const claims = await authenticateRequest(request, reply, {
+      authSecret: deps.authSecret,
+      pool: deps.pool,
+      redis: deps.redis,
+    });
     if (!claims) return;
 
     const user = await findUserById(deps.pool, claims.sub, deps.s3Config);
@@ -164,10 +278,10 @@ export async function registerFoundationRoutes(
   });
 
   app.post("/v1/facilities", async (request, reply) => {
-    const claims = authenticateRequest(
+    const claims = await authenticateRequest(
       request,
       reply,
-      deps.authSecret,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       FACILITY_ONBOARDING_ROLES,
     );
     if (!claims) return;
@@ -214,6 +328,7 @@ export async function registerFoundationRoutes(
         resourceId: facility.id,
         metadata: { kind: facility.kind, licenseNumber: facility.licenseNumber },
       });
+      await deps.redis?.incr("medisync:cache:gen:directory").catch(() => undefined);
 
       return reply.status(201).send({ facility });
     } catch (err) {
@@ -225,7 +340,11 @@ export async function registerFoundationRoutes(
   });
 
   app.get("/v1/facilities", async (request, reply) => {
-    const claims = authenticateRequest(request, reply, deps.authSecret);
+    const claims = await authenticateRequest(request, reply, {
+      authSecret: deps.authSecret,
+      pool: deps.pool,
+      redis: deps.redis,
+    });
     if (!claims) return;
 
     const parsed = FacilityListQuerySchema.safeParse(request.query);
@@ -245,9 +364,12 @@ export async function registerFoundationRoutes(
   });
 
   app.patch("/v1/admin/facilities/:id/verify", async (request, reply) => {
-    const claims = authenticateRequest(request, reply, deps.authSecret, [
-      "OPS_ADMIN",
-    ]);
+    const claims = await authenticateRequest(
+      request,
+      reply,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
+      ["OPS_ADMIN"],
+    );
     if (!claims) return;
 
     const paramParsed = FacilityIdParamSchema.safeParse(request.params);
@@ -277,14 +399,18 @@ export async function registerFoundationRoutes(
         note: bodyParsed.data.note ?? null,
       },
     });
+    await deps.redis?.incr("medisync:cache:gen:directory").catch(() => undefined);
 
     return { facility };
   });
 
   app.get("/v1/admin/audit-logs", async (request, reply) => {
-    const claims = authenticateRequest(request, reply, deps.authSecret, [
-      "OPS_ADMIN",
-    ]);
+    const claims = await authenticateRequest(
+      request,
+      reply,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
+      ["OPS_ADMIN"],
+    );
     if (!claims) return;
 
     const parsed = AuditQuerySchema.safeParse(request.query);

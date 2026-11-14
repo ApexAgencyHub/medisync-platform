@@ -6,6 +6,10 @@ import { hashPassword } from "../foundation/index.js";
 import { signPrescriptionQr } from "../clinical-pharmacy-labs/index.js";
 import { upsertDriverLocation } from "../maps-dispatch/index.js";
 import { seedDefaultPharmacyProducts } from "../pharmacy-commerce/index.js";
+import {
+  bumpCacheGeneration,
+  DIRECTORY_CACHE_GEN_KEY,
+} from "../../shared/redis/cache.js";
 import { SEEDED_DEMO_PASSWORD } from "./pg-store.js";
 
 interface SeedFacilitySpec {
@@ -432,9 +436,13 @@ export async function seedRealisticWorld(
   // 1. Seed bootstrap owner / Ops Admin first
   const opsSpec = SEED_USERS[0]!;
   const opsRes = await pool.query<{ id: string }>(
-    `INSERT INTO users (email, password_hash, full_name, role, country_code)
-     VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (email) DO UPDATE SET full_name = EXCLUDED.full_name
+    `INSERT INTO users (
+       email, password_hash, full_name, role, country_code, account_status, credential_verified
+     )
+     VALUES ($1, $2, $3, $4, $5, 'ACTIVE', TRUE)
+     ON CONFLICT (email) DO UPDATE SET
+       full_name = EXCLUDED.full_name,
+       credential_verified = TRUE
      RETURNING id`,
     [
       opsSpec.email,
@@ -504,12 +512,19 @@ export async function seedRealisticWorld(
       ? (facilityIdsByLicense.get(spec.facilityLicense) ?? null)
       : null;
 
+    const isProviderOrStaff =
+      spec.role !== "PATIENT" && spec.role !== "CAREGIVER";
+
     const uRes = await pool.query<{ id: string }>(
-      `INSERT INTO users (email, password_hash, full_name, role, country_code, facility_id)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO users (
+         email, password_hash, full_name, role, country_code, facility_id,
+         account_status, credential_verified
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, 'ACTIVE', $7)
        ON CONFLICT (email) DO UPDATE SET
          full_name = EXCLUDED.full_name,
-         facility_id = COALESCE(users.facility_id, EXCLUDED.facility_id)
+         facility_id = COALESCE(users.facility_id, EXCLUDED.facility_id),
+         credential_verified = EXCLUDED.credential_verified
        RETURNING id`,
       [
         spec.email,
@@ -518,6 +533,7 @@ export async function seedRealisticWorld(
         spec.role,
         spec.countryCode,
         facilityId,
+        isProviderOrStaff,
       ],
     );
     const userId = uRes.rows[0]!.id;
@@ -728,6 +744,8 @@ export async function seedRealisticWorld(
   }
 
   await seedDefaultPharmacyProducts(pool);
+  await seedDefaultMedicalServices(pool, facilityIdsByLicense, opsId);
+  await bumpCacheGeneration(redis, DIRECTORY_CACHE_GEN_KEY);
 
   return {
     facilitiesSeeded: SEED_FACILITIES.length,
@@ -736,4 +754,183 @@ export async function seedRealisticWorld(
     driversPinged,
     prescriptionsSeeded,
   };
+}
+
+async function seedDefaultMedicalServices(
+  pool: Pool,
+  facilityIdsByLicense: ReadonlyMap<string, string>,
+  actorUserId: string,
+): Promise<void> {
+  const defaultServices = [
+    {
+      facilityLicense: "MA-CLIN-901002",
+      countryCode: "MA",
+      category: "CONSULTATION",
+      serviceCode: "MA-CARD-001",
+      name: "Cardiology Consultation & ECG",
+      description: "Comprehensive cardiovascular consult with 12-lead ECG.",
+      specialty: "Cardiology",
+      priceMinor: 35000,
+      currencyCode: "MAD",
+      durationMinutes: 30,
+      homeServiceAvailable: false,
+      telehealthAvailable: true,
+    },
+    {
+      facilityLicense: "MA-CLIN-901002",
+      countryCode: "MA",
+      category: "TELEHEALTH",
+      serviceCode: "MA-TELE-002",
+      name: "HD Video Physician Teleconsultation",
+      description: "Encrypted remote doctor consultation with e-prescription.",
+      specialty: "General Practice",
+      priceMinor: 25000,
+      currencyCode: "MAD",
+      durationMinutes: 20,
+      homeServiceAvailable: false,
+      telehealthAvailable: true,
+    },
+    {
+      facilityLicense: "MA-LAB-901004",
+      countryCode: "MA",
+      category: "LAB_TEST",
+      serviceCode: "MA-LABS-003",
+      name: "Complete Blood, Lipid & HbA1c Panel",
+      description: "Same-day venous draw in lab or at home with digital PDF report.",
+      specialty: "Clinical Pathology",
+      priceMinor: 22000,
+      currencyCode: "MAD",
+      durationMinutes: 15,
+      homeServiceAvailable: true,
+      telehealthAvailable: false,
+    },
+    {
+      facilityLicense: "MA-LAB-901004",
+      countryCode: "MA",
+      category: "IMAGING",
+      serviceCode: "MA-IMAG-004",
+      name: "Cardiac Doppler Echocardiogram",
+      description: "High-resolution Doppler ultrasound performed by a radiologist.",
+      specialty: "Radiology",
+      priceMinor: 65000,
+      currencyCode: "MAD",
+      durationMinutes: 35,
+      homeServiceAvailable: false,
+      telehealthAvailable: false,
+    },
+    {
+      facilityLicense: "MA-HOSP-901001",
+      countryCode: "MA",
+      category: "HOME_CARE",
+      serviceCode: "MA-HOME-005",
+      name: "State Nurse Home Care & Wound Visit",
+      description: "At-home nursing care, post-op dressing, and vitals monitoring.",
+      specialty: "Home Nursing",
+      priceMinor: 30000,
+      currencyCode: "MAD",
+      durationMinutes: 45,
+      homeServiceAvailable: true,
+      telehealthAvailable: false,
+    },
+    {
+      facilityLicense: "MA-HOSP-901001",
+      countryCode: "MA",
+      category: "AMBULANCE",
+      serviceCode: "MA-EMSC-006",
+      name: "BLS Rapid Emergency Medical Transport",
+      description: "24/7 ambulance transfer with continuous paramedic telemetry.",
+      specialty: "Emergency",
+      priceMinor: 45000,
+      currencyCode: "MAD",
+      durationMinutes: 40,
+      homeServiceAvailable: true,
+      telehealthAvailable: false,
+    },
+    {
+      facilityLicense: "MA-PHRM-901003",
+      countryCode: "MA",
+      category: "PHARMACY_SERVICE",
+      serviceCode: "MA-PHRM-007",
+      name: "Express Cold-Chain Medication Delivery",
+      description: "Temperature-controlled home delivery for verified e-prescriptions.",
+      specialty: "Pharmacy",
+      priceMinor: 5000,
+      currencyCode: "MAD",
+      durationMinutes: 30,
+      homeServiceAvailable: true,
+      telehealthAvailable: false,
+    },
+    {
+      facilityLicense: "INTL-CLIN-101002",
+      countryCode: "INTL",
+      category: "CONSULTATION",
+      serviceCode: "INTL-MED-101",
+      name: "Executive Internal Medicine Consult",
+      description: "Bilingual internal medicine evaluation and preventative care plan.",
+      specialty: "Internal Medicine",
+      priceMinor: 18000,
+      currencyCode: "CHF",
+      durationMinutes: 40,
+      homeServiceAvailable: false,
+      telehealthAvailable: true,
+    },
+    {
+      facilityLicense: "INTL-LABS-101004",
+      countryCode: "INTL",
+      category: "LAB_TEST",
+      serviceCode: "INTL-LAB-102",
+      name: "Comprehensive Molecular Biomarker Panel",
+      description: "Full metabolic, thyroid, and inflammatory panel with home nurse option.",
+      specialty: "Diagnostics",
+      priceMinor: 21000,
+      currencyCode: "CHF",
+      durationMinutes: 20,
+      homeServiceAvailable: true,
+      telehealthAvailable: false,
+    },
+    {
+      facilityLicense: "INTL-HOSP-101001",
+      countryCode: "INTL",
+      category: "AMBULANCE",
+      serviceCode: "INTL-EMS-103",
+      name: "Mobile ICU Paramedic Dispatch",
+      description: "Cross-canton emergency stabilization and critical care transport.",
+      specialty: "Emergency",
+      priceMinor: 42000,
+      currencyCode: "CHF",
+      durationMinutes: 45,
+      homeServiceAvailable: true,
+      telehealthAvailable: false,
+    },
+  ] as const;
+
+  for (const svc of defaultServices) {
+    const facilityId = facilityIdsByLicense.get(svc.facilityLicense);
+    if (!facilityId) continue;
+
+    await pool.query(
+      `INSERT INTO medical_services (
+         country_code, facility_id, category, service_code, name, description,
+         specialty, price_minor, currency_code, duration_minutes,
+         home_service_available, telehealth_available, is_active, created_by_user_id
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, TRUE, $13)
+       ON CONFLICT (facility_id, service_code) DO NOTHING`,
+      [
+        svc.countryCode,
+        facilityId,
+        svc.category,
+        svc.serviceCode,
+        svc.name,
+        svc.description,
+        svc.specialty,
+        svc.priceMinor,
+        svc.currencyCode,
+        svc.durationMinutes,
+        svc.homeServiceAvailable,
+        svc.telehealthAvailable,
+        actorUserId,
+      ],
+    );
+  }
 }

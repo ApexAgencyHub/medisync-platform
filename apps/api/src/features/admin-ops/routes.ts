@@ -4,8 +4,10 @@ import type { Pool } from "pg";
 import { z } from "zod";
 import {
   AdminAuditQuerySchema,
+  AdminCreateUserSchema,
   AdminOverviewQuerySchema,
   AdminOverrideDispatchSchema,
+  AdminUpdateUserStatusSchema,
   AdminUsersQuerySchema,
   CreateDisputeSchema,
   DisputeStatusSchema,
@@ -22,6 +24,7 @@ import {
   AdminForbiddenError,
   AdminNotFoundError,
   createDispute,
+  createUserAdmin,
   getAdminOverview,
   listAuditEventsFiltered,
   listDisputesScoped,
@@ -29,6 +32,7 @@ import {
   overrideDispatchAdmin,
   resolveDisputeAdmin,
   updateUserRoleAdmin,
+  updateUserStatusAdmin,
 } from "./pg-store.js";
 
 const UuidParamSchema = z.object({
@@ -86,10 +90,10 @@ export async function registerAdminOpsRoutes(
   },
 ): Promise<void> {
   app.get("/v1/admin/overview", async (request, reply) => {
-    const claims = authenticateRequest(
+    const claims = await authenticateRequest(
       request,
       reply,
-      deps.authSecret,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       ADMIN_OPS_VIEWER_ROLES,
     );
     if (!claims) return;
@@ -111,10 +115,10 @@ export async function registerAdminOpsRoutes(
   });
 
   app.get("/v1/admin/users", async (request, reply) => {
-    const claims = authenticateRequest(
+    const claims = await authenticateRequest(
       request,
       reply,
-      deps.authSecret,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       ADMIN_OPS_VIEWER_ROLES,
     );
     if (!claims) return;
@@ -140,13 +144,43 @@ export async function registerAdminOpsRoutes(
     }
   });
 
+  app.post("/v1/admin/users", async (request, reply) => {
+    const claims = await authenticateRequest(
+      request,
+      reply,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
+      OPS_ADMIN_ONLY,
+    );
+    if (!claims) return;
+
+    const body = AdminCreateUserSchema.safeParse(request.body);
+    if (!body.success) {
+      return reply.status(400).send({
+        error: "INVALID_ADMIN_USER_PAYLOAD",
+        issues: body.error.issues,
+      });
+    }
+
+    try {
+      const user = await createUserAdmin(
+        deps.pool,
+        claims,
+        body.data,
+      );
+      await deps.redis.incr("medisync:cache:gen:directory").catch(() => undefined);
+      return reply.status(201).send({ user });
+    } catch (err) {
+      return handleAdminError(err, reply);
+    }
+  });
+
   app.patch<{ Params: { id: string } }>(
     "/v1/admin/users/:id/role",
     async (request, reply) => {
-      const claims = authenticateRequest(
+      const claims = await authenticateRequest(
         request,
         reply,
-        deps.authSecret,
+        { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
         OPS_ADMIN_ONLY,
       );
       if (!claims) return;
@@ -171,7 +205,50 @@ export async function registerAdminOpsRoutes(
           claims,
           body.data,
           deps.s3Config,
+          deps.redis,
         );
+        await deps.redis.incr("medisync:cache:gen:directory").catch(() => undefined);
+        return { user };
+      } catch (err) {
+        return handleAdminError(err, reply);
+      }
+    },
+  );
+
+  app.patch<{ Params: { id: string } }>(
+    "/v1/admin/users/:id/status",
+    async (request, reply) => {
+      const claims = await authenticateRequest(
+        request,
+        reply,
+        { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
+        OPS_ADMIN_ONLY,
+      );
+      if (!claims) return;
+
+      const params = UuidParamSchema.safeParse(request.params);
+      if (!params.success) {
+        return reply.status(400).send({ error: "INVALID_USER_ID" });
+      }
+
+      const body = AdminUpdateUserStatusSchema.safeParse(request.body);
+      if (!body.success) {
+        return reply.status(400).send({
+          error: "INVALID_STATUS_UPDATE_PAYLOAD",
+          issues: body.error.issues,
+        });
+      }
+
+      try {
+        const user = await updateUserStatusAdmin(
+          deps.pool,
+          params.data.id,
+          claims,
+          body.data,
+          deps.s3Config,
+          deps.redis,
+        );
+        await deps.redis.incr("medisync:cache:gen:directory").catch(() => undefined);
         return { user };
       } catch (err) {
         return handleAdminError(err, reply);
@@ -182,10 +259,10 @@ export async function registerAdminOpsRoutes(
   app.patch<{ Params: { id: string } }>(
     "/v1/admin/dispatches/:id/override",
     async (request, reply) => {
-      const claims = authenticateRequest(
+      const claims = await authenticateRequest(
         request,
         reply,
-        deps.authSecret,
+        { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
         ADMIN_OPS_VIEWER_ROLES,
       );
       if (!claims) return;
@@ -219,7 +296,11 @@ export async function registerAdminOpsRoutes(
   );
 
   app.post("/v1/disputes", async (request, reply) => {
-    const claims = authenticateRequest(request, reply, deps.authSecret);
+    const claims = await authenticateRequest(request, reply, {
+      authSecret: deps.authSecret,
+      pool: deps.pool,
+      redis: deps.redis,
+    });
     if (!claims) return;
 
     const body = CreateDisputeSchema.safeParse(request.body);
@@ -239,7 +320,11 @@ export async function registerAdminOpsRoutes(
   });
 
   app.get("/v1/disputes", async (request, reply) => {
-    const claims = authenticateRequest(request, reply, deps.authSecret);
+    const claims = await authenticateRequest(request, reply, {
+      authSecret: deps.authSecret,
+      pool: deps.pool,
+      redis: deps.redis,
+    });
     if (!claims) return;
 
     const parsed = DisputeListQuerySchema.safeParse(request.query);
@@ -261,10 +346,10 @@ export async function registerAdminOpsRoutes(
   app.patch<{ Params: { id: string } }>(
     "/v1/admin/disputes/:id",
     async (request, reply) => {
-      const claims = authenticateRequest(
+      const claims = await authenticateRequest(
         request,
         reply,
-        deps.authSecret,
+        { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
         ADMIN_OPS_VIEWER_ROLES,
       );
       if (!claims) return;
@@ -297,10 +382,10 @@ export async function registerAdminOpsRoutes(
   );
 
   app.get("/v1/admin/audit-events", async (request, reply) => {
-    const claims = authenticateRequest(
+    const claims = await authenticateRequest(
       request,
       reply,
-      deps.authSecret,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       ADMIN_OPS_VIEWER_ROLES,
     );
     if (!claims) return;

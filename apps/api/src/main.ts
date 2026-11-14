@@ -22,6 +22,13 @@ const server = await buildApiServer({
   seedDemoWorld:
     env.NODE_ENV !== "production" || process.env.ENABLE_DEMO_SEED === "true",
   rateLimitMaxPerMinute: env.RATE_LIMIT_MAX_PER_MIN,
+  authRateLimitMaxPerMinute: env.AUTH_RATE_LIMIT_MAX_PER_MIN,
+  allowPublicRegistration: env.ALLOW_PUBLIC_REGISTRATION,
+  requireProviderVerification: env.REQUIRE_PROVIDER_VERIFICATION,
+  dbPoolMax: env.DB_POOL_MAX,
+  dbStatementTimeoutMs: env.DB_STATEMENT_TIMEOUT_MS,
+  trustProxy: env.TRUST_PROXY,
+  enableRequestLogs: env.ENABLE_REQUEST_LOGS,
 });
 
 await server.listen({ port: env.PORT, host: env.HOST });

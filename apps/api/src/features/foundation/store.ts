@@ -20,6 +20,7 @@ import {
 const UserRowSchema = AuthenticatedUserSchema.extend({
   passwordHash: z.string(),
   avatarObjectKey: z.string().nullable().optional(),
+  tokenVersion: z.number().int().default(1),
 });
 
 export type StoredUserRecord = z.infer<typeof UserRowSchema>;
@@ -79,13 +80,28 @@ export async function pingDatabase(pool: Pool): Promise<boolean> {
 
 export async function insertUser(
   pool: Pool,
-  input: RegisterUserInput,
+  input: Omit<RegisterUserInput, "role"> & { role: UserRole },
   passwordHash: string,
+  options: {
+    accountStatus?: "ACTIVE" | "PENDING_APPROVAL" | "SUSPENDED" | undefined;
+    credentialVerified?: boolean | undefined;
+    phone?: string | null | undefined;
+  } = {},
 ): Promise<AuthenticatedUser> {
   try {
     const res = await pool.query(
-      `INSERT INTO users (email, password_hash, full_name, role, country_code, facility_id)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO users (
+         email,
+         password_hash,
+         full_name,
+         role,
+         country_code,
+         facility_id,
+         phone,
+         account_status,
+         credential_verified
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING
          id,
          email,
@@ -96,6 +112,9 @@ export async function insertUser(
          email_verified AS "emailVerified",
          phone,
          phone_verified AS "phoneVerified",
+         account_status AS "accountStatus",
+         credential_verified AS "credentialVerified",
+         CASE WHEN last_login_at IS NULL THEN NULL ELSE to_char(last_login_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "lastLoginAtIso",
          to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"`,
       [
         input.email.trim().toLowerCase(),
@@ -104,6 +123,9 @@ export async function insertUser(
         input.role,
         input.countryCode.trim().toUpperCase(),
         input.facilityId ?? null,
+        options.phone ?? null,
+        options.accountStatus ?? "ACTIVE",
+        options.credentialVerified ?? false,
       ],
     );
     return AuthenticatedUserSchema.parse(res.rows[0]);
@@ -113,6 +135,15 @@ export async function insertUser(
     }
     throw err;
   }
+}
+
+export async function recordUserLoginTimestamp(
+  pool: Pool,
+  userId: string,
+): Promise<void> {
+  await pool
+    .query(`UPDATE users SET last_login_at = NOW() WHERE id = $1`, [userId])
+    .catch(() => undefined);
 }
 
 export async function findUserByEmail(
@@ -133,6 +164,10 @@ export async function findUserByEmail(
        email_verified AS "emailVerified",
        phone,
        phone_verified AS "phoneVerified",
+       account_status AS "accountStatus",
+       credential_verified AS "credentialVerified",
+       token_version AS "tokenVersion",
+       CASE WHEN last_login_at IS NULL THEN NULL ELSE to_char(last_login_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "lastLoginAtIso",
        to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"
      FROM users
      WHERE email = $1
@@ -162,6 +197,9 @@ export async function findUserById(
        email_verified AS "emailVerified",
        phone,
        phone_verified AS "phoneVerified",
+       account_status AS "accountStatus",
+       credential_verified AS "credentialVerified",
+       CASE WHEN last_login_at IS NULL THEN NULL ELSE to_char(last_login_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "lastLoginAtIso",
        to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"
      FROM users
      WHERE id = $1

@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
+import type { Redis } from "ioredis";
 import type { Pool } from "pg";
 import { z } from "zod";
 import {
@@ -124,16 +125,19 @@ export async function registerClinicalRoutes(
   app: FastifyInstance,
   deps: {
     pool: Pool;
+    redis?: Redis;
     authSecret: string;
     s3Config: S3PresignConfig;
+    requireProviderVerification?: boolean;
   },
 ): Promise<void> {
   app.post("/v1/clinical/visit-notes", async (request, reply) => {
-    const claims = authenticateRequest(
+    const claims = await authenticateRequest(
       request,
       reply,
-      deps.authSecret,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       VISIT_NOTE_WRITER_ROLES,
+      { requireVerifiedProvider: deps.requireProviderVerification },
     );
     if (!claims) return;
 
@@ -154,10 +158,10 @@ export async function registerClinicalRoutes(
   });
 
   app.get("/v1/clinical/visit-notes", async (request, reply) => {
-    const claims = authenticateRequest(
+    const claims = await authenticateRequest(
       request,
       reply,
-      deps.authSecret,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       VISIT_NOTE_VIEWER_ROLES,
     );
     if (!claims) return;
@@ -180,11 +184,12 @@ export async function registerClinicalRoutes(
   });
 
   app.post("/v1/clinical/prescriptions", async (request, reply) => {
-    const claims = authenticateRequest(
+    const claims = await authenticateRequest(
       request,
       reply,
-      deps.authSecret,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       RX_ISSUER_ROLES,
+      { requireVerifiedProvider: deps.requireProviderVerification },
     );
     if (!claims) return;
 
@@ -210,10 +215,10 @@ export async function registerClinicalRoutes(
   });
 
   app.get("/v1/clinical/prescriptions", async (request, reply) => {
-    const claims = authenticateRequest(
+    const claims = await authenticateRequest(
       request,
       reply,
-      deps.authSecret,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       RX_VIEWER_ROLES,
     );
     if (!claims) return;
@@ -236,10 +241,10 @@ export async function registerClinicalRoutes(
   });
 
   app.post("/v1/clinical/prescriptions/verify-qr", async (request, reply) => {
-    const claims = authenticateRequest(
+    const claims = await authenticateRequest(
       request,
       reply,
-      deps.authSecret,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       PHARMACIST_ROLES,
     );
     if (!claims) return;
@@ -265,10 +270,10 @@ export async function registerClinicalRoutes(
   app.post(
     "/v1/clinical/prescriptions/:id/dispense",
     async (request, reply) => {
-      const claims = authenticateRequest(
+      const claims = await authenticateRequest(
         request,
         reply,
-        deps.authSecret,
+        { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
         PHARMACIST_ROLES,
       );
       if (!claims) return;
@@ -296,10 +301,10 @@ export async function registerClinicalRoutes(
   );
 
   app.post("/v1/clinical/lab-orders", async (request, reply) => {
-    const claims = authenticateRequest(
+    const claims = await authenticateRequest(
       request,
       reply,
-      deps.authSecret,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       LAB_ORDER_CREATOR_ROLES,
     );
     if (!claims) return;
@@ -321,10 +326,10 @@ export async function registerClinicalRoutes(
   });
 
   app.get("/v1/clinical/lab-orders", async (request, reply) => {
-    const claims = authenticateRequest(
+    const claims = await authenticateRequest(
       request,
       reply,
-      deps.authSecret,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       LAB_ORDER_VIEWER_ROLES,
     );
     if (!claims) return;
@@ -347,10 +352,10 @@ export async function registerClinicalRoutes(
   });
 
   app.patch("/v1/clinical/lab-orders/:id/status", async (request, reply) => {
-    const claims = authenticateRequest(
+    const claims = await authenticateRequest(
       request,
       reply,
-      deps.authSecret,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       LAB_TECH_ROLES,
     );
     if (!claims) return;
@@ -375,10 +380,10 @@ export async function registerClinicalRoutes(
   });
 
   app.post("/v1/clinical/media/presign-upload", async (request, reply) => {
-    const claims = authenticateRequest(
+    const claims = await authenticateRequest(
       request,
       reply,
-      deps.authSecret,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       MEDIA_UPLOADER_ROLES,
     );
     if (!claims) return;
@@ -405,10 +410,10 @@ export async function registerClinicalRoutes(
   });
 
   app.post("/v1/clinical/media/:id/confirm", async (request, reply) => {
-    const claims = authenticateRequest(
+    const claims = await authenticateRequest(
       request,
       reply,
-      deps.authSecret,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       MEDIA_UPLOADER_ROLES,
     );
     if (!claims) return;
@@ -432,10 +437,10 @@ export async function registerClinicalRoutes(
   });
 
   app.get("/v1/clinical/media", async (request, reply) => {
-    const claims = authenticateRequest(
+    const claims = await authenticateRequest(
       request,
       reply,
-      deps.authSecret,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       LAB_ORDER_VIEWER_ROLES,
     );
     if (!claims) return;

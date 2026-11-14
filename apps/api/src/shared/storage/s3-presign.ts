@@ -24,7 +24,19 @@ export type SupportedBinaryMime =
   | "image/png"
   | "image/jpeg"
   | "image/webp"
-  | "application/dicom";
+  | "image/tiff"
+  | "image/heic"
+  | "image/heif"
+  | "image/bmp"
+  | "image/gif"
+  | "application/dicom"
+  | "text/plain"
+  | "text/csv"
+  | "application/json"
+  | "application/fhir+json"
+  | "audio/wav"
+  | "audio/mpeg"
+  | "video/mp4";
 
 export class S3ObjectNotFoundError extends Error {
   constructor(message: string) {
@@ -121,6 +133,72 @@ export function detectFileSignature(header: Buffer): SupportedBinaryMime | null 
   }
 
   if (
+    header.length >= 12 &&
+    header.subarray(0, 4).toString("ascii") === "RIFF" &&
+    header.subarray(8, 12).toString("ascii") === "WAVE"
+  ) {
+    return "audio/wav";
+  }
+
+  if (
+    header.length >= 6 &&
+    (header.subarray(0, 6).toString("ascii") === "GIF87a" ||
+      header.subarray(0, 6).toString("ascii") === "GIF89a")
+  ) {
+    return "image/gif";
+  }
+
+  if (header.length >= 2 && header[0] === 0x42 && header[1] === 0x4d) {
+    return "image/bmp";
+  }
+
+  if (
+    header.length >= 4 &&
+    ((header[0] === 0x49 &&
+      header[1] === 0x49 &&
+      header[2] === 0x2a &&
+      header[3] === 0x00) ||
+      (header[0] === 0x4d &&
+        header[1] === 0x4d &&
+        header[2] === 0x00 &&
+        header[3] === 0x2a))
+  ) {
+    return "image/tiff";
+  }
+
+  if (
+    header.length >= 12 &&
+    header.subarray(4, 8).toString("ascii") === "ftyp"
+  ) {
+    const brand = header.subarray(8, 12).toString("ascii");
+    if (brand === "heic" || brand === "heix" || brand === "hevc" || brand === "hevx") {
+      return "image/heic";
+    }
+    if (brand === "mif1" || brand === "msf1") {
+      return "image/heif";
+    }
+    if (
+      brand === "isom" ||
+      brand === "iso2" ||
+      brand === "mp41" ||
+      brand === "mp42" ||
+      brand === "avc1" ||
+      brand === "M4V " ||
+      brand === "qt  "
+    ) {
+      return "video/mp4";
+    }
+  }
+
+  if (
+    header.length >= 3 &&
+    (header.subarray(0, 3).toString("ascii") === "ID3" ||
+      (header[0] === 0xff && (header[1]! & 0xe0) === 0xe0))
+  ) {
+    return "audio/mpeg";
+  }
+
+  if (
     header.length >= 132 &&
     header.subarray(128, 132).toString("ascii") === "DICM"
   ) {
@@ -128,6 +206,38 @@ export function detectFileSignature(header: Buffer): SupportedBinaryMime | null 
   }
 
   return null;
+}
+
+const TEXTUAL_CLINICAL_MIMES = new Set<string>([
+  "text/plain",
+  "text/csv",
+  "application/json",
+  "application/fhir+json",
+]);
+
+function isSafeTextualPayload(sample: Buffer, expectedMimeType: string): boolean {
+  if (sample.length === 0) return false;
+  for (let i = 0; i < sample.length; i += 1) {
+    const byte = sample[i]!;
+    // Reject NUL or unsafe binary control chars (allow \t, \n, \r)
+    if (byte === 0 || (byte < 0x20 && byte !== 0x09 && byte !== 0x0a && byte !== 0x0d)) {
+      return false;
+    }
+  }
+  const text = sample.toString("utf8").trimStart();
+  const lowerPrefix = text.slice(0, 64).toLowerCase();
+  if (
+    lowerPrefix.startsWith("<!doctype") ||
+    lowerPrefix.startsWith("<html") ||
+    lowerPrefix.startsWith("<script") ||
+    lowerPrefix.startsWith("<svg")
+  ) {
+    return false;
+  }
+  if (expectedMimeType === "application/json" || expectedMimeType === "application/fhir+json") {
+    return text.startsWith("{") || text.startsWith("[");
+  }
+  return true;
 }
 
 export function createSigV4PresignedUrl(params: {
@@ -336,7 +446,11 @@ export async function inspectUploadedS3Object(params: {
   objectKey: string;
   expectedMimeType: string;
   maxBytes: number;
-}): Promise<{ observedSizeBytes: number; detectedMimeType: SupportedBinaryMime }> {
+}): Promise<{
+  observedSizeBytes: number;
+  detectedMimeType: SupportedBinaryMime;
+  sha256Checksum: string;
+}> {
   const { config, objectKey, expectedMimeType, maxBytes } = params;
 
   const headRes = await signedS3Request({
@@ -363,21 +477,62 @@ export async function inspectUploadedS3Object(params: {
     );
   }
 
-  // Range GET inspects only the first 136 bytes so large files never buffer in Node RAM.
-  const rangeRes = await signedS3Request({
+  // Range GET inspects header magic bytes while streaming full-object SHA-256 up to 15 MB for integrity.
+  const inspectEntireForHash = observedSizeBytes <= 15 * 1024 * 1024;
+  const getRes = await signedS3Request({
     config,
     method: "GET",
     pathSuffix: objectKey,
-    headers: { range: "bytes=0-135" },
+    ...(inspectEntireForHash ? {} : { headers: { range: "bytes=0-1023" } }),
   });
 
-  if (rangeRes.status !== 200 && rangeRes.status !== 206) {
-    throw new Error(`S3 byte signature read failed with status ${rangeRes.status}`);
+  if (getRes.status !== 200 && getRes.status !== 206) {
+    throw new Error(`S3 byte signature read failed with status ${getRes.status}`);
   }
 
-  const headerBuf = Buffer.from(await rangeRes.arrayBuffer());
-  const detectedMimeType = detectFileSignature(headerBuf);
-  if (!detectedMimeType || detectedMimeType !== expectedMimeType) {
+  const hash = crypto.createHash("sha256");
+  const headChunks: Buffer[] = [];
+  let headBytesCollected = 0;
+
+  if (getRes.body) {
+    const reader = getRes.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunkBuf = Buffer.from(value);
+      hash.update(chunkBuf);
+      if (headBytesCollected < 1024) {
+        const remaining = 1024 - headBytesCollected;
+        headChunks.push(chunkBuf.subarray(0, remaining));
+        headBytesCollected += Math.min(remaining, chunkBuf.length);
+      }
+    }
+  } else {
+    const raw = Buffer.from(await getRes.arrayBuffer());
+    hash.update(raw);
+    headChunks.push(raw.subarray(0, 1024));
+  }
+
+  const headerBuf = Buffer.concat(headChunks);
+  const sha256Checksum = inspectEntireForHash
+    ? hash.digest("hex")
+    : `partial-${hash.digest("hex").slice(0, 40)}`;
+
+  let detectedMimeType = detectFileSignature(headerBuf);
+  if (!detectedMimeType && TEXTUAL_CLINICAL_MIMES.has(expectedMimeType)) {
+    if (isSafeTextualPayload(headerBuf, expectedMimeType)) {
+      detectedMimeType = expectedMimeType as SupportedBinaryMime;
+    }
+  }
+
+  const isHeicFamilyMatch =
+    (detectedMimeType === "image/heic" || detectedMimeType === "image/heif") &&
+    (expectedMimeType === "image/heic" || expectedMimeType === "image/heif");
+
+  if (
+    !detectedMimeType ||
+    (!isHeicFamilyMatch && detectedMimeType !== expectedMimeType)
+  ) {
     await deleteS3Object(config, objectKey);
     throw new S3InvalidSignatureError(
       `Binary signature mismatch: expected ${expectedMimeType}, detected ${detectedMimeType ?? "unknown"}.`,
@@ -386,6 +541,28 @@ export async function inspectUploadedS3Object(params: {
 
   return {
     observedSizeBytes,
-    detectedMimeType,
+    detectedMimeType: expectedMimeType as SupportedBinaryMime,
+    sha256Checksum,
   };
+}
+
+export async function checkS3Health(
+  config: S3PresignConfig,
+): Promise<{ status: "OK" | "DEGRADED"; bucketReady: boolean }> {
+  try {
+    const headRes = await signedS3Request({
+      config,
+      method: "HEAD",
+      pathSuffix: "",
+    });
+    if (headRes.status === 200) {
+      return { status: "OK", bucketReady: true };
+    }
+    if (headRes.status === 404) {
+      return { status: "OK", bucketReady: false };
+    }
+    return { status: "DEGRADED", bucketReady: false };
+  } catch {
+    return { status: "DEGRADED", bucketReady: false };
+  }
 }

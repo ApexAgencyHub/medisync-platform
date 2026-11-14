@@ -1,10 +1,29 @@
 import { Pool } from "pg";
 
-export function createDbPool(databaseUrl: string): Pool {
-  return new Pool({
+export interface DbPoolOptions {
+  max?: number;
+  statementTimeoutMs?: number;
+  lockTimeoutMs?: number;
+  idleInTransactionTimeoutMs?: number;
+}
+
+export function createDbPool(
+  databaseUrl: string,
+  options: DbPoolOptions = {},
+): Pool {
+  const pool = new Pool({
     connectionString: databaseUrl,
-    max: 15,
+    max: options.max ?? 25,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 5_000,
+    statement_timeout: options.statementTimeoutMs ?? 15_000,
+    lock_timeout: options.lockTimeoutMs ?? 5_000,
+    idle_in_transaction_session_timeout:
+      options.idleInTransactionTimeoutMs ?? 10_000,
+    application_name: "medisync-api",
   });
+
+  // Prevent transient idle socket resets from crashing the Fastify process.
+  pool.on("error", () => undefined);
+  return pool;
 }

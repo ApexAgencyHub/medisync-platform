@@ -4,55 +4,121 @@ import type { Redis } from "ioredis";
 export interface RateLimiterOptions {
   redis: Redis;
   maxRequestsPerMinute: number;
+  authMaxRequestsPerMinute?: number;
   keyPrefix?: string;
+}
+
+const ATOMIC_INCR_EXPIRE_LUA = `
+local current = redis.call("INCR", KEYS[1])
+if current == 1 then
+  redis.call("EXPIRE", KEYS[1], ARGV[1])
+end
+local ttl = redis.call("TTL", KEYS[1])
+return { current, ttl }
+`;
+
+function isAuthSensitiveRoute(method: string, urlPath: string): boolean {
+  if (method !== "POST") return false;
+  return (
+    urlPath === "/v1/auth/login" ||
+    urlPath === "/v1/auth/register" ||
+    urlPath === "/v1/auth/password-reset" ||
+    urlPath.startsWith("/v1/auth/verification/")
+  );
+}
+
+async function consumeBucket(
+  redis: Redis,
+  key: string,
+  limit: number,
+  windowSeconds: number,
+): Promise<{ count: number; ttlSeconds: number; exceeded: boolean }> {
+  const res = (await redis.eval(
+    ATOMIC_INCR_EXPIRE_LUA,
+    1,
+    key,
+    String(windowSeconds),
+  )) as [number | string, number | string];
+
+  const count = Number(res[0] ?? 1);
+  const rawTtl = Number(res[1] ?? windowSeconds);
+  const ttlSeconds = rawTtl > 0 ? rawTtl : windowSeconds;
+  return {
+    count,
+    ttlSeconds,
+    exceeded: count > limit,
+  };
 }
 
 export function registerApiRateLimiterHook(
   app: FastifyInstance,
   options: RateLimiterOptions,
 ): void {
-  const windowSeconds = 60;
-  const maxRequests = Math.max(1, options.maxRequestsPerMinute);
-  const keyPrefix = options.keyPrefix ?? "medisync:ratelimit:ip";
+  const prefix = options.keyPrefix ?? "medisync:ratelimit";
+  const generalMaxPerMinute = Math.max(1, options.maxRequestsPerMinute);
+  const authMaxPerMinute = Math.max(
+    1,
+    options.authMaxRequestsPerMinute ??
+      Math.min(generalMaxPerMinute, 40),
+  );
 
   app.addHook("onRequest", async (request, reply) => {
-    const pathname = request.url.split("?")[0] ?? request.url;
-    if (!pathname.startsWith("/v1/")) {
+    const rawUrl = request.url;
+    const urlPath = rawUrl.split("?")[0] ?? rawUrl;
+    if (!urlPath.startsWith("/v1/")) {
       return;
     }
 
-    const forwarded = request.headers["x-forwarded-for"];
-    const clientIp =
-      (typeof forwarded === "string"
-        ? forwarded.split(",")[0]?.trim()
-        : undefined) ??
-      request.ip ??
-      "unknown";
-
-    const minuteBucket = Math.floor(Date.now() / (windowSeconds * 1000));
-    const redisKey = `${keyPrefix}:${clientIp}:${minuteBucket}`;
+    const clientIp = (request.ip || "127.0.0.1").replace(/[^a-zA-Z0-9.:_-]/g, "_");
+    const epochMinute = Math.floor(Date.now() / 60_000);
+    const generalKey = `${prefix}:${clientIp}:${epochMinute}`;
 
     try {
-      const hits = await options.redis.incr(redisKey);
-      if (hits === 1) {
-        await options.redis.expire(redisKey, windowSeconds);
+      // Stricter sub-bucket for authentication & credential recovery endpoints
+      if (isAuthSensitiveRoute(request.method, urlPath)) {
+        const authKey = `${prefix}:auth:${clientIp}:${epochMinute}`;
+        const authResult = await consumeBucket(
+          options.redis,
+          authKey,
+          authMaxPerMinute,
+          65,
+        );
+        if (authResult.exceeded) {
+          reply.header("x-ratelimit-tier", "auth");
+          reply.header("x-ratelimit-limit", String(authMaxPerMinute));
+          reply.header("x-ratelimit-remaining", "0");
+          reply.header("retry-after", String(authResult.ttlSeconds));
+          return reply.status(429).send({
+            error: "AUTH_RATE_LIMIT_EXCEEDED",
+            message:
+              "Too many authentication attempts. Please retry after the cooldown.",
+            retryAfterSeconds: authResult.ttlSeconds,
+          });
+        }
       }
-      const remaining = Math.max(0, maxRequests - hits);
-      reply.header("X-RateLimit-Limit", String(maxRequests));
-      reply.header("X-RateLimit-Remaining", String(remaining));
 
-      if (hits > maxRequests) {
-        const ttl = await options.redis.ttl(redisKey);
-        const retryAfter = ttl > 0 ? ttl : windowSeconds;
-        reply.header("Retry-After", String(retryAfter));
+      const result = await consumeBucket(
+        options.redis,
+        generalKey,
+        generalMaxPerMinute,
+        65,
+      );
+      const remaining = Math.max(0, generalMaxPerMinute - result.count);
+      reply.header("x-ratelimit-limit", String(generalMaxPerMinute));
+      reply.header("x-ratelimit-remaining", String(remaining));
+      reply.header("x-ratelimit-reset", String(result.ttlSeconds));
+
+      if (result.exceeded) {
+        reply.header("retry-after", String(result.ttlSeconds));
         return reply.status(429).send({
           error: "RATE_LIMIT_EXCEEDED",
-          message: `Rate limit exceeded (${maxRequests} requests/minute).`,
-          retryAfterSeconds: retryAfter,
+          message:
+            "Too many requests from this IP. Please slow down and retry shortly.",
+          retryAfterSeconds: result.ttlSeconds,
         });
       }
     } catch {
-      // Fail open if Redis is temporarily unavailable so clinical ops never stall.
+      // Fail-open so temporary Redis hiccups never block live clinical operations.
     }
   });
 }

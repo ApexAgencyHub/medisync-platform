@@ -13,7 +13,12 @@ import {
   type UserMediaDocument,
   type UserPresignedUploadResponse,
 } from "@medisync/contracts";
-import { appendAuditLog, type AuthTokenClaims } from "../foundation/index.js";
+import {
+  appendAuditLog,
+  invalidateUserAuthCache,
+  type AuthTokenClaims,
+} from "../foundation/index.js";
+import type { Redis } from "ioredis";
 import {
   S3InvalidSignatureError,
   S3ObjectNotFoundError,
@@ -67,6 +72,7 @@ const FACILITY_MEDIA_SELECT = `
   d.review_status AS "reviewStatus",
   d.reviewer_note AS "reviewerNote",
   d.reviewed_by_user_id AS "reviewedByUserId",
+  d.sha256_checksum AS "sha256Checksum",
   CASE WHEN d.reviewed_at IS NULL THEN NULL ELSE to_char(d.reviewed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "reviewedAtIso",
   to_char(d.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"
 `;
@@ -85,6 +91,7 @@ const USER_MEDIA_SELECT = `
   review_status AS "reviewStatus",
   reviewer_note AS "reviewerNote",
   reviewed_by_user_id AS "reviewedByUserId",
+  sha256_checksum AS "sha256Checksum",
   CASE WHEN reviewed_at IS NULL THEN NULL ELSE to_char(reviewed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "reviewedAtIso",
   to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"
 `;
@@ -297,6 +304,7 @@ export async function confirmFacilityMediaUpload(
   }
 
   let observedSizeBytes: number;
+  let sha256Checksum: string;
   try {
     const inspected = await inspectUploadedS3Object({
       config: s3Config,
@@ -305,6 +313,7 @@ export async function confirmFacilityMediaUpload(
       maxBytes: MAX_MEDIA_UPLOAD_BYTES,
     });
     observedSizeBytes = inspected.observedSizeBytes;
+    sha256Checksum = inspected.sha256Checksum;
   } catch (err) {
     if (err instanceof S3ObjectNotFoundError) {
       throw new MediaNotFoundError(err.message);
@@ -325,9 +334,10 @@ export async function confirmFacilityMediaUpload(
     await client.query(
       `UPDATE facility_media_documents
        SET upload_status = 'UPLOADED',
-           confirmed_size_bytes = $2
+           confirmed_size_bytes = $2,
+           sha256_checksum = $3
        WHERE id = $1`,
-      [mediaId, observedSizeBytes],
+      [mediaId, observedSizeBytes, sha256Checksum],
     );
 
     await appendAuditLog(client, {
@@ -671,6 +681,7 @@ export async function confirmUserMediaUpload(
   }
 
   let observedSizeBytes: number;
+  let sha256Checksum: string;
   try {
     const inspected = await inspectUploadedS3Object({
       config: s3Config,
@@ -679,6 +690,7 @@ export async function confirmUserMediaUpload(
       maxBytes: MAX_MEDIA_UPLOAD_BYTES,
     });
     observedSizeBytes = inspected.observedSizeBytes;
+    sha256Checksum = inspected.sha256Checksum;
   } catch (err) {
     if (err instanceof S3ObjectNotFoundError) {
       throw new MediaNotFoundError(err.message);
@@ -700,9 +712,10 @@ export async function confirmUserMediaUpload(
     await client.query(
       `UPDATE user_media_documents
        SET upload_status = 'UPLOADED',
-           confirmed_size_bytes = $2
+           confirmed_size_bytes = $2,
+           sha256_checksum = $3
        WHERE id = $1`,
-      [mediaId, observedSizeBytes],
+      [mediaId, observedSizeBytes, sha256Checksum],
     );
 
     if (existing.category === "AVATAR") {
@@ -796,26 +809,38 @@ export async function listUserMediaScoped(
   );
 }
 
+const PROVIDER_CREDENTIAL_CATEGORIES = new Set<string>([
+  "MEDICAL_DEGREE",
+  "PRACTITIONER_LICENSE",
+  "DRIVER_LICENSE",
+  "VEHICLE_INSPECTION",
+  "BOARD_CERTIFICATION",
+]);
+
 export async function reviewUserDocumentAdmin(
   pool: Pool,
   mediaId: string,
   actor: AuthTokenClaims,
   s3Config: S3PresignConfig,
   input: ReviewFacilityDocumentInput,
+  redis?: Redis,
 ): Promise<UserMediaDocument> {
   const client = await pool.connect();
+  let targetUserId = "";
   try {
     await client.query("BEGIN");
     const existingRes = await client.query<{
       id: string;
       userId: string;
       countryCode: string;
+      category: string;
       uploadStatus: string;
     }>(
       `SELECT
          id,
          user_id AS "userId",
          country_code AS "countryCode",
+         category,
          upload_status AS "uploadStatus"
        FROM user_media_documents
        WHERE id = $1
@@ -826,6 +851,7 @@ export async function reviewUserDocumentAdmin(
     if (!existing) {
       throw new MediaNotFoundError("User credential document not found.");
     }
+    targetUserId = existing.userId;
     if (
       input.reviewStatus === "APPROVED" &&
       existing.uploadStatus !== "UPLOADED"
@@ -850,6 +876,19 @@ export async function reviewUserDocumentAdmin(
       ],
     );
 
+    if (
+      input.reviewStatus === "APPROVED" &&
+      PROVIDER_CREDENTIAL_CATEGORIES.has(existing.category)
+    ) {
+      await client.query(
+        `UPDATE users
+         SET credential_verified = TRUE,
+             account_status = CASE WHEN account_status = 'PENDING_APPROVAL' THEN 'ACTIVE' ELSE account_status END
+         WHERE id = $1`,
+        [existing.userId],
+      );
+    }
+
     await appendAuditLog(client, {
       countryCode: existing.countryCode,
       actorId: actor.sub,
@@ -859,6 +898,7 @@ export async function reviewUserDocumentAdmin(
       resourceId: mediaId,
       metadata: {
         targetUserId: existing.userId,
+        category: existing.category,
         reviewStatus: input.reviewStatus,
         reviewerNote: input.reviewerNote?.trim() ?? null,
       },
@@ -869,6 +909,10 @@ export async function reviewUserDocumentAdmin(
     throw err;
   } finally {
     client.release();
+  }
+
+  if (targetUserId) {
+    await invalidateUserAuthCache(redis, targetUserId);
   }
 
   const refreshed = await pool.query(

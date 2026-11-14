@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
+import type { Redis } from "ioredis";
 import type { Pool } from "pg";
 import { z } from "zod";
 import {
@@ -90,7 +91,12 @@ function mapDomainError(err: unknown, reply: FastifyReply): unknown {
 
 export async function registerBookingRoutes(
   app: FastifyInstance,
-  deps: { pool: Pool; authSecret: string },
+  deps: {
+    pool: Pool;
+    redis?: Redis;
+    authSecret: string;
+    requireProviderVerification?: boolean;
+  },
 ): Promise<void> {
   app.get("/v1/booking/profiles", async (request, reply) => {
     const parsed = CountryFilterQuerySchema.safeParse(request.query);
@@ -108,10 +114,10 @@ export async function registerBookingRoutes(
   });
 
   app.put("/v1/booking/profiles", async (request, reply) => {
-    const claims = authenticateRequest(
+    const claims = await authenticateRequest(
       request,
       reply,
-      deps.authSecret,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       PROFILE_EDITOR_ROLES,
     );
     if (!claims) return;
@@ -126,6 +132,7 @@ export async function registerBookingRoutes(
 
     try {
       const profile = await upsertDoctorProfile(deps.pool, claims, parsed.data);
+      await deps.redis?.incr("medisync:cache:gen:directory").catch(() => undefined);
       return reply.status(200).send({ profile });
     } catch (err) {
       return mapDomainError(err, reply);
@@ -145,11 +152,12 @@ export async function registerBookingRoutes(
   });
 
   app.post("/v1/booking/schedules", async (request, reply) => {
-    const claims = authenticateRequest(
+    const claims = await authenticateRequest(
       request,
       reply,
-      deps.authSecret,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       SCHEDULE_MANAGER_ROLES,
+      { requireVerifiedProvider: deps.requireProviderVerification },
     );
     if (!claims) return;
 
@@ -194,10 +202,10 @@ export async function registerBookingRoutes(
   });
 
   app.get("/v1/booking/appointments", async (request, reply) => {
-    const claims = authenticateRequest(
+    const claims = await authenticateRequest(
       request,
       reply,
-      deps.authSecret,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       BOOKING_VIEWER_ROLES,
     );
     if (!claims) return;
@@ -219,10 +227,10 @@ export async function registerBookingRoutes(
   });
 
   app.post("/v1/booking/appointments", async (request, reply) => {
-    const claims = authenticateRequest(
+    const claims = await authenticateRequest(
       request,
       reply,
-      deps.authSecret,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       BOOKING_CREATOR_ROLES,
     );
     if (!claims) return;
@@ -248,10 +256,10 @@ export async function registerBookingRoutes(
   });
 
   app.patch("/v1/booking/appointments/:id/status", async (request, reply) => {
-    const claims = authenticateRequest(
+    const claims = await authenticateRequest(
       request,
       reply,
-      deps.authSecret,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       BOOKING_VIEWER_ROLES,
     );
     if (!claims) return;
