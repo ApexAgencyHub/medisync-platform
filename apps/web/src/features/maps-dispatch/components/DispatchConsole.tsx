@@ -243,7 +243,7 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
 
   // Live Server-Sent Events Subscription (zero setInterval polling)
   useEffect(() => {
-    if (!sessionToken || typeof EventSource === "undefined") {
+    if (!apiOnline || !sessionToken || typeof EventSource === "undefined") {
       setStreamConnected(false);
       return;
     }
@@ -303,7 +303,7 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
       es.close();
       setStreamConnected(false);
     };
-  }, [apiBaseUrl, sessionToken]);
+  }, [apiBaseUrl, apiOnline, sessionToken]);
 
   function handleCountrySelect(code: string) {
     const preset = getPresetForCountry(code);

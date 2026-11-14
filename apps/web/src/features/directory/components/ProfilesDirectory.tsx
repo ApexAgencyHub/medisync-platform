@@ -10,6 +10,7 @@ import type {
 } from "@medisync/contracts";
 import { Search } from "lucide-react";
 import {
+  checkBackendOnline,
   fetchDirectoryDoctors,
   fetchDirectoryDrivers,
   fetchDirectoryFacilities,
@@ -66,6 +67,7 @@ export function ProfilesDirectory({
   );
   const [category, setCategory] = useState<DirectoryCategory>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
+  const [apiOnline, setApiOnline] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -90,6 +92,20 @@ export function ProfilesDirectory({
   );
 
   useEffect(() => {
+    let cancelled = false;
+    checkBackendOnline().then((online) => {
+      if (!cancelled) {
+        setApiOnline(online);
+        if (!online) setLoading(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (apiOnline !== true) return;
     let active = true;
     setLoading(true);
     setErrorMsg(null);
@@ -117,7 +133,7 @@ export function ProfilesDirectory({
     return () => {
       active = false;
     };
-  }, [apiBaseUrl, countryCode]);
+  }, [apiOnline, apiBaseUrl, countryCode]);
 
   const q = searchQuery.trim().toLowerCase();
 
