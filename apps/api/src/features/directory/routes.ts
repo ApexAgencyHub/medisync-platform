@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import type { Redis } from "ioredis";
 import type { Pool } from "pg";
 import {
   DirectorySearchQuerySchema,
@@ -8,6 +9,7 @@ import { authenticateRequest } from "../foundation/index.js";
 import type { S3PresignConfig } from "../../shared/storage/s3-presign.js";
 import {
   listDirectoryDoctorsScoped,
+  listDirectoryDriversPublic,
   listDirectoryFacilitiesPublic,
   listDirectoryPatientsScoped,
   listSeededDemoPersonas,
@@ -26,7 +28,12 @@ const PATIENT_PICKER_ROLES: readonly UserRole[] = [
 
 export async function registerDirectoryRoutes(
   app: FastifyInstance,
-  deps: { pool: Pool; authSecret: string; s3Config?: S3PresignConfig },
+  deps: {
+    pool: Pool;
+    redis?: Redis;
+    authSecret: string;
+    s3Config?: S3PresignConfig;
+  },
 ): Promise<void> {
   app.get("/v1/directory/patients", async (request, reply) => {
     const claims = authenticateRequest(
@@ -85,6 +92,24 @@ export async function registerDirectoryRoutes(
       parsed.data,
     );
     return { facilities };
+  });
+
+  app.get("/v1/directory/drivers", async (request, reply) => {
+    const parsed = DirectorySearchQuerySchema.safeParse(request.query);
+    if (!parsed.success) {
+      return reply.status(400).send({
+        error: "INVALID_QUERY",
+        issues: parsed.error.issues,
+      });
+    }
+
+    const drivers = await listDirectoryDriversPublic(
+      deps.pool,
+      deps.redis,
+      parsed.data,
+      deps.s3Config,
+    );
+    return { drivers };
   });
 
   app.get("/v1/directory/demo-personas", async () => {

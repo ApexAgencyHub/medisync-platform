@@ -257,7 +257,7 @@ const SEED_FACILITIES: readonly SeedFacilitySpec[] = [
 const SEED_USERS: readonly SeedUserSpec[] = [
   {
     email: "ops.admin@medisync.global",
-    fullName: "Sovereign Ops Controller",
+    fullName: "Ministry Oversight Admin",
     role: "OPS_ADMIN",
     countryCode: "INTL",
   },
@@ -278,7 +278,20 @@ const SEED_USERS: readonly SeedUserSpec[] = [
       specialty: "Cardiology",
       licenseNumber: "MA-MD-77412",
       consultationFeeMinor: 35000,
-      bio: "Interventional cardiologist in Casablanca providing clinic and telehealth consultations.",
+      bio: "Interventional cardiologist in Casablanca providing clinic and video consultations.",
+    },
+  },
+  {
+    email: "nurse.ma@medisync.global",
+    fullName: "Rachid Amrani",
+    role: "DOCTOR",
+    countryCode: "MA",
+    facilityLicense: "MA-HOSP-901001",
+    doctorProfile: {
+      specialty: "Home Nursing & Infirmiers",
+      licenseNumber: "MA-INF-55201",
+      consultationFeeMinor: 18000,
+      bio: "Registered state infirmier specializing in post-op dressings, IV care, and home vitals in Casablanca.",
     },
   },
   {
@@ -307,6 +320,14 @@ const SEED_USERS: readonly SeedUserSpec[] = [
     fullName: "Hassan Chraibi",
     role: "DRIVER",
     countryCode: "MA",
+    facilityLicense: "MA-HOSP-901001",
+  },
+  {
+    email: "courier.ma@medisync.global",
+    fullName: "Karim Tazi",
+    role: "DRIVER",
+    countryCode: "MA",
+    facilityLicense: "MA-CLIN-901002",
   },
   // INTL Personas
   {
@@ -329,6 +350,19 @@ const SEED_USERS: readonly SeedUserSpec[] = [
     },
   },
   {
+    email: "nurse.intl@medisync.global",
+    fullName: "Céline Girard",
+    role: "DOCTOR",
+    countryCode: "INTL",
+    facilityLicense: "INTL-HOSP-101001",
+    doctorProfile: {
+      specialty: "Home Nursing & Infirmiers",
+      licenseNumber: "CH-INF-88410",
+      consultationFeeMinor: 12000,
+      bio: "Community care infirmier providing wound care, injections, and geriatric follow-up across Geneva.",
+    },
+  },
+  {
     email: "pharmacist.intl@medisync.global",
     fullName: "Sophie Laurent",
     role: "PHARMACIST",
@@ -347,6 +381,7 @@ const SEED_USERS: readonly SeedUserSpec[] = [
     fullName: "Thomas Keller",
     role: "DRIVER",
     countryCode: "INTL",
+    facilityLicense: "INTL-HOSP-101001",
   },
   // FR & US Doctors for CountryPack completeness
   {
@@ -548,6 +583,14 @@ export async function seedRealisticWorld(
       lng: -7.6285,
       status: "AVAILABLE" as const,
       headingDeg: 115,
+    },
+    {
+      email: "courier.ma@medisync.global",
+      countryCode: "MA",
+      lat: 33.5918,
+      lng: -7.6402,
+      status: "AVAILABLE" as const,
+      headingDeg: 240,
     },
     {
       email: "driver.intl@medisync.global",

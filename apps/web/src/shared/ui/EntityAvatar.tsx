@@ -1,7 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { PharmacyProductCategory } from "@medisync/contracts";
+import type {
+  FacilityKind,
+  PharmacyProductCategory,
+  VehicleType,
+} from "@medisync/contracts";
 import { ZoomIn } from "lucide-react";
 import { useImageLightbox } from "./ImageLightboxProvider";
 
@@ -40,9 +44,22 @@ const FEMALE_DOCTOR_NAMES = [
 ];
 
 /** Picks a curated local medical portrait when no custom photo was uploaded yet. */
-export function resolveDefaultAvatar(name: string, role?: string): string {
+export function resolveDefaultAvatar(
+  name: string,
+  role?: string,
+  specialty?: string,
+): string {
   const lowerName = name.toLowerCase();
+  const lowerSpecialty = (specialty ?? "").toLowerCase();
   const normalizedRole = (role ?? "").toUpperCase();
+
+  if (
+    lowerSpecialty.includes("nursing") ||
+    lowerSpecialty.includes("infirmier") ||
+    lowerName.includes("infirmier")
+  ) {
+    return "/media/avatars/nurse-infirmier.webp";
+  }
 
   if (normalizedRole === "DOCTOR" || lowerName.startsWith("dr.")) {
     const looksFemale = FEMALE_DOCTOR_NAMES.some((n) => lowerName.includes(n));
@@ -67,6 +84,23 @@ export function resolveDefaultAvatar(name: string, role?: string): string {
   return "/media/avatars/patient.webp";
 }
 
+export function resolveFacilityPicture(kind: FacilityKind | string): string {
+  const normalized = kind.toUpperCase();
+  if (normalized === "HOSPITAL") {
+    return "/media/facilities/hospital-hub.webp";
+  }
+  if (normalized === "PHARMACY") {
+    return "/media/facilities/pharmacy-interior.webp";
+  }
+  return "/media/facilities/clinic-interior.webp";
+}
+
+export function resolveVehiclePicture(vehicleType: VehicleType | string): string {
+  return vehicleType.toUpperCase() === "MEDICAL_SHUTTLE"
+    ? "/media/vehicles/medical-transport-car.webp"
+    : "/media/vehicles/ambulance-van.webp";
+}
+
 export function resolveProductPicture(
   category: PharmacyProductCategory,
   imageUrl?: string | null,
@@ -79,6 +113,7 @@ export function resolveProductPicture(
 interface EntityAvatarProps {
   name: string;
   role?: string;
+  specialty?: string;
   subtitle?: string;
   avatarUrl?: string | null;
   size?: AvatarSize;
@@ -90,6 +125,7 @@ interface EntityAvatarProps {
 export function EntityAvatar({
   name,
   role,
+  specialty,
   subtitle,
   avatarUrl,
   size = "md",
@@ -97,7 +133,7 @@ export function EntityAvatar({
   className = "",
 }: EntityAvatarProps) {
   const { openImage } = useImageLightbox();
-  const defaultSrc = resolveDefaultAvatar(name, role);
+  const defaultSrc = resolveDefaultAvatar(name, role, specialty);
   const preferredSrc = avatarUrl && avatarUrl.length > 0 ? avatarUrl : defaultSrc;
   const [activeSrc, setActiveSrc] = useState(preferredSrc);
   const [fallbackFailed, setFallbackFailed] = useState(false);

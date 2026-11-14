@@ -137,7 +137,7 @@ export function FileUploadDropzone({
               <div>
                 <p className="text-xs font-semibold text-slate-800">{hint}</p>
                 <p className="font-mono-tabular text-[11px] text-slate-500">
-                  Max {formatByteSize(maxBytes)} · Direct encrypted S3 stream
+                  Max {formatByteSize(maxBytes)} · Direct encrypted clinical upload
                 </p>
               </div>
             </div>
@@ -156,7 +156,7 @@ export function FileUploadDropzone({
         {typeof progressPercent === "number" ? (
           <div className="mt-2.5 space-y-1">
             <div className="flex justify-between font-mono-tabular text-[11px] font-semibold text-teal-900">
-              <span>Uploading directly to MinIO S3...</span>
+              <span>Uploading securely...</span>
               <span>{progressPercent}%</span>
             </div>
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200">

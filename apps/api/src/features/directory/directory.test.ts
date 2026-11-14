@@ -7,6 +7,7 @@ import type {
   AuthResponse,
   DemoPersonasResponse,
   DirectoryDoctorsResponse,
+  DirectoryDriversResponse,
   DirectoryFacilitiesResponse,
   DirectoryPatientsResponse,
   PrescriptionsListResponse,
@@ -96,6 +97,43 @@ describe("api slice 7 directory & world seed: pickers, RBAC country isolation & 
     const maDocsBody = maDocsRes.json<DirectoryDoctorsResponse>();
     expect(maDocsBody.doctors.length).toBeGreaterThanOrEqual(1);
     expect(maDocsBody.doctors[0]?.specialty).toMatch(/Cardiology/i);
+
+    const maNursesRes = await app.inject({
+      method: "GET",
+      url: "/v1/directory/doctors?countryCode=MA&q=Nursing",
+    });
+    expect(maNursesRes.statusCode).toBe(200);
+    const maNursesBody = maNursesRes.json<DirectoryDoctorsResponse>();
+    expect(
+      maNursesBody.doctors.some(
+        (d) =>
+          d.email === "nurse.ma@medisync.global" &&
+          /Infirmiers/i.test(d.specialty),
+      ),
+    ).toBe(true);
+
+    const maDriversRes = await app.inject({
+      method: "GET",
+      url: "/v1/directory/drivers?countryCode=MA",
+    });
+    expect(maDriversRes.statusCode).toBe(200);
+    const maDriversBody = maDriversRes.json<DirectoryDriversResponse>();
+    expect(
+      maDriversBody.drivers.some(
+        (drv) =>
+          drv.email === "driver.ma@medisync.global" &&
+          drv.vehicleType === "AMBULANCE" &&
+          drv.liveStatus === "AVAILABLE",
+      ),
+    ).toBe(true);
+    expect(
+      maDriversBody.drivers.some(
+        (drv) =>
+          drv.email === "courier.ma@medisync.global" &&
+          drv.vehicleType === "MEDICAL_SHUTTLE" &&
+          drv.liveStatus === "AVAILABLE",
+      ),
+    ).toBe(true);
 
     // 2. Demo personas endpoint & sign-in verification
     const personasRes = await app.inject({

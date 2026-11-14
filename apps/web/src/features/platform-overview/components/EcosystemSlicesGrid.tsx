@@ -27,7 +27,7 @@ const ECOSYSTEM_PORTALS = [
   },
   {
     id: "clinic",
-    href: "/booking",
+    href: "/clinical",
     icon: Building2,
   },
   {

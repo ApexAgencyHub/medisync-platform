@@ -179,6 +179,32 @@ export async function findNearbyDrivers(
   return { drivers, queryMs: Number(elapsedMs.toFixed(2)) };
 }
 
+export async function readDriverStatuses(
+  redis: Redis,
+  drivers: ReadonlyArray<{ driverId: string; countryCode: string }>,
+): Promise<Map<string, DriverStatus>> {
+  const statuses = new Map<string, DriverStatus>();
+  if (drivers.length === 0) return statuses;
+
+  const keys = drivers.map((d) => driverStateKey(d.countryCode, d.driverId));
+  const rawValues = await redis.mget(...keys);
+
+  drivers.forEach((driver, index) => {
+    const raw = rawValues[index];
+    if (!raw) return;
+    try {
+      const parsed = StoredDriverStateSchema.safeParse(JSON.parse(raw));
+      if (parsed.success) {
+        statuses.set(driver.driverId, parsed.data.status);
+      }
+    } catch {
+      // Ignore malformed cached telemetry frames
+    }
+  });
+
+  return statuses;
+}
+
 export async function publishDispatchUpdate(
   redis: Redis,
   dispatch: DispatchRequestSummary,

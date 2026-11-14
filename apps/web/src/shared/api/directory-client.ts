@@ -1,10 +1,12 @@
 import {
   DemoPersonasResponseSchema,
   DirectoryDoctorsResponseSchema,
+  DirectoryDriversResponseSchema,
   DirectoryFacilitiesResponseSchema,
   DirectoryPatientsResponseSchema,
   type DemoPersonaSummary,
   type DirectoryDoctorSummary,
+  type DirectoryDriverSummary,
   type DirectoryFacilitySummary,
   type DirectoryPatientSummary,
   type FacilityKind,
@@ -85,6 +87,28 @@ export async function fetchDirectoryFacilities(
     const parsed = DirectoryFacilitiesResponseSchema.safeParse(await res.json());
     if (!parsed.success) return { ok: false, error: "INVALID_RESPONSE" };
     return { ok: true, facilities: parsed.data.facilities };
+  } catch {
+    return { ok: false, error: "API_UNREACHABLE" };
+  }
+}
+
+export async function fetchDirectoryDrivers(
+  apiBaseUrl: string,
+  params: { countryCode?: string; q?: string; limit?: number } = {},
+): Promise<{ ok: true; drivers: DirectoryDriverSummary[] } | { ok: false; error: string }> {
+  const qs = new URLSearchParams();
+  if (params.countryCode) qs.set("countryCode", params.countryCode);
+  if (params.q) qs.set("q", params.q);
+  if (params.limit) qs.set("limit", String(params.limit));
+
+  try {
+    const res = await fetch(`${apiBaseUrl}/v1/directory/drivers?${qs.toString()}`, {
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false, error: `HTTP_${res.status}` };
+    const parsed = DirectoryDriversResponseSchema.safeParse(await res.json());
+    if (!parsed.success) return { ok: false, error: "INVALID_RESPONSE" };
+    return { ok: true, drivers: parsed.data.drivers };
   } catch {
     return { ok: false, error: "API_UNREACHABLE" };
   }

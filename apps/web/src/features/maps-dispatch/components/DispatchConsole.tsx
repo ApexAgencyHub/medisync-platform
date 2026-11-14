@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   DispatchStreamEventSchema,
   FacilityKindSchema,
-  LoginSchema,
-  type AuthenticatedUser,
+  type AuthResponse,
   type CountryPack,
+  type DirectoryDriverSummary,
   type DispatchRequestSummary,
   type DispatchUrgency,
   type DriverStatus,
@@ -15,31 +15,42 @@ import {
   type LiveDriverMarker,
   type ViewportFacilityItem,
 } from "@medisync/contracts";
-import { loginUser } from "@/features/auth-portal";
 import {
   checkBackendOnline,
+  fetchDirectoryDrivers,
 } from "@/shared/api/directory-client";
 import {
   clearStoredSession,
   readStoredSession,
-  writeStoredSession,
 } from "@/shared/auth/session-storage";
 import {
   formatDispatchStatus,
   formatFacilityKind,
   formatOpenStatus,
-  formatRoleLabel,
   formatUrgencyLabel,
 } from "@/shared/i18n/human-labels";
 import { useLocale } from "@/shared/i18n/locale-store";
-import { EntityAvatar } from "@/shared/ui/EntityAvatar";
 import {
-  CheckCircle2,
-  KeyRound,
-  LogOut,
+  resolveDefaultAvatar,
+  resolveFacilityPicture,
+  resolveVehiclePicture,
+} from "@/shared/ui/EntityAvatar";
+import { EntityMediaPair } from "@/shared/ui/EntityMediaPair";
+import { useImageLightbox } from "@/shared/ui/ImageLightboxProvider";
+import {
+  RegionTabs,
+  SessionAccountBar,
+  StatusBanner,
+  UiBadge,
+  UiButton,
+  UiInput,
+  UiSelect,
+  UiSwitch,
+  type RegionTabOption,
+} from "@/shared/ui/primitives";
+import {
   Navigation,
   Radio,
-  ShieldAlert,
   Siren,
 } from "lucide-react";
 import {
@@ -77,6 +88,7 @@ const SECTOR_FILTER_OPTIONS: ReadonlyArray<{
 
 export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
   const { t } = useLocale();
+  const { openImage } = useImageLightbox();
   const defaultCode = packs[0]?.code ?? "INTL";
   const [selectedCountry, setSelectedCountry] = useState<string>(defaultCode);
   const [viewport, setViewport] = useState<ViewportBox>(() =>
@@ -86,15 +98,17 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
   const [openNowOnly, setOpenNowOnly] = useState(false);
 
   const [facilities, setFacilities] = useState<ViewportFacilityItem[]>([]);
+  const [directoryDrivers, setDirectoryDrivers] = useState<
+    DirectoryDriverSummary[]
+  >([]);
   const [selectedFacilityId, setSelectedFacilityId] = useState<string | null>(
     null,
   );
   const [postgisQueryMs, setPostgisQueryMs] = useState<number | null>(null);
 
-  const [sessionToken, setSessionToken] = useState<string | null>(null);
-  const [currentUser, setCurrentUser] = useState<AuthenticatedUser | null>(
-    null,
-  );
+  const [session, setSession] = useState<AuthResponse | null>(null);
+  const sessionToken = session?.token ?? null;
+  const currentUser = session?.user ?? null;
   const [drivers, setDrivers] = useState<LiveDriverMarker[]>([]);
   const [redisQueryMs, setRedisQueryMs] = useState<number | null>(null);
   const [dispatches, setDispatches] = useState<DispatchRequestSummary[]>([]);
@@ -107,9 +121,14 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
     text: string;
   } | null>(null);
 
-  // Quick Login Form
-  const [loginEmail, setLoginEmail] = useState("");
-  const [loginPassword, setLoginPassword] = useState("");
+  const regionOptions: readonly RegionTabOption[] = useMemo(
+    () =>
+      packs.map((pack) => ({
+        code: pack.code,
+        label: `${pack.code} · ${pack.name}`,
+      })),
+    [packs],
+  );
 
   // Dispatch Request Form
   const initialCenter = getViewportCenter(viewport);
@@ -125,11 +144,21 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
 
   useEffect(() => {
     const stored = readStoredSession();
+    const params = new URLSearchParams(window.location.search);
+    const urlCountry = params.get("country");
+    const urlFacilityId = params.get("facilityId");
+    const initialCountry =
+      stored?.user.countryCode && stored.user.role !== "OPS_ADMIN"
+        ? stored.user.countryCode
+        : (urlCountry ?? stored?.user.countryCode ?? defaultCode);
+
     if (stored) {
-      setSessionToken(stored.token);
-      setCurrentUser(stored.user);
-      setSelectedCountry(stored.user.countryCode);
-      setViewport(getPresetForCountry(stored.user.countryCode));
+      setSession(stored);
+    }
+    setSelectedCountry(initialCountry);
+    setViewport(getPresetForCountry(initialCountry));
+    if (urlFacilityId) {
+      setSelectedFacilityId(urlFacilityId);
     }
 
     let cancelled = false;
@@ -141,9 +170,9 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [defaultCode]);
 
-  // Automatically load PostGIS viewport pins + drivers whenever backend is online
+  // Automatically load viewport facilities, fleet profiles, and live dispatches whenever backend is online
   useEffect(() => {
     if (!apiOnline) return;
     let active = true;
@@ -164,11 +193,22 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
       }
     });
 
+    fetchDirectoryDrivers(apiBaseUrl, { countryCode: selectedCountry }).then(
+      (fleetRes) => {
+        if (!active || !fleetRes.ok) return;
+        setDirectoryDrivers(fleetRes.drivers);
+      },
+    );
+
     if (sessionToken && currentUser) {
       const center = getViewportCenter(viewport);
+      const scopedCountry =
+        currentUser.role === "OPS_ADMIN"
+          ? selectedCountry
+          : currentUser.countryCode;
+
       queryNearbyDrivers(apiBaseUrl, sessionToken, {
-        countryCode:
-          currentUser.role === "OPS_ADMIN" ? selectedCountry : currentUser.countryCode,
+        countryCode: scopedCountry,
         lat: center.lat,
         lng: center.lng,
         radiusKm: 30,
@@ -177,6 +217,13 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
         setDrivers(drvRes.data.drivers);
         setRedisQueryMs(drvRes.data.queryMs);
       });
+
+      listDispatchRequests(apiBaseUrl, sessionToken, scopedCountry).then(
+        (dispRes) => {
+          if (!active || !dispRes.ok) return;
+          setDispatches(dispRes.data.dispatches);
+        },
+      );
     }
 
     return () => {
@@ -196,7 +243,7 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
 
   // Live Server-Sent Events Subscription (zero setInterval polling)
   useEffect(() => {
-    if (!sessionToken || typeof EventSource === "undefined") {
+    if (!apiOnline || !sessionToken || typeof EventSource === "undefined") {
       setStreamConnected(false);
       return;
     }
@@ -256,7 +303,7 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
       es.close();
       setStreamConnected(false);
     };
-  }, [apiBaseUrl, sessionToken]);
+  }, [apiBaseUrl, apiOnline, sessionToken]);
 
   function handleCountrySelect(code: string) {
     const preset = getPresetForCountry(code);
@@ -323,64 +370,6 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
     setBanner({
       tone: "success",
       text: `Loaded ${vpRes.data.facilities.length} verified medical center(s) in this map view (${vpRes.data.queryMs}ms).`,
-    });
-  }
-
-  async function handleQuickSignIn(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const parsed = LoginSchema.safeParse({
-      email: loginEmail,
-      password: loginPassword,
-    });
-    if (!parsed.success) {
-      setBanner({
-        tone: "error",
-        text: "Enter valid email and password credentials.",
-      });
-      return;
-    }
-
-    setBusy(true);
-    setBanner(null);
-    const res = await loginUser(apiBaseUrl, parsed.data);
-    if (!res.ok) {
-      setBusy(false);
-      setBanner({
-        tone: "error",
-        text:
-          res.error === "API_UNREACHABLE"
-            ? `API unreachable at ${apiBaseUrl}.`
-            : `Sign-in failed (${res.error}).`,
-      });
-      return;
-    }
-
-    writeStoredSession(res.data);
-    const token = res.data.token;
-    const user = res.data.user;
-    setSessionToken(token);
-    setCurrentUser(user);
-    handleCountrySelect(user.countryCode);
-
-    const [dispatchRes, nearbyRes] = await Promise.all([
-      listDispatchRequests(apiBaseUrl, token, user.countryCode),
-      queryNearbyDrivers(apiBaseUrl, token, {
-        countryCode: user.countryCode,
-        ...getViewportCenter(getPresetForCountry(user.countryCode)),
-        radiusKm: 30,
-      }),
-    ]);
-
-    if (dispatchRes.ok) setDispatches(dispatchRes.data.dispatches);
-    if (nearbyRes.ok) {
-      setDrivers(nearbyRes.data.drivers);
-      setRedisQueryMs(nearbyRes.data.queryMs);
-    }
-
-    setBusy(false);
-    setBanner({
-      tone: "success",
-      text: `Signed in as ${user.fullName} (${user.role} · ${user.countryCode}). Connecting live dispatch updates.`,
     });
   }
 
@@ -476,7 +465,7 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
   return (
     <div className="space-y-6">
       {/* Map Header & Filters */}
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
+      <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <p className="font-mono-tabular text-xs font-semibold uppercase tracking-wider text-teal-800">
@@ -501,28 +490,25 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
             ) : null}
           </div>
 
-          <div className="flex flex-wrap gap-2" role="group" aria-label="Map CountryPack selector">
-            {packs.map((pack) => {
-              const selected = pack.code === selectedCountry;
-              return (
-                <button
-                  key={pack.code}
-                  type="button"
-                  onClick={() => handleCountrySelect(pack.code)}
-                  className={`min-h-[40px] rounded-lg border px-3 py-1.5 font-mono-tabular text-xs font-semibold transition-colors ${
-                    selected
-                      ? "border-teal-800 bg-teal-800 text-white"
-                      : "border-slate-200 bg-slate-50 text-slate-700 hover:border-teal-700 hover:text-teal-800"
-                  }`}
-                >
-                  {pack.code}
-                </button>
-              );
-            })}
-          </div>
+          <RegionTabs
+            options={regionOptions}
+            value={selectedCountry}
+            onChange={handleCountrySelect}
+          />
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
+        <SessionAccountBar
+          session={session}
+          prompt="Sign in on the Care Portal to request medical transport or track live ambulances."
+          onSignOut={() => {
+            clearStoredSession();
+            setSession(null);
+            setDrivers([]);
+            setDispatches([]);
+          }}
+        />
+
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
           <div className="flex flex-wrap gap-2" role="group" aria-label="Facility sector filter">
             {SECTOR_FILTER_OPTIONS.map((opt) => {
               const active = sectorFilter === opt.value;
@@ -543,37 +529,16 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
             })}
           </div>
 
-          <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-700">
-            <input
-              type="checkbox"
-              checked={openNowOnly}
-              onChange={(e) => setOpenNowOnly(e.target.checked)}
-              className="h-4 w-4 rounded border-slate-300 text-teal-800"
-            />
-            <span>{t("map.openNowOnly")}</span>
-          </label>
+          <UiSwitch
+            id="map-open-now"
+            checked={openNowOnly}
+            onChange={setOpenNowOnly}
+            label={t("map.openNowOnly")}
+          />
         </div>
       </section>
 
-      {banner ? (
-        <div
-          role="status"
-          className={`flex items-start gap-2.5 rounded-xl border px-4 py-3 text-sm font-medium ${
-            banner.tone === "success"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-              : banner.tone === "error"
-                ? "border-red-200 bg-red-50 text-red-900"
-                : "border-slate-200 bg-white text-slate-800"
-          }`}
-        >
-          {banner.tone === "success" ? (
-            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" aria-hidden="true" />
-          ) : (
-            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-red-700" aria-hidden="true" />
-          )}
-          <span>{banner.text}</span>
-        </div>
-      ) : null}
+      {banner ? <StatusBanner tone={banner.tone} message={banner.text} /> : null}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
         {/* Left: Interactive Street Map + Facility Results */}
@@ -601,38 +566,75 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
             const activeFacility =
               facilities.find((f) => f.id === selectedFacilityId) ?? null;
             if (!activeFacility) return null;
+            const facPhoto = resolveFacilityPicture(activeFacility.kind);
             return (
               <div className="rounded-xl border border-teal-200 bg-teal-50/70 p-3.5 text-xs">
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div className="space-y-0.5">
-                    <p className="font-bold text-teal-950">
-                      {activeFacility.name}
-                    </p>
-                    <p className="text-slate-700">{activeFacility.address}</p>
-                    <p className="text-[11px] font-medium text-teal-900">
-                      {formatFacilityKind(activeFacility.kind)} ·{" "}
-                      {formatOpenStatus(activeFacility.openStatus)}
-                      {activeFacility.is24_7 ? " · Open 24/7" : ""}
-                      {activeFacility.specialties.length > 0
-                        ? ` · ${activeFacility.specialties.slice(0, 3).join(", ")}`
-                        : ""}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
                     <button
                       type="button"
+                      onClick={() =>
+                        openImage({
+                          src: facPhoto,
+                          alt: activeFacility.name,
+                          primaryLabel: "Care Center Exterior / Interior",
+                          title: activeFacility.name,
+                          subtitle: `${formatFacilityKind(activeFacility.kind)} · ${activeFacility.address}`,
+                          badge: formatOpenStatus(activeFacility.openStatus),
+                          specs: [
+                            {
+                              label: "License",
+                              value: activeFacility.licenseNumber,
+                            },
+                            {
+                              label: "Specialties",
+                              value:
+                                activeFacility.specialties.join(", ") ||
+                                formatFacilityKind(activeFacility.kind),
+                            },
+                          ],
+                          actionHref: `/booking?country=${encodeURIComponent(activeFacility.countryCode)}&facilityId=${encodeURIComponent(activeFacility.id)}`,
+                          actionLabel: "Book Visit",
+                        })
+                      }
+                      aria-label={`Inspect ${activeFacility.name} facility photo`}
+                      className="h-14 w-16 shrink-0 cursor-zoom-in overflow-hidden rounded-lg border border-teal-200 bg-white transition hover:border-teal-700"
+                    >
+                      <img
+                        src={facPhoto}
+                        alt={activeFacility.name}
+                        className="h-full w-full object-cover"
+                      />
+                    </button>
+                    <div className="min-w-0 space-y-0.5">
+                      <p className="truncate font-bold text-teal-950">
+                        {activeFacility.name}
+                      </p>
+                      <p className="truncate text-slate-700">
+                        {activeFacility.address}
+                      </p>
+                      <p className="text-[11px] font-medium text-teal-900">
+                        {formatFacilityKind(activeFacility.kind)} ·{" "}
+                        {formatOpenStatus(activeFacility.openStatus)}
+                        {activeFacility.is24_7 ? " · Open 24/7" : ""}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <UiButton
+                      size="sm"
+                      variant="primary"
                       onClick={() => {
                         setPickupAddress(activeFacility.address);
                         setPickupLat(String(activeFacility.lat));
                         setPickupLng(String(activeFacility.lng));
                       }}
-                      className="rounded-lg border border-teal-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-teal-900 hover:bg-teal-100"
                     >
                       Use for Pickup
-                    </button>
+                    </UiButton>
                     <Link
                       href={`/booking?country=${encodeURIComponent(activeFacility.countryCode)}&facilityId=${encodeURIComponent(activeFacility.id)}`}
-                      className="rounded-lg bg-teal-800 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-teal-900"
+                      className="text-xs font-semibold text-teal-800 hover:underline"
                     >
                       Book Visit →
                     </Link>
@@ -654,130 +656,146 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
               </p>
             ) : (
               <ul className="space-y-2">
-                {facilities.map((fac) => (
-                  <li
-                    key={fac.id}
-                    onClick={() => setSelectedFacilityId(fac.id)}
-                    className={`cursor-pointer rounded-xl border p-3 text-sm transition-colors ${
-                      fac.id === selectedFacilityId
-                        ? "border-teal-700 bg-teal-50/40"
-                        : "border-slate-200 bg-slate-50 hover:border-teal-400"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="font-semibold text-slate-900">{fac.name}</p>
-                        <p className="text-xs text-slate-600">
-                          {formatFacilityKind(fac.kind)} · {fac.licenseNumber}
-                          {fac.distanceMeters !== null
-                            ? ` · ${(fac.distanceMeters / 1000).toFixed(2)} km`
-                            : ""}
+                {facilities.map((fac) => {
+                  const facPhoto = resolveFacilityPicture(fac.kind);
+                  return (
+                    <li
+                      key={fac.id}
+                      onClick={() => setSelectedFacilityId(fac.id)}
+                      className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 text-sm transition-colors ${
+                        fac.id === selectedFacilityId
+                          ? "border-teal-700 bg-teal-50/40"
+                          : "border-slate-200 bg-slate-50 hover:border-teal-400"
+                      }`}
+                    >
+                      <img
+                        src={facPhoto}
+                        alt={fac.name}
+                        className="h-12 w-14 shrink-0 rounded-lg border border-slate-200 object-cover"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="truncate font-semibold text-slate-900">
+                              {fac.name}
+                            </p>
+                            <p className="text-xs text-slate-600">
+                              {formatFacilityKind(fac.kind)} · {fac.licenseNumber}
+                              {fac.distanceMeters !== null
+                                ? ` · ${(fac.distanceMeters / 1000).toFixed(2)} km`
+                                : ""}
+                            </p>
+                          </div>
+                          <UiBadge tone={fac.openStatus === "OPEN" ? "emerald" : "slate"}>
+                            {formatOpenStatus(fac.openStatus)}
+                          </UiBadge>
+                        </div>
+                        <p className="mt-1 truncate text-xs text-slate-600">
+                          {fac.address}
                         </p>
                       </div>
-                      <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-800">
-                        {formatOpenStatus(fac.openStatus)}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-xs text-slate-600">{fac.address}</p>
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>
         </section>
 
-        {/* Right: Authentication, SSE Status, Telemetry & Dispatch Controls */}
+        {/* Right: Live Transport Fleet, Driver/Requester Tools & Active Dispatches */}
         <aside className="min-w-0 space-y-4 lg:col-span-5">
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-4">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                {currentUser ? (
-                  <EntityAvatar
-                    name={currentUser.fullName}
-                    role={currentUser.role}
-                    avatarUrl={currentUser.avatarUrl}
-                    size="xs"
-                  />
-                ) : (
-                  <Radio
-                    className={`h-4 w-4 ${
-                      streamConnected ? "text-emerald-600" : "text-slate-400"
-                    }`}
-                    aria-hidden="true"
-                  />
-                )}
+                <Radio
+                  className={`h-4 w-4 ${
+                    streamConnected ? "text-emerald-600" : "text-slate-400"
+                  }`}
+                  aria-hidden="true"
+                />
                 <h2 className="text-base font-semibold text-slate-900">
-                  {currentUser ? currentUser.fullName : "Live Medical Transport"}
+                  Medical Transport & Fleet ({directoryDrivers.length})
                 </h2>
               </div>
 
-              <span
-                className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
-                  streamConnected
-                    ? "bg-emerald-100 text-emerald-800"
-                    : "bg-slate-100 text-slate-700"
-                }`}
-              >
-                {streamConnected ? "Live Updates On" : "Preview Mode"}
-              </span>
+              <UiBadge tone={streamConnected ? "emerald" : "slate"}>
+                {streamConnected ? "Live Updates On" : "Directory View"}
+              </UiBadge>
             </div>
 
-            {currentUser ? (
-              <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3 text-xs">
-                <span className="font-semibold text-teal-800">
-                  {formatRoleLabel(currentUser.role)} · {currentUser.countryCode}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    clearStoredSession();
-                    setSessionToken(null);
-                    setCurrentUser(null);
-                    setDrivers([]);
-                    setDispatches([]);
-                  }}
-                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
-                  <span>Sign Out</span>
-                </button>
-              </div>
+            {directoryDrivers.length === 0 ? (
+              <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
+                No verified medical transport units listed in this region yet.
+              </p>
             ) : (
-              <form onSubmit={handleQuickSignIn} className="mt-3 space-y-3">
-                <p className="text-xs text-slate-600">
-                  Sign in below to view live units and coordinate urgent medical transport, or{" "}
-                  <Link href="/portal" className="font-semibold text-teal-800 underline">
-                    register on the Clinical Portal
-                  </Link>
-                  .
-                </p>
-                <input
-                  type="email"
-                  required
-                  value={loginEmail}
-                  onChange={(e) => setLoginEmail(e.target.value)}
-                  placeholder="Account email"
-                  aria-label="Dispatch sign-in email"
-                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-teal-700 focus:outline-none"
-                />
-                <input
-                  type="password"
-                  required
-                  value={loginPassword}
-                  onChange={(e) => setLoginPassword(e.target.value)}
-                  placeholder="Password"
-                  aria-label="Dispatch sign-in password"
-                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-teal-700 focus:outline-none"
-                />
-                <button
-                  type="submit"
-                  disabled={busy}
-                  className="inline-flex min-h-[40px] w-full items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-3.5 py-2 text-xs font-semibold text-white hover:bg-slate-800"
-                >
-                  <KeyRound className="h-3.5 w-3.5" aria-hidden="true" />
-                  <span>Sign In to Coordinate Care</span>
-                </button>
-              </form>
+              <ul className="space-y-3">
+                {directoryDrivers.map((drv) => {
+                  const liveMarker = drivers.find((d) => d.driverId === drv.id);
+                  const currentStatus =
+                    liveMarker?.status ?? drv.liveStatus ?? "AVAILABLE";
+                  const vehicleKindLabel =
+                    drv.vehicleType === "AMBULANCE"
+                      ? "Ambulance Unit"
+                      : "Medical Shuttle";
+                  return (
+                    <li
+                      key={drv.id}
+                      className="rounded-xl border border-slate-200 bg-slate-50/70 p-3"
+                    >
+                      <div className="flex items-center gap-3">
+                        <EntityMediaPair
+                          primarySrc={
+                            drv.avatarUrl ??
+                            resolveDefaultAvatar(drv.fullName, "DRIVER")
+                          }
+                          primaryAlt={drv.fullName}
+                          primaryLabel="Driver Profile"
+                          secondarySrc={resolveVehiclePicture(drv.vehicleType)}
+                          secondaryAlt={drv.vehicleLabel}
+                          secondaryLabel={vehicleKindLabel}
+                          title={drv.fullName}
+                          subtitle={`${drv.vehicleLabel} · ${drv.facilityName ?? drv.countryCode}`}
+                          badge={currentStatus}
+                          specs={[
+                            { label: "Vehicle Type", value: vehicleKindLabel },
+                            { label: "Unit", value: drv.vehicleLabel },
+                            { label: "Service Zone", value: drv.serviceZone },
+                            {
+                              label: "Home Base",
+                              value: drv.facilityName ?? drv.countryCode,
+                            },
+                            { label: "Status", value: currentStatus },
+                          ]}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-1.5">
+                            <p className="truncate text-sm font-bold text-slate-900">
+                              {drv.fullName}
+                            </p>
+                            <UiBadge
+                              tone={
+                                currentStatus === "AVAILABLE"
+                                  ? "emerald"
+                                  : currentStatus === "OFF_DUTY"
+                                    ? "slate"
+                                    : "amber"
+                              }
+                            >
+                              {currentStatus}
+                            </UiBadge>
+                          </div>
+                          <p className="truncate text-xs font-medium text-teal-900">
+                            {drv.vehicleLabel} · {drv.serviceZone}
+                          </p>
+                          <p className="truncate text-[11px] text-slate-500">
+                            {drv.facilityName ?? drv.countryCode}
+                          </p>
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
             )}
           </section>
 
@@ -791,43 +809,42 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
               </div>
               <form onSubmit={handleDriverPingSubmit} className="mt-3 space-y-3">
                 <div className="grid grid-cols-2 gap-3">
-                  <input
+                  <UiInput
                     type="number"
                     step="any"
                     required
                     aria-label="Driver latitude"
                     value={driverLat}
                     onChange={(e) => setDriverLat(e.target.value)}
-                    className="min-w-0 w-full rounded-xl border border-slate-300 px-3 py-2 font-mono-tabular text-sm"
+                    className="font-mono-tabular"
                   />
-                  <input
+                  <UiInput
                     type="number"
                     step="any"
                     required
                     aria-label="Driver longitude"
                     value={driverLng}
                     onChange={(e) => setDriverLng(e.target.value)}
-                    className="min-w-0 w-full rounded-xl border border-slate-300 px-3 py-2 font-mono-tabular text-sm"
+                    className="font-mono-tabular"
                   />
                 </div>
-                <select
+                <UiSelect
                   aria-label="Driver availability status"
                   value={driverStatus}
                   onChange={(e) => setDriverStatus(e.target.value as DriverStatus)}
-                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
                 >
                   <option value="AVAILABLE">Ready for Requests</option>
                   <option value="ASSIGNED">Assigned to Patient</option>
                   <option value="EN_ROUTE">On the Way</option>
                   <option value="OFF_DUTY">Off Duty</option>
-                </select>
-                <button
+                </UiSelect>
+                <UiButton
                   type="submit"
                   disabled={busy}
-                  className="min-h-[42px] w-full rounded-xl bg-teal-800 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-900"
+                  className="w-full"
                 >
                   Update Ambulance Location
-                </button>
+                </UiButton>
               </form>
             </section>
           ) : null}
@@ -847,52 +864,51 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
                 <p className="text-[11px] text-slate-500">
                   Tip: Click any hospital or clinic on the map to auto-fill pickup details.
                 </p>
-                <input
+                <UiInput
                   type="text"
                   required
                   value={pickupAddress}
                   onChange={(e) => setPickupAddress(e.target.value)}
                   placeholder="Pickup street address"
                   aria-label="Pickup address"
-                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
                 />
                 <div className="grid grid-cols-2 gap-3">
-                  <input
+                  <UiInput
                     type="number"
                     step="any"
                     required
                     aria-label="Pickup latitude"
                     value={pickupLat}
                     onChange={(e) => setPickupLat(e.target.value)}
-                    className="min-w-0 w-full rounded-xl border border-slate-300 px-3 py-2 font-mono-tabular text-sm"
+                    className="font-mono-tabular"
                   />
-                  <input
+                  <UiInput
                     type="number"
                     step="any"
                     required
                     aria-label="Pickup longitude"
                     value={pickupLng}
                     onChange={(e) => setPickupLng(e.target.value)}
-                    className="min-w-0 w-full rounded-xl border border-slate-300 px-3 py-2 font-mono-tabular text-sm"
+                    className="font-mono-tabular"
                   />
                 </div>
-                <select
+                <UiSelect
                   aria-label="Dispatch urgency"
                   value={urgency}
                   onChange={(e) => setUrgency(e.target.value as DispatchUrgency)}
-                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
                 >
                   <option value="ROUTINE">Standard Medical Transfer</option>
                   <option value="URGENT">Urgent Care Pickup</option>
                   <option value="EMERGENCY">Emergency Dispatch</option>
-                </select>
-                <button
+                </UiSelect>
+                <UiButton
                   type="submit"
+                  variant="danger"
                   disabled={busy}
-                  className="min-h-[42px] w-full rounded-xl bg-red-700 px-4 py-2 text-sm font-semibold text-white hover:bg-red-800"
+                  className="w-full"
                 >
                   Request Medical Pickup
-                </button>
+                </UiButton>
               </form>
             </section>
           ) : null}

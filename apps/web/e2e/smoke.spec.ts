@@ -41,14 +41,20 @@ for (const vp of VIEWPORTS) {
     expect(logoLoaded).toBe(true);
     expect(heroLoaded).toBe(true);
 
-    // Verify all bundled studio medical portraits and pharmacy product WebPs serve and decode cleanly
+    // Verify all bundled studio medical portraits, facilities, vehicles, and pharmacy WebPs serve cleanly
     const mediaPaths = [
       "/media/avatars/doctor-female.webp",
       "/media/avatars/doctor-male.webp",
+      "/media/avatars/nurse-infirmier.webp",
       "/media/avatars/pharmacist.webp",
       "/media/avatars/lab-tech.webp",
       "/media/avatars/driver-ems.webp",
       "/media/avatars/patient.webp",
+      "/media/facilities/clinic-interior.webp",
+      "/media/facilities/hospital-hub.webp",
+      "/media/facilities/pharmacy-interior.webp",
+      "/media/vehicles/medical-transport-car.webp",
+      "/media/vehicles/ambulance-van.webp",
       "/media/products/otc-medication.webp",
       "/media/products/rx-prescription.webp",
       "/media/products/medical-device.webp",
@@ -72,15 +78,8 @@ for (const vp of VIEWPORTS) {
     }, mediaPaths);
     expect(decodedCount).toBe(mediaPaths.length);
 
-    // Helper: clicks visible desktop header nav link or opens the Sidebar Menu on smaller screens
+    // Helper: opens the right-aligned Sidebar Menu and selects a workspace link
     const navigateTo = async (linkLabel: string) => {
-      const desktopNav = page
-        .getByRole("navigation", { name: "Primary Workspace Navigation" })
-        .getByRole("link", { name: linkLabel, exact: true });
-      if (await desktopNav.isVisible()) {
-        await desktopNav.click();
-        return;
-      }
       await page
         .getByRole("button", { name: /Open navigation and language menu/i })
         .click();
@@ -90,12 +89,23 @@ for (const vp of VIEWPORTS) {
         .click();
     };
 
-    // Verify top header does NOT render inline language toggles, and hero image opens zoom lightbox
+    // Verify clean stripped header: logo/name on the left, menu button on the right, no extra nav/language toggles
+    await expect(page.locator("header nav")).toHaveCount(0);
     await expect(
       page
         .locator("header")
         .getByRole("group", { name: "Interface language selector" }),
     ).toHaveCount(0);
+    const logoBox = await page
+      .locator('header img[alt="MediSync Global emblem"]')
+      .boundingBox();
+    const menuBox = await page
+      .locator("header")
+      .getByRole("button", { name: /Open navigation and language menu/i })
+      .boundingBox();
+    expect(logoBox).not.toBeNull();
+    expect(menuBox).not.toBeNull();
+    expect(menuBox!.x).toBeGreaterThan(logoBox!.x);
 
     await page
       .getByRole("button", { name: /Zoom Connected Medical Care District/i })
@@ -130,7 +140,7 @@ for (const vp of VIEWPORTS) {
     await page.getByRole("button", { name: /Close menu/i }).click();
 
     // Interactive check: switch Care Region to Morocco (MA) and verify hotline 141
-    await page.getByRole("button", { name: "MA", exact: true }).click();
+    await page.getByRole("button", { name: /^MA(\s·|$)/ }).first().click();
     await expect(page.getByText(/Care Region: Morocco/i)).toBeVisible();
     await expect(page.getByText(/141 \/ 15/)).toBeVisible();
 
@@ -139,6 +149,33 @@ for (const vp of VIEWPORTS) {
     );
     expect(hasOverflowHome, "Horizontal scroll overflow on /").toBe(false);
 
+    // Navigate to Dedicated Care Profiles & Fleet Directory (/profiles)
+    await navigateTo("Profiles");
+    await expect(
+      page.getByRole("heading", {
+        name: /Care Providers, Clinics, Hospitals & Transport Units/i,
+      }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: /^MA(\s·|$)/ }).first().click();
+
+    const inspectTriggers = page.getByRole("button", {
+      name: /^Inspect /i,
+    });
+    if ((await inspectTriggers.count()) > 0) {
+      await inspectTriggers.first().click();
+      const splitModal = page.getByRole("dialog", { name: /Image preview:/i });
+      await expect(splitModal).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(splitModal).toBeHidden();
+    }
+
+    const hasOverflowProfiles = await page.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth,
+    );
+    expect(hasOverflowProfiles, "Horizontal scroll overflow on /profiles").toBe(
+      false,
+    );
+
     // Navigate to Clinical & Ops Access Portal (/portal)
     await navigateTo("Portal");
     await expect(
@@ -146,7 +183,7 @@ for (const vp of VIEWPORTS) {
     ).toBeVisible();
 
     // Switch Care Region to Morocco (MA) and test tabs + live license validation
-    await page.getByRole("button", { name: "MA", exact: true }).click();
+    await page.getByRole("button", { name: /^MA(\s·|$)/ }).first().click();
     await expect(page.getByText(/Care Region:\s*Morocco/i)).toBeVisible();
 
     await page.getByRole("tab", { name: /Register$/i }).click();
@@ -202,7 +239,7 @@ for (const vp of VIEWPORTS) {
       )
       .toBe(true);
 
-    await page.getByRole("button", { name: "MA", exact: true }).click();
+    await page.getByRole("button", { name: /^MA(\s·|$)/ }).first().click();
     await expect(page.getByText(/Casablanca Central Metro/i)).toBeVisible();
     await page.getByRole("button", { name: "Hospitals", exact: true }).click();
     await page.getByRole("button", { name: "Zoom in viewport" }).click();
@@ -219,10 +256,15 @@ for (const vp of VIEWPORTS) {
         name: /Doctor Appointments & Clinic Hours/i,
       }),
     ).toBeVisible();
+    await expect(
+      page.getByText(/Publish Multi-Clinic Shift Window/i),
+    ).toHaveCount(0);
 
-    await page.getByRole("button", { name: "MA", exact: true }).click();
-    await expect(page.getByText(/Available Multi-Clinic Slots/i)).toBeVisible();
-    await expect(page.getByText(/MAD/i)).toBeVisible();
+    await page.getByRole("button", { name: /^MA(\s·|$)/ }).first().click();
+    await expect(
+      page.getByText(/Available Practitioners & Time Windows/i),
+    ).toBeVisible();
+    await expect(page.getByText(/MAD/i).first()).toBeVisible();
 
     const doctorAvatars = page.locator('img[src*="/media/avatars/"]');
     if ((await doctorAvatars.count()) > 0) {
@@ -252,6 +294,13 @@ for (const vp of VIEWPORTS) {
       }),
     ).toBeVisible();
     await expect(page.locator("select#clin-patient-uuid")).toBeVisible();
+
+    await page
+      .getByRole("tab", { name: /Clinic Shifts/i })
+      .click();
+    await expect(
+      page.getByText(/Publish Multi-Clinic Shift Window/i),
+    ).toBeVisible();
 
     await page
       .getByRole("tab", { name: /Pharmacy QR Dispense/i })
@@ -288,6 +337,9 @@ for (const vp of VIEWPORTS) {
     ).toBeVisible();
     await expect(page.locator("#pharma-search")).toBeVisible();
     await expect(page.locator("#pharma-facility-filter")).toBeVisible();
+    await expect(
+      page.getByRole("tab", { name: /Pharmacist Stock Manager/i }),
+    ).toHaveCount(0);
 
     const productThumbs = page.locator('img[src*="/media/products/"]');
     if ((await productThumbs.count()) > 0) {
@@ -327,7 +379,7 @@ for (const vp of VIEWPORTS) {
       }),
     ).toBeVisible();
 
-    await page.getByRole("button", { name: "MA", exact: true }).click();
+    await page.getByRole("button", { name: /^MA(\s·|$)/ }).first().click();
     await expect(page.getByText("MAD", { exact: true })).toBeVisible();
     await page.getByRole("tab", { name: /Disputes/i }).click();
     await expect(

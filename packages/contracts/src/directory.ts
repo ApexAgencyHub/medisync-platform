@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DriverStatusSchema } from "./geo.js";
 import { FacilityKindSchema, UserRoleSchema } from "./roles.js";
 import { VerificationStatusSchema } from "./facility.js";
 
@@ -98,3 +99,32 @@ export const DemoPersonasResponseSchema = z.object({
 });
 
 export type DemoPersonasResponse = z.infer<typeof DemoPersonasResponseSchema>;
+
+export const VehicleTypeSchema = z.enum(["AMBULANCE", "MEDICAL_SHUTTLE"]);
+export type VehicleType = z.infer<typeof VehicleTypeSchema>;
+
+export const DirectoryDriverSummarySchema = z.object({
+  id: z.string().uuid(),
+  fullName: z.string(),
+  email: z.string().email(),
+  countryCode: z.string().regex(/^[A-Z]{2,4}$/),
+  facilityId: z.string().uuid().nullable(),
+  facilityName: z.string().nullable(),
+  vehicleType: VehicleTypeSchema,
+  vehicleLabel: z.string(),
+  serviceZone: z.string(),
+  liveStatus: DriverStatusSchema.nullable(),
+  avatarUrl: z.string().url().nullable().default(null),
+});
+
+export type DirectoryDriverSummary = z.infer<
+  typeof DirectoryDriverSummarySchema
+>;
+
+export const DirectoryDriversResponseSchema = z.object({
+  drivers: z.array(DirectoryDriverSummarySchema),
+});
+
+export type DirectoryDriversResponse = z.infer<
+  typeof DirectoryDriversResponseSchema
+>;

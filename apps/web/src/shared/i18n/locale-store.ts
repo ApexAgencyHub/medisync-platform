@@ -18,12 +18,19 @@ const TRANSLATIONS: Record<LocaleCode, Record<string, string>> = {
     "menu.navigation": "Care Workspaces",
     "menu.language": "Language & Reading Direction",
     "nav.overview": "Overview",
+    "nav.profiles": "Profiles",
     "nav.map": "Live Map",
     "nav.booking": "Booking",
     "nav.clinical": "Clinical",
     "nav.pharmacy": "Pharmacy",
     "nav.admin": "Admin",
     "nav.portal": "Portal",
+
+    // Profiles Directory (/profiles)
+    "profiles.eyebrow": "Verified Healthcare Directory & Fleet Showcase",
+    "profiles.heading": "Care Providers, Clinics, Hospitals & Transport Units",
+    "profiles.subtitle":
+      "Inspect doctors, home care nurses (infirmiers), licensed medical centers, and active ambulance or shuttle vehicles with full-resolution photo zoom before booking.",
 
     // Home Overview & Quick Care Launchpad
     "home.eyebrow": "Verified Care Network · 24/7 Clinical & Emergency Access",
@@ -106,6 +113,7 @@ const TRANSLATIONS: Record<LocaleCode, Record<string, string>> = {
     "clinical.subtitle":
       "Complete consultation notes, verifiable pharmacy QR prescriptions, and certified radiology or laboratory report uploads.",
     "clinical.tabDoctor": "Consultation & E-Rx",
+    "clinical.tabSchedule": "Clinic Shifts",
     "clinical.tabPharmacy": "Pharmacy QR Dispense",
     "clinical.tabLabs": "Diagnostic Labs & Scans",
     "clinical.saveNote": "Save Consultation Note",
@@ -138,12 +146,19 @@ const TRANSLATIONS: Record<LocaleCode, Record<string, string>> = {
     "menu.navigation": "Espaces de soins",
     "menu.language": "Langue et sens de lecture",
     "nav.overview": "Aperçu",
+    "nav.profiles": "Profils",
     "nav.map": "Carte Live",
     "nav.booking": "Rendez-vous",
     "nav.clinical": "Clinique",
     "nav.pharmacy": "Pharmacie",
     "nav.admin": "Admin",
     "nav.portal": "Portail",
+
+    // Profiles Directory (/profiles)
+    "profiles.eyebrow": "Annuaire Médical & Flotte Vérifiée",
+    "profiles.heading": "Praticiens, Infirmiers, Établissements & Véhicules",
+    "profiles.subtitle":
+      "Consultez médecins, infirmiers à domicile, cliniques, hôpitaux et véhicules sanitaires avec inspection photo haute résolution avant réservation.",
 
     // Home Overview & Quick Care Launchpad
     "home.eyebrow": "Réseau de Soins Agréé · Coordination Médicale 24h/24",
@@ -226,6 +241,7 @@ const TRANSLATIONS: Record<LocaleCode, Record<string, string>> = {
     "clinical.subtitle":
       "Notes de consultation, délivrance sécurisée par QR code en pharmacie et dépôt sécurisé d'imagerie et comptes-rendus.",
     "clinical.tabDoctor": "Consultations & E-Rx",
+    "clinical.tabSchedule": "Plannings Cliniques",
     "clinical.tabPharmacy": "Délivrance QR Pharmacie",
     "clinical.tabLabs": "Analyses & Imagerie",
     "clinical.saveNote": "Enregistrer la note clinique",
@@ -258,12 +274,19 @@ const TRANSLATIONS: Record<LocaleCode, Record<string, string>> = {
     "menu.navigation": "أقسام الرعاية الصحية",
     "menu.language": "اللغة واتجاه القراءة",
     "nav.overview": "نظرة عامة",
+    "nav.profiles": "الملفات",
     "nav.map": "الخريطة الحية",
     "nav.booking": "الحجوزات",
     "nav.clinical": "السجل السريري",
     "nav.pharmacy": "الصيدلية",
     "nav.admin": "الإدارة",
     "nav.portal": "البوابة",
+
+    // Profiles Directory (/profiles)
+    "profiles.eyebrow": "الدليل الطبي المعتمد وأسطول النقل",
+    "profiles.heading": "الأطباء والممرضون والمستشفيات وسيارات النقل الطبي",
+    "profiles.subtitle":
+      "استعرض صور الأطباء والممرضين المنزليين والعيادات والمستشفيات ومركبات الإسعاف بدقة عالية قبل الحجز.",
 
     // Home Overview & Quick Care Launchpad
     "home.eyebrow": "شبكة رعاية صحية معتمدة · تنسيق طبي على مدار الساعة",
@@ -346,6 +369,7 @@ const TRANSLATIONS: Record<LocaleCode, Record<string, string>> = {
     "clinical.subtitle":
       "تسجيل ملاحظات الفحص والتحقق من وصفات QR بالصيدلية ورفع نتائج المختبر وصور الأشعة بأمان.",
     "clinical.tabDoctor": "الفحص والوصفات الرقمية",
+    "clinical.tabSchedule": "جداول العيادات",
     "clinical.tabPharmacy": "صرف وصفة QR",
     "clinical.tabLabs": "المختبرات والأشعة",
     "clinical.saveNote": "حفظ ملاحظات الفحص",

@@ -153,6 +153,7 @@ export async function buildApiServer(
   });
   await registerDirectoryRoutes(app, {
     pool,
+    redis,
     authSecret: options.authSecret,
     s3Config,
   });

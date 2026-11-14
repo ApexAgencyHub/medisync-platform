@@ -12,6 +12,7 @@ import {
   Pill,
   ShieldCheck,
   Stethoscope,
+  Users,
   X,
 } from "lucide-react";
 import { BrandMark } from "./BrandMark";
@@ -20,6 +21,7 @@ import { useLocale } from "../i18n/locale-store";
 
 export type AppRouteKey =
   | "/"
+  | "/profiles"
   | "/portal"
   | "/map"
   | "/booking"
@@ -35,6 +37,7 @@ interface NavItem {
 
 const NAV_ITEMS: readonly NavItem[] = [
   { href: "/", labelKey: "nav.overview", icon: Home },
+  { href: "/profiles", labelKey: "nav.profiles", icon: Users },
   { href: "/map", labelKey: "nav.map", icon: MapIcon },
   { href: "/booking", labelKey: "nav.booking", icon: CalendarCheck2 },
   { href: "/clinical", labelKey: "nav.clinical", icon: Stethoscope },
@@ -66,53 +69,22 @@ export function AppHeader({ activeRoute, statusPill }: AppHeaderProps) {
 
   return (
     <>
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3.5 sm:px-6">
-          <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
-            <button
-              type="button"
-              onClick={() => setSidebarOpen(true)}
-              aria-label={t("menu.open")}
-              aria-expanded={sidebarOpen}
-              className="inline-flex min-h-[40px] shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-semibold text-slate-800 transition-colors hover:border-teal-700 hover:bg-teal-50/70 hover:text-teal-900"
-            >
-              <Menu className="h-4 w-4 shrink-0" aria-hidden="true" />
-              <span>{t("menu.title")}</span>
-            </button>
+      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur-xs">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
+          <Link href="/" className="min-w-0 shrink-0">
+            <BrandMark />
+          </Link>
 
-            <Link href="/" className="min-w-0 shrink-0">
-              <BrandMark />
-            </Link>
-          </div>
-
-          <nav
-            aria-label="Primary Workspace Navigation"
-            className="hidden flex-wrap items-center justify-end gap-1.5 md:flex"
+          <button
+            type="button"
+            onClick={() => setSidebarOpen(true)}
+            aria-label={t("menu.open")}
+            aria-expanded={sidebarOpen}
+            className="inline-flex min-h-[40px] shrink-0 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-800 shadow-xs transition-colors hover:border-teal-700 hover:bg-teal-50/70 hover:text-teal-900 active:scale-[0.99]"
           >
-            {statusPill ? (
-              <span className="hidden rounded-full border border-teal-200 bg-teal-50 px-3 py-1 font-mono-tabular text-xs font-medium text-teal-900 xl:inline-flex">
-                {statusPill}
-              </span>
-            ) : null}
-
-            {NAV_ITEMS.map((item) => {
-              const isActive = item.href === activeRoute;
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  aria-current={isActive ? "page" : undefined}
-                  className={
-                    isActive
-                      ? "inline-flex min-h-[38px] items-center whitespace-nowrap rounded-lg bg-teal-800 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-teal-900 active:scale-[0.99] sm:px-3"
-                      : "inline-flex min-h-[38px] items-center whitespace-nowrap rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition-colors hover:border-teal-700 hover:text-teal-800 sm:px-3"
-                  }
-                >
-                  {t(item.labelKey)}
-                </Link>
-              );
-            })}
-          </nav>
+            <Menu className="h-4 w-4 shrink-0" aria-hidden="true" />
+            <span>{t("menu.title")}</span>
+          </button>
         </div>
       </header>
 
@@ -121,11 +93,11 @@ export function AppHeader({ activeRoute, statusPill }: AppHeaderProps) {
           role="dialog"
           aria-modal="true"
           aria-label={t("menu.title")}
-          className="fixed inset-0 z-50 flex bg-slate-950/45 backdrop-blur-xs"
+          className="fixed inset-0 z-50 flex justify-end bg-slate-950/45 backdrop-blur-xs"
           onClick={() => setSidebarOpen(false)}
         >
           <aside
-            className="flex h-full w-80 max-w-[85vw] flex-col justify-between overflow-y-auto border-e border-slate-200 bg-white p-5 shadow-2xl"
+            className="flex h-full w-80 max-w-[85vw] flex-col justify-between overflow-y-auto border-s border-slate-200 bg-white p-5 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="space-y-6">
