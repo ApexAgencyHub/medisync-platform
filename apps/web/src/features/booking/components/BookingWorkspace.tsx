@@ -727,10 +727,11 @@ export function BookingWorkspace({
                           {formatVisitMode(slot.visitMode)}
                         </span>
                       </div>
-                      <div className="mt-2 flex items-center gap-2.5">
+                      <div className="mt-2 flex items-center gap-3">
                         <EntityAvatar
                           name={slot.doctorName}
                           role="DOCTOR"
+                          subtitle={`${slot.specialty} · ${slot.facilityName}`}
                           size="sm"
                         />
                         <div className="min-w-0">

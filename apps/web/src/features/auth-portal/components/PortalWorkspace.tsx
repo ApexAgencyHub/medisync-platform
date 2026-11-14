@@ -908,26 +908,29 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
                           p.role === "OPS_ADMIN",
                       )
                       .map((persona) => (
-                        <button
+                        <div
                           key={persona.id}
-                          type="button"
-                          disabled={busy}
-                          onClick={() => {
-                            setLoginEmail(persona.email);
-                            setLoginPassword(persona.demoPassword);
-                            void executeLogin(
-                              persona.email,
-                              persona.demoPassword,
-                            );
-                          }}
-                          className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-left transition-colors hover:border-teal-700 hover:bg-teal-50/50 disabled:opacity-60"
+                          className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-2.5 transition-colors hover:border-teal-700 hover:bg-teal-50/40"
                         >
                           <EntityAvatar
                             name={persona.fullName}
                             role={persona.role}
-                            size="sm"
+                            subtitle={`${formatRoleLabel(persona.role)} · ${persona.countryCode}`}
+                            size="md"
                           />
-                          <div className="min-w-0 flex-1">
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => {
+                              setLoginEmail(persona.email);
+                              setLoginPassword(persona.demoPassword);
+                              void executeLogin(
+                                persona.email,
+                                persona.demoPassword,
+                              );
+                            }}
+                            className="min-w-0 flex-1 text-left focus:outline-none disabled:opacity-60"
+                          >
                             <div className="flex items-center justify-between gap-1.5">
                               <span className="truncate text-xs font-semibold text-slate-900">
                                 {persona.fullName}
@@ -939,8 +942,8 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
                             <p className="mt-0.5 truncate text-[11px] text-slate-600">
                               {persona.headline}
                             </p>
-                          </div>
-                        </button>
+                          </button>
+                        </div>
                       ))}
                   </div>
                 </div>

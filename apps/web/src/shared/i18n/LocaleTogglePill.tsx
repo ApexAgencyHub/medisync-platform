@@ -1,15 +1,21 @@
 "use client";
 
 import type { LocaleCode } from "@medisync/contracts";
-import { Globe } from "lucide-react";
+import { Check, Globe } from "lucide-react";
 import { useLocale } from "./locale-store";
 
-const LOCALES: readonly { code: LocaleCode; label: string }[] = [
-  { code: "en", label: "EN" },
-  { code: "fr", label: "FR" },
-  { code: "ar", label: "AR" },
+const LOCALES: readonly {
+  code: LocaleCode;
+  badge: string;
+  label: string;
+  directionHint: string;
+}[] = [
+  { code: "en", badge: "EN", label: "English", directionHint: "Left to right" },
+  { code: "fr", badge: "FR", label: "Français", directionHint: "Gauche à droite" },
+  { code: "ar", badge: "AR", label: "العربية", directionHint: "من اليمين إلى اليسار" },
 ];
 
+/** Sidebar language selector displaying full native language names and direction hints. */
 export function LocaleTogglePill() {
   const { locale, setLocale } = useLocale();
 
@@ -17,12 +23,8 @@ export function LocaleTogglePill() {
     <div
       role="group"
       aria-label="Interface language selector"
-      className="inline-flex items-center gap-0.5 rounded-lg border border-slate-200 bg-slate-50 p-0.5"
+      className="space-y-1.5"
     >
-      <Globe
-        className="mx-1 h-3.5 w-3.5 shrink-0 text-slate-500"
-        aria-hidden="true"
-      />
       {LOCALES.map((item) => {
         const active = item.code === locale;
         return (
@@ -33,11 +35,32 @@ export function LocaleTogglePill() {
             aria-pressed={active}
             className={
               active
-                ? "rounded-md bg-teal-800 px-2 py-1 text-[11px] font-bold text-white"
-                : "rounded-md px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-white hover:text-slate-900"
+                ? "flex min-h-[44px] w-full items-center justify-between gap-3 rounded-xl border border-teal-700 bg-teal-50 px-3 py-2 text-start text-teal-950 shadow-xs"
+                : "flex min-h-[44px] w-full items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-start text-slate-700 transition-colors hover:border-teal-700/60 hover:bg-slate-50"
             }
           >
-            {item.label}
+            <div className="flex min-w-0 items-center gap-2.5">
+              <span
+                className={
+                  active
+                    ? "inline-flex h-7 w-8 shrink-0 items-center justify-center rounded-lg bg-teal-800 font-mono-tabular text-[11px] font-bold text-white"
+                    : "inline-flex h-7 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 font-mono-tabular text-[11px] font-bold text-slate-700"
+                }
+              >
+                {item.badge}
+              </span>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold">{item.label}</p>
+                <p className="truncate text-[11px] text-slate-500">
+                  {item.directionHint}
+                </p>
+              </div>
+            </div>
+            {active ? (
+              <Check className="h-4 w-4 shrink-0 text-teal-800" aria-hidden="true" />
+            ) : (
+              <Globe className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
+            )}
           </button>
         );
       })}

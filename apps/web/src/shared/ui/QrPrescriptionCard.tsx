@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import QRCode from "qrcode";
 import { Check, Copy, QrCode } from "lucide-react";
 import type { PrescriptionSummary } from "@medisync/contracts";
+import { useImageLightbox } from "./ImageLightboxProvider";
 
 interface QrPrescriptionCardProps {
   prescription: PrescriptionSummary;
@@ -14,6 +15,7 @@ export function QrPrescriptionCard({
   prescription,
   onUseForDispense,
 }: QrPrescriptionCardProps) {
+  const { openImage } = useImageLightbox();
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -52,11 +54,25 @@ export function QrPrescriptionCard({
       <div className="flex items-center gap-3.5">
         <div className="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white p-1.5">
           {qrDataUrl ? (
-            <img
-              src={qrDataUrl}
-              alt={`Cryptographic Rx QR for ${prescription.patientName}`}
-              className="h-full w-full object-contain"
-            />
+            <button
+              type="button"
+              onClick={() =>
+                openImage({
+                  src: qrDataUrl,
+                  alt: `Digital Prescription QR for ${prescription.patientName}`,
+                  title: `Digital Prescription · ${prescription.patientName}`,
+                  subtitle: `Issued by Dr. ${prescription.doctorName}`,
+                })
+              }
+              aria-label={`Enlarge prescription QR for ${prescription.patientName}`}
+              className="h-full w-full cursor-zoom-in rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-700"
+            >
+              <img
+                src={qrDataUrl}
+                alt={`Cryptographic Rx QR for ${prescription.patientName}`}
+                className="h-full w-full object-contain"
+              />
+            </button>
           ) : (
             <QrCode className="h-8 w-8 text-slate-400" aria-hidden="true" />
           )}

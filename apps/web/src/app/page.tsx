@@ -1,4 +1,3 @@
-import Image from "next/image";
 import { listCountryPacks } from "@medisync/country-packs";
 import {
   CountryPackExplorer,
@@ -6,6 +5,7 @@ import {
   HomeCareLaunchpad,
 } from "@/features/platform-overview";
 import { AppHeader } from "@/shared/ui/AppHeader";
+import { ZoomableHeroImage } from "@/shared/ui/ZoomableHeroImage";
 
 export default function HomePage() {
   const packs = listCountryPacks();
@@ -22,14 +22,12 @@ export default function HomePage() {
         <section className="grid items-center gap-8 lg:grid-cols-12">
           <HomeCareLaunchpad />
 
-          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white p-2 shadow-xs lg:col-span-6">
-            <Image
+          <div className="lg:col-span-6">
+            <ZoomableHeroImage
               src="/media/clinical-map-hero.webp"
               alt="Isometric medical district coordination map connecting hospital, clinic, pharmacy, and ambulances"
-              width={1408}
-              height={768}
-              priority
-              className="h-auto w-full rounded-xl object-cover"
+              title="Connected Medical Care District Overview"
+              subtitle="Hospital Intake · Specialty Clinics · 24/7 Pharmacies · Emergency Dispatch"
             />
           </div>
         </section>
