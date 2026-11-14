@@ -13,21 +13,10 @@ import type {
   ViewportFacilityItem,
 } from "@medisync/contracts";
 import {
-  Activity,
-  Ambulance,
-  ArrowDown,
-  ArrowLeft,
-  ArrowRight,
-  ArrowUp,
-  Building2,
-  FlaskConical,
   LocateFixed,
   Minus,
-  Pill,
   Plus,
-  RotateCcw,
   Search,
-  Stethoscope,
 } from "lucide-react";
 import {
   formatDriverStatus,
@@ -35,6 +24,11 @@ import {
   formatOpenStatus,
 } from "@/shared/i18n/human-labels";
 import { useLocale } from "@/shared/i18n/locale-store";
+import {
+  resolveDefaultAvatar,
+  resolveFacilityPicture,
+  resolveVehiclePicture,
+} from "@/shared/ui/EntityAvatar";
 import {
   estimateZoomForViewport,
   getViewportCenter,
@@ -75,29 +69,25 @@ interface ViewportVectorMapProps {
   onViewportChange?: (next: ViewportBox) => void;
 }
 
-const KIND_BADGE: Record<
+const FACILITY_PIN_THEME: Record<
   FacilityKind,
-  { label: string; bg: string; icon: typeof Building2 }
+  { ring: string; accent: string }
 > = {
   HOSPITAL: {
-    label: "HOSP",
-    bg: "border-red-700 bg-red-700 text-white",
-    icon: Activity,
+    ring: "border-red-600",
+    accent: "text-red-900",
   },
   CLINIC: {
-    label: "CLIN",
-    bg: "border-teal-800 bg-teal-800 text-white",
-    icon: Building2,
+    ring: "border-teal-700",
+    accent: "text-teal-950",
   },
   PHARMACY: {
-    label: "PHRM",
-    bg: "border-emerald-700 bg-emerald-700 text-white",
-    icon: Pill,
+    ring: "border-emerald-600",
+    accent: "text-emerald-950",
   },
   DIAGNOSTIC_LAB: {
-    label: "LAB",
-    bg: "border-slate-800 bg-slate-800 text-white",
-    icon: FlaskConical,
+    ring: "border-slate-700",
+    accent: "text-slate-900",
   },
 };
 
@@ -299,7 +289,7 @@ export function ViewportVectorMap({
         onPointerMove={handlePointerMove}
         onPointerUp={finishDrag}
         onPointerCancel={finishDrag}
-        className="relative h-80 w-full cursor-grab overflow-hidden rounded-2xl border border-slate-200 bg-[#edf1ee] select-none active:cursor-grabbing sm:h-[26rem]"
+        className="relative h-80 w-full cursor-grab overflow-hidden rounded-2xl border border-slate-200 bg-[#edf1ee] select-none active:cursor-grabbing sm:h-[26rem] lg:h-[34rem]"
       >
         {/* Slippy Street Map Tiles */}
         <div aria-hidden="true" className="pointer-events-none absolute inset-0">
@@ -322,7 +312,7 @@ export function ViewportVectorMap({
           ))}
         </div>
 
-        {/* Pan & Zoom Controls */}
+        {/* Streamlined 3-Button Zoom & Center Control */}
         <div className="absolute top-3 right-3 z-20 flex flex-col gap-1 rounded-xl border border-slate-200 bg-white/95 p-1.5 shadow-sm backdrop-blur-xs">
           <button
             type="button"
@@ -342,60 +332,12 @@ export function ViewportVectorMap({
           </button>
           <button
             type="button"
-            aria-label="Reset region bounds"
-            onClick={onReset}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-700 hover:bg-slate-100 active:scale-95"
-          >
-            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
-          </button>
-        </div>
-
-        {/* Directional Pan Pad */}
-        <div className="absolute bottom-3 right-3 z-20 grid grid-cols-3 gap-0.5 rounded-xl border border-slate-200 bg-white/95 p-1 shadow-sm backdrop-blur-xs">
-          <span />
-          <button
-            type="button"
-            aria-label="Pan north"
-            onClick={() => onPan(0.2, 0)}
-            className="flex h-7 w-7 items-center justify-center rounded text-slate-700 hover:bg-slate-100"
-          >
-            <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
-          </button>
-          <span />
-          <button
-            type="button"
-            aria-label="Pan west"
-            onClick={() => onPan(0, -0.2)}
-            className="flex h-7 w-7 items-center justify-center rounded text-slate-700 hover:bg-slate-100"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
-          </button>
-          <button
-            type="button"
             aria-label="Center map on region"
             onClick={onReset}
-            className="flex h-7 w-7 items-center justify-center rounded text-teal-800 hover:bg-teal-50"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-teal-800 hover:bg-teal-50 active:scale-95"
           >
-            <LocateFixed className="h-3.5 w-3.5" aria-hidden="true" />
+            <LocateFixed className="h-4 w-4" aria-hidden="true" />
           </button>
-          <button
-            type="button"
-            aria-label="Pan east"
-            onClick={() => onPan(0, 0.2)}
-            className="flex h-7 w-7 items-center justify-center rounded text-slate-700 hover:bg-slate-100"
-          >
-            <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-          </button>
-          <span />
-          <button
-            type="button"
-            aria-label="Pan south"
-            onClick={() => onPan(-0.2, 0)}
-            className="flex h-7 w-7 items-center justify-center rounded text-slate-700 hover:bg-slate-100"
-          >
-            <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />
-          </button>
-          <span />
         </div>
 
         {/* Search Area Button */}
@@ -411,7 +353,7 @@ export function ViewportVectorMap({
           </button>
         </div>
 
-        {/* Verified Facility Pins Projected onto Street Coordinates */}
+        {/* Photographic Facility Markers Projected onto Street Coordinates */}
         {facilities.map((facility) => {
           const px = lngToWorldPx(facility.lng, zoom) - originX;
           const py = latToWorldPx(facility.lat, zoom) - originY;
@@ -424,9 +366,9 @@ export function ViewportVectorMap({
             return null;
           }
 
-          const cfg = KIND_BADGE[facility.kind];
-          const Icon = cfg.icon;
+          const theme = FACILITY_PIN_THEME[facility.kind];
           const isSelected = facility.id === selectedFacilityId;
+          const photoSrc = resolveFacilityPicture(facility.kind);
 
           return (
             <button
@@ -435,26 +377,35 @@ export function ViewportVectorMap({
               onClick={() => onSelectFacility(facility.id)}
               aria-label={`${facility.name} (${formatFacilityKind(facility.kind)}, ${formatOpenStatus(facility.openStatus)})`}
               style={{ left: `${px}px`, top: `${py}px` }}
-              className={`absolute -translate-x-1/2 -translate-y-1/2 flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold shadow-md transition-transform hover:z-30 hover:scale-105 active:scale-95 ${
-                cfg.bg
+              className={`group absolute -translate-x-1/2 -translate-y-1/2 flex items-center gap-1.5 rounded-full border border-slate-200/90 bg-white/95 py-0.5 pl-0.5 pr-2.5 text-[11px] font-semibold shadow-md backdrop-blur-xs transition-transform hover:z-30 hover:scale-105 active:scale-95 ${
+                theme.accent
               } ${isSelected ? "z-25 scale-105 ring-2 ring-slate-900 ring-offset-2" : "z-10"}`}
             >
-              <Icon className="h-3 w-3 shrink-0" aria-hidden="true" />
-              <span className="max-w-[92px] truncate">{facility.name}</span>
-              <span
-                className={`h-2 w-2 rounded-full ${
-                  facility.openStatus === "OPEN"
-                    ? "bg-emerald-300"
-                    : facility.openStatus === "BUSY"
-                      ? "bg-amber-300"
-                      : "bg-red-300"
-                }`}
-              />
+              <span className="relative shrink-0">
+                <img
+                  src={photoSrc}
+                  alt=""
+                  className={`h-7 w-7 rounded-full border-2 object-cover ${theme.ring}`}
+                />
+                <span
+                  aria-hidden="true"
+                  className={`absolute -right-0.5 -bottom-0.5 h-2.5 w-2.5 rounded-full border border-white ${
+                    facility.openStatus === "OPEN"
+                      ? "bg-emerald-500"
+                      : facility.openStatus === "BUSY"
+                        ? "bg-amber-500"
+                        : "bg-red-500"
+                  }`}
+                />
+              </span>
+              <span className="max-w-[96px] truncate">
+                <bdi dir="auto">{facility.name}</bdi>
+              </span>
             </button>
           );
         })}
 
-        {/* Live Ambulance / Driver Markers */}
+        {/* Photographic Ambulance / Medical Driver Markers */}
         {drivers.map((driver) => {
           const px = lngToWorldPx(driver.lng, zoom) - originX;
           const py = latToWorldPx(driver.lat, zoom) - originY;
@@ -472,19 +423,23 @@ export function ViewportVectorMap({
               key={driver.driverId}
               style={{ left: `${px}px`, top: `${py}px` }}
               title={`Medical Unit (${formatDriverStatus(driver.status)})`}
-              className={`absolute z-15 -translate-x-1/2 -translate-y-1/2 flex items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-bold shadow-md ${
+              className={`absolute z-15 -translate-x-1/2 -translate-y-1/2 flex items-center gap-1.5 rounded-full border py-0.5 pl-0.5 pr-2 text-[10px] font-bold shadow-md backdrop-blur-xs ${
                 driver.status === "EN_ROUTE"
-                  ? "border-red-700 bg-red-50 text-red-900"
-                  : "border-teal-800 bg-white text-teal-900"
+                  ? "border-red-700 bg-red-50/95 text-red-950"
+                  : "border-teal-800 bg-white/95 text-teal-950"
               }`}
             >
-              <Ambulance className="h-3.5 w-3.5 text-red-700" aria-hidden="true" />
+              <img
+                src={resolveVehiclePicture("AMBULANCE")}
+                alt="Medical Transport Unit"
+                className="h-6 w-6 rounded-full border border-slate-200 object-cover"
+              />
               <span>{formatDriverStatus(driver.status)}</span>
             </div>
           );
         })}
 
-        {/* Nearby Verified Doctor Pins (anchored near their clinic) */}
+        {/* Photographic Doctor & Nurse Portrait Pins */}
         {doctorPins.map((doc) => {
           const px = lngToWorldPx(doc.lng, zoom) - originX;
           const py = latToWorldPx(doc.lat, zoom) - originY;
@@ -505,14 +460,20 @@ export function ViewportVectorMap({
               style={{ left: `${px}px`, top: `${py}px` }}
               title={`${doc.name} · ${doc.specialty}`}
               aria-label={`Select doctor ${doc.name}`}
-              className={`absolute -translate-x-1/2 -translate-y-1/2 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold shadow-sm transition-transform hover:scale-105 ${
+              className={`absolute -translate-x-1/2 -translate-y-1/2 inline-flex items-center gap-1.5 rounded-full border py-0.5 pl-0.5 pr-2 text-[10px] font-bold shadow-sm transition-transform hover:z-30 hover:scale-105 active:scale-95 ${
                 isSelected
                   ? "z-25 scale-105 border-slate-900 bg-emerald-700 text-white ring-2 ring-slate-900 ring-offset-1"
-                  : "z-15 border-emerald-700 bg-white text-emerald-950"
+                  : "z-15 border-emerald-700 bg-white/95 text-emerald-950"
               }`}
             >
-              <Stethoscope className="h-3 w-3 shrink-0" aria-hidden="true" />
-              <span className="max-w-[96px] truncate">{doc.name}</span>
+              <img
+                src={resolveDefaultAvatar(doc.name, "DOCTOR", doc.specialty)}
+                alt=""
+                className="h-6 w-6 shrink-0 rounded-full border border-emerald-200 object-cover"
+              />
+              <span className="max-w-[96px] truncate">
+                <bdi dir="auto">{doc.name}</bdi>
+              </span>
             </button>
           );
         })}

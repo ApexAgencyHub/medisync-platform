@@ -59,34 +59,27 @@ export function EntityMediaPair({
   }
 
   return (
-    <div className="flex shrink-0 items-center gap-2">
-      <button
-        type="button"
-        onClick={() => inspectSide("primary")}
-        aria-label={`Inspect ${title} ${primaryLabel}`}
-        title="Click to inspect & zoom"
-        className="group relative h-14 w-14 shrink-0 cursor-zoom-in overflow-hidden rounded-xl border border-teal-200 bg-slate-100 transition hover:border-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-700 sm:h-16 sm:w-16"
-      >
+    <button
+      type="button"
+      onClick={() => inspectSide("primary")}
+      aria-label={`Inspect ${title} ${primaryLabel} and ${secondaryLabel}`}
+      title={`Click to inspect ${primaryLabel} & ${secondaryLabel}`}
+      className="group relative inline-flex shrink-0 cursor-zoom-in items-end focus:outline-none focus:ring-2 focus:ring-teal-700 rounded-xl"
+    >
+      <span className="h-14 w-14 overflow-hidden rounded-xl border border-teal-200 bg-slate-100 transition group-hover:border-teal-700 sm:h-16 sm:w-16">
         <img
           src={primarySrc}
           alt={primaryAlt}
           className="h-full w-full object-cover transition-transform duration-150 group-hover:scale-105"
         />
-      </button>
-
-      <button
-        type="button"
-        onClick={() => inspectSide("secondary")}
-        aria-label={`Inspect ${title} ${secondaryLabel}`}
-        title={`Click to view ${secondaryLabel}`}
-        className="group relative h-14 w-18 shrink-0 cursor-zoom-in overflow-hidden rounded-xl border border-slate-200 bg-slate-50 transition hover:border-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-700 sm:h-16 sm:w-20"
-      >
+      </span>
+      <span className="-ms-3 -mb-1 h-8 w-9 overflow-hidden rounded-lg border-2 border-white bg-slate-50 shadow-sm transition group-hover:border-teal-100">
         <img
           src={secondarySrc}
           alt={secondaryAlt}
-          className="h-full w-full object-cover transition-transform duration-150 group-hover:scale-105"
+          className="h-full w-full object-cover"
         />
-      </button>
-    </div>
+      </span>
+    </button>
   );
 }

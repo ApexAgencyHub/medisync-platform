@@ -43,12 +43,15 @@ import { EntityAvatar } from "@/shared/ui/EntityAvatar";
 import { useImageLightbox } from "@/shared/ui/ImageLightboxProvider";
 import { QrPrescriptionCard } from "@/shared/ui/QrPrescriptionCard";
 import {
-  RegionTabs,
+  ACTIVE_COUNTRY_CODE,
+  resolveActivePack,
+} from "@/shared/config/deployment";
+import {
+  ActiveRegionPill,
   SessionAccountBar,
   StatusBanner,
   UiBadge,
   UiButton,
-  type RegionTabOption,
   type UiBadgeTone,
 } from "@/shared/ui/primitives";
 import {
@@ -59,11 +62,7 @@ import {
   FlaskConical,
   HeartHandshake,
   Lock,
-  MapPin,
-  Pill,
-  Stethoscope,
   Trash2,
-  Users,
 } from "lucide-react";
 
 interface PatientHubWorkspaceProps {
@@ -83,29 +82,25 @@ const QUICK_CARE_TILES = [
     href: "/map",
     title: "Live Map & Fast Book",
     caption: "See nearby drivers, doctors & clinics",
-    icon: MapPin,
-    accent: "text-teal-800 bg-teal-50 border-teal-200",
+    imageSrc: "/media/clinical-map-hero.webp",
   },
   {
     href: "/booking",
     title: "Book Doctor or Nurse",
     caption: "Pick an open clinic or home slot",
-    icon: Stethoscope,
-    accent: "text-emerald-800 bg-emerald-50 border-emerald-200",
+    imageSrc: "/media/avatars/doctor-female.webp",
   },
   {
     href: "/profiles",
     title: "Public Profiles",
     caption: "Compare photos, specialties & centers",
-    icon: Users,
-    accent: "text-sky-800 bg-sky-50 border-sky-200",
+    imageSrc: "/media/facilities/clinic-interior.webp",
   },
   {
     href: "/pharmacy",
     title: "Pharmacy & Refills",
     caption: "Order medicines & track delivery",
-    icon: Pill,
-    accent: "text-amber-800 bg-amber-50 border-amber-200",
+    imageSrc: "/media/facilities/pharmacy-interior.webp",
   },
 ] as const;
 
@@ -137,7 +132,7 @@ export function PatientHubWorkspace({
   const { t } = useLocale();
   const { openImage } = useImageLightbox();
 
-  const defaultCountry = packs[0]?.code ?? "MA";
+  const defaultCountry = resolveActivePack(packs)?.code ?? ACTIVE_COUNTRY_CODE;
   const [selectedCountry, setSelectedCountry] = useState<string>(defaultCountry);
   const [session, setSession] = useState<AuthResponse | null>(null);
   const [apiOnline, setApiOnline] = useState<boolean>(false);
@@ -159,13 +154,9 @@ export function PatientHubWorkspace({
   const bookmarks = useBookmarkedProviders(selectedCountry);
   const guestPasses = useGuestActivityPasses(selectedCountry);
 
-  const regionOptions = useMemo<readonly RegionTabOption[]>(
-    () =>
-      packs.map((pack) => ({
-        code: pack.code,
-        label: `${pack.code} · ${pack.name}`,
-      })),
-    [packs],
+  const activePack = useMemo(
+    () => packs.find((pack) => pack.code === selectedCountry) ?? packs[0] ?? null,
+    [packs, selectedCountry],
   );
 
   useEffect(() => {
@@ -285,10 +276,11 @@ export function PatientHubWorkspace({
           </div>
         </div>
 
-        <RegionTabs
-          value={selectedCountry}
-          onChange={setSelectedCountry}
-          options={regionOptions}
+        <ActiveRegionPill
+          code={selectedCountry}
+          name={activePack?.name ?? "Morocco"}
+          currencyCode={activePack?.currencyCode}
+          emergencyHotline={activePack?.emergencyHotlines.ambulance}
         />
 
         <SessionAccountBar
@@ -302,33 +294,30 @@ export function PatientHubWorkspace({
         ) : null}
       </section>
 
-      {/* Simple Icon-Driven Portal Tiles for Any Literacy Level */}
+      {/* Photo-First Care Action Tiles for Any Literacy Level */}
       <section aria-label="Quick Care Access">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {QUICK_CARE_TILES.map((tile) => {
-            const Icon = tile.icon;
-            return (
-              <Link
-                key={tile.href}
-                href={tile.href}
-                className="group flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs transition-colors hover:border-teal-700 hover:bg-teal-50/30"
-              >
-                <span
-                  className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border ${tile.accent}`}
-                >
-                  <Icon className="h-5 w-5" aria-hidden="true" />
-                </span>
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-bold text-slate-900 group-hover:text-teal-900">
-                    {tile.title}
-                  </p>
-                  <p className="truncate text-xs text-slate-600">
-                    {tile.caption}
-                  </p>
-                </div>
-              </Link>
-            );
-          })}
+          {QUICK_CARE_TILES.map((tile) => (
+            <Link
+              key={tile.href}
+              href={tile.href}
+              className="group flex items-center gap-3.5 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-xs transition-all hover:border-teal-700 hover:bg-teal-50/30 active:scale-[0.99]"
+            >
+              <img
+                src={tile.imageSrc}
+                alt=""
+                className="h-12 w-12 shrink-0 rounded-xl border border-slate-200 object-cover"
+              />
+              <div className="min-w-0">
+                <p className="truncate text-sm font-bold text-slate-900 group-hover:text-teal-900">
+                  {tile.title}
+                </p>
+                <p className="truncate text-xs text-slate-600">
+                  {tile.caption}
+                </p>
+              </div>
+            </Link>
+          ))}
         </div>
       </section>
 

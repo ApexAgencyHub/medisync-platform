@@ -27,8 +27,13 @@ import {
 import { listDispatchRequests } from "@/features/maps-dispatch";
 import { formatRoleLabel } from "@/shared/i18n/human-labels";
 import { useLocale } from "@/shared/i18n/locale-store";
+import {
+  ACTIVE_COUNTRY_CODE,
+  resolveActivePack,
+} from "@/shared/config/deployment";
 import { EntityAvatar } from "@/shared/ui/EntityAvatar";
 import { useImageLightbox } from "@/shared/ui/ImageLightboxProvider";
+import { ActiveRegionPill } from "@/shared/ui/primitives";
 import {
   formatByteSize,
   listAdminFacilityMedia,
@@ -102,7 +107,8 @@ const ROLE_BADGE_COLORS: Record<UserRole, string> = {
 export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
   const { t } = useLocale();
   const { openImage } = useImageLightbox();
-  const [selectedScope, setSelectedScope] = useState<string>("ALL");
+  const defaultCode = resolveActivePack(packs)?.code ?? ACTIVE_COUNTRY_CODE;
+  const [selectedScope, setSelectedScope] = useState<string>(defaultCode);
   const [activeTab, setActiveTab] = useState<AdminTab>("overview");
 
   const [sessionToken, setSessionToken] = useState<string | null>(null);
@@ -173,9 +179,8 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
         : selectedScope;
 
   const activePack =
-    packs.find((pack) => pack.code === (effectiveCountryQuery ?? "INTL")) ??
-    packs[0] ??
-    null;
+    packs.find((pack) => pack.code === (effectiveCountryQuery ?? ACTIVE_COUNTRY_CODE)) ??
+    resolveActivePack(packs);
 
   useEffect(() => {
     const stored = readStoredSession();
@@ -183,7 +188,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
       setSessionToken(stored.token);
       setCurrentUser(stored.user);
       setSelectedScope(
-        stored.user.role === "OPS_ADMIN" ? "ALL" : stored.user.countryCode,
+        stored.user.role === "OPS_ADMIN" ? defaultCode : stored.user.countryCode,
       );
     }
 
@@ -194,7 +199,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [defaultCode]);
 
   useEffect(() => {
     if (!apiOnline || !sessionToken || !currentUser) return;
@@ -411,7 +416,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
     setSessionToken(res.data.token);
     setCurrentUser(res.data.user);
     const nextScope =
-      res.data.user.role === "OPS_ADMIN" ? "ALL" : res.data.user.countryCode;
+      res.data.user.role === "OPS_ADMIN" ? defaultCode : res.data.user.countryCode;
     setSelectedScope(nextScope);
     setLoginPassword("");
 
@@ -438,15 +443,6 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
       tone: "info",
       text: "Signed out across all MediSync Global portals.",
     });
-  }
-
-  async function handleScopeChange(nextScope: string) {
-    setSelectedScope(nextScope);
-    if (sessionToken && currentUser) {
-      setBusy(true);
-      await refreshGovernanceData(sessionToken, currentUser, nextScope);
-      setBusy(false);
-    }
   }
 
   async function handleFacilityStatus(
@@ -717,49 +713,12 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
             ) : null}
           </div>
 
-          <div
-            className="flex flex-wrap gap-2"
-            role="group"
-            aria-label="Admin region filter"
-          >
-            {isOpsAdmin || !currentUser ? (
-              <button
-                type="button"
-                onClick={() => void handleScopeChange("ALL")}
-                className={`min-h-[40px] rounded-lg border px-3 py-1.5 font-mono-tabular text-xs font-semibold transition-colors ${
-                  selectedScope === "ALL"
-                    ? "border-teal-800 bg-teal-800 text-white"
-                    : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
-                }`}
-              >
-                ALL · Global
-              </button>
-            ) : null}
-            {packs.map((pack) => {
-              const selected =
-                (currentUser && !isOpsAdmin
-                  ? currentUser.countryCode
-                  : selectedScope) === pack.code;
-              const disabled = Boolean(
-                currentUser && !isOpsAdmin && currentUser.countryCode !== pack.code,
-              );
-              return (
-                <button
-                  key={pack.code}
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => void handleScopeChange(pack.code)}
-                  className={`min-h-[40px] rounded-lg border px-3 py-1.5 font-mono-tabular text-xs font-semibold transition-colors ${
-                    selected
-                      ? "border-teal-800 bg-teal-800 text-white"
-                      : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
-                  } ${disabled ? "cursor-not-allowed opacity-45" : ""}`}
-                >
-                  {pack.code}
-                </button>
-              );
-            })}
-          </div>
+          <ActiveRegionPill
+            code={activePack?.code ?? defaultCode}
+            name={activePack?.name ?? "Morocco"}
+            currencyCode={activePack?.currencyCode}
+            emergencyHotline={activePack?.emergencyHotlines.ambulance}
+          />
         </div>
       </section>
 

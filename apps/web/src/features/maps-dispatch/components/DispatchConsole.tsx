@@ -43,7 +43,11 @@ import {
 import { EntityMediaPair } from "@/shared/ui/EntityMediaPair";
 import { useImageLightbox } from "@/shared/ui/ImageLightboxProvider";
 import {
-  RegionTabs,
+  ACTIVE_COUNTRY_CODE,
+  resolveActivePack,
+} from "@/shared/config/deployment";
+import {
+  ActiveRegionPill,
   SessionAccountBar,
   StatusBanner,
   UiBadge,
@@ -51,7 +55,6 @@ import {
   UiInput,
   UiSelect,
   UiSwitch,
-  type RegionTabOption,
 } from "@/shared/ui/primitives";
 import {
   Navigation,
@@ -99,7 +102,7 @@ const SECTOR_FILTER_OPTIONS: ReadonlyArray<{
 export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
   const { t } = useLocale();
   const { openImage } = useImageLightbox();
-  const defaultCode = packs[0]?.code ?? "INTL";
+  const defaultCode = resolveActivePack(packs)?.code ?? ACTIVE_COUNTRY_CODE;
   const [selectedCountry, setSelectedCountry] = useState<string>(defaultCode);
   const [viewport, setViewport] = useState<ViewportBox>(() =>
     getPresetForCountry(defaultCode),
@@ -137,16 +140,6 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
     text: string;
   } | null>(null);
 
-  const regionOptions: readonly RegionTabOption[] = useMemo(
-    () =>
-      packs.map((pack) => ({
-        code: pack.code,
-        label: `${pack.code} · ${pack.name}`,
-      })),
-    [packs],
-  );
-
-  // Dispatch Request Form
   const initialCenter = getViewportCenter(viewport);
   const [pickupAddress, setPickupAddress] = useState("");
   const [pickupLat, setPickupLat] = useState(String(initialCenter.lat));
@@ -328,18 +321,6 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
       setStreamConnected(false);
     };
   }, [apiBaseUrl, apiOnline, sessionToken]);
-
-  function handleCountrySelect(code: string) {
-    const preset = getPresetForCountry(code);
-    const center = getViewportCenter(preset);
-    setSelectedCountry(code);
-    setViewport(preset);
-    setSelectedFacilityId(null);
-    setPickupLat(String(center.lat));
-    setPickupLng(String(center.lng));
-    setDriverLat(String(center.lat));
-    setDriverLng(String(center.lng));
-  }
 
   async function handleSearchViewport(
     overrideBox?: ViewportBox,
@@ -639,10 +620,11 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
             ) : null}
           </div>
 
-          <RegionTabs
-            options={regionOptions}
-            value={selectedCountry}
-            onChange={handleCountrySelect}
+          <ActiveRegionPill
+            code={selectedCountry}
+            name={activePack?.name ?? "Morocco"}
+            currencyCode={activePack?.currencyCode}
+            emergencyHotline={activePack?.emergencyHotlines.ambulance}
           />
         </div>
 
@@ -691,7 +673,7 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
         {/* Left: Interactive Street Map + Facility Results */}
-        <section className="min-w-0 space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs sm:p-5 lg:col-span-7">
+        <section className="min-w-0 space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs sm:p-5 lg:col-span-7 xl:col-span-8">
           <ViewportVectorMap
             countryCode={selectedCountry}
             viewport={viewport}
@@ -931,7 +913,7 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
                     : "Connect backend API to view nearby practicing doctors & nurses."}
                 </p>
               ) : (
-                <ul className="grid gap-2.5 sm:grid-cols-2">
+                <ul className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
                   {directoryDoctors.slice(0, 6).map((doc) => (
                     <li
                       key={doc.id}
@@ -992,31 +974,6 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
                             }}
                           />
                         </div>
-                      </div>
-                      <div
-                        className="mt-2.5 flex items-center justify-between gap-2 border-t border-slate-200/70 pt-2"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <Link
-                          href={`/booking?country=${encodeURIComponent(doc.countryCode)}&doctorId=${encodeURIComponent(doc.id)}`}
-                          className="font-semibold text-teal-800 hover:underline"
-                        >
-                          Book Visit →
-                        </Link>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setPickupAddress(doc.facilityName ?? doc.fullName);
-                            const pin = doctorPins.find((p) => p.id === doc.id);
-                            if (pin) {
-                              setPickupLat(String(pin.lat));
-                              setPickupLng(String(pin.lng));
-                            }
-                          }}
-                          className="font-semibold text-slate-700 hover:text-teal-900"
-                        >
-                          Pickup Here
-                        </button>
                       </div>
                     </li>
                   ))}
@@ -1084,7 +1041,7 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
         </section>
 
         {/* Right: Live Transport Fleet, Driver/Requester Tools & Active Dispatches */}
-        <aside className="min-w-0 space-y-4 lg:col-span-5">
+        <aside className="min-w-0 space-y-4 lg:col-span-5 xl:col-span-4 lg:sticky lg:top-20 self-start">
           {/* Primary 1-Tap Fast Book Card (works for both Guests & Signed-In Users) */}
           {currentUser?.role !== "DRIVER" ? (
             <section className="rounded-2xl border border-teal-200 bg-white p-5 shadow-xs space-y-3.5">

@@ -11,8 +11,13 @@ import {
   formatRoleLabel,
   getLicenseExample,
 } from "@/shared/i18n/human-labels";
+import {
+  ACTIVE_COUNTRY_CODE,
+  resolveActivePack,
+} from "@/shared/config/deployment";
 import { EntityAvatar } from "@/shared/ui/EntityAvatar";
 import { useImageLightbox } from "@/shared/ui/ImageLightboxProvider";
+import { ActiveRegionPill } from "@/shared/ui/primitives";
 import { useLocale } from "@/shared/i18n/locale-store";
 import {
   ALLOWED_AVATAR_MIME_TYPES,
@@ -102,7 +107,7 @@ const FACILITY_KIND_LABELS: Record<FacilityKind, string> = {
 export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
   const { t } = useLocale();
   const { openImage } = useImageLightbox();
-  const defaultPackCode = packs[0]?.code ?? "INTL";
+  const defaultPackCode = resolveActivePack(packs)?.code ?? ACTIVE_COUNTRY_CODE;
   const [activeTab, setActiveTab] = useState<PortalTab>("signin");
   const [selectedCountry, setSelectedCountry] = useState<string>(defaultPackCode);
 
@@ -722,29 +727,12 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
             ) : null}
           </div>
 
-          <div
-            className="flex flex-wrap gap-2"
-            role="group"
-            aria-label="Portal CountryPack selector"
-          >
-            {packs.map((pack) => {
-              const selected = pack.code === selectedCountry;
-              return (
-                <button
-                  key={pack.code}
-                  type="button"
-                  onClick={() => setSelectedCountry(pack.code)}
-                  className={`min-h-[40px] rounded-lg border px-3 py-1.5 font-mono-tabular text-xs font-semibold transition-colors active:scale-[0.99] ${
-                    selected
-                      ? "border-teal-800 bg-teal-800 text-white"
-                      : "border-slate-200 bg-slate-50 text-slate-700 hover:border-teal-700 hover:text-teal-800"
-                  }`}
-                >
-                  {pack.code}
-                </button>
-              );
-            })}
-          </div>
+          <ActiveRegionPill
+            code={selectedCountry}
+            name={activePack?.name ?? "Morocco"}
+            currencyCode={activePack?.currencyCode}
+            emergencyHotline={activePack?.emergencyHotlines.ambulance}
+          />
         </div>
       </section>
 

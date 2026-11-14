@@ -50,13 +50,16 @@ import { EntityPicker } from "@/shared/ui/EntityPicker";
 import { useImageLightbox } from "@/shared/ui/ImageLightboxProvider";
 import { QrPrescriptionCard } from "@/shared/ui/QrPrescriptionCard";
 import {
-  RegionTabs,
+  ACTIVE_COUNTRY_CODE,
+  resolveActivePack,
+} from "@/shared/config/deployment";
+import {
+  ActiveRegionPill,
   SessionAccountBar,
   StatusBanner,
   UiButton,
   UiInput,
   UiSelect,
-  type RegionTabOption,
 } from "@/shared/ui/primitives";
 import {
   clearStoredSession,
@@ -109,7 +112,7 @@ export function ClinicalWorkspace({
 }: ClinicalWorkspaceProps) {
   const { t } = useLocale();
   const { openImage } = useImageLightbox();
-  const defaultCode = packs[0]?.code ?? "INTL";
+  const defaultCode = resolveActivePack(packs)?.code ?? ACTIVE_COUNTRY_CODE;
   const [selectedCountry, setSelectedCountry] = useState<string>(defaultCode);
   const [activeTab, setActiveTab] = useState<ClinicalTab>("doctor");
 
@@ -194,14 +197,6 @@ export function ClinicalWorkspace({
 
   const activePack =
     packs.find((pack) => pack.code === selectedCountry) ?? packs[0];
-  const regionOptions: readonly RegionTabOption[] = useMemo(
-    () =>
-      packs.map((pack) => ({
-        code: pack.code,
-        label: `${pack.code} · ${pack.name}`,
-      })),
-    [packs],
-  );
 
   useEffect(() => {
     const stored = readStoredSession();
@@ -700,13 +695,11 @@ export function ClinicalWorkspace({
             </p>
           </div>
 
-          <RegionTabs
-            value={selectedCountry}
-            onChange={(next) => {
-              setSelectedCountry(next);
-              setBanner(null);
-            }}
-            options={regionOptions}
+          <ActiveRegionPill
+            code={selectedCountry}
+            name={activePack?.name ?? "Morocco"}
+            currencyCode={activePack?.currencyCode}
+            emergencyHotline={activePack?.emergencyHotlines.ambulance}
           />
         </div>
 

@@ -30,11 +30,14 @@ import { EntityMediaPair } from "@/shared/ui/EntityMediaPair";
 import { BookmarkButton } from "@/shared/ui/BookmarkButton";
 import { useImageLightbox } from "@/shared/ui/ImageLightboxProvider";
 import {
-  RegionTabs,
+  ACTIVE_COUNTRY_CODE,
+  resolveActivePack,
+} from "@/shared/config/deployment";
+import {
+  ActiveRegionPill,
   StatusBanner,
   UiBadge,
   UiInput,
-  type RegionTabOption,
 } from "@/shared/ui/primitives";
 
 type DirectoryCategory =
@@ -63,9 +66,7 @@ export function ProfilesDirectory({
   const { t } = useLocale();
   const { openImage } = useImageLightbox();
 
-  const [countryCode, setCountryCode] = useState<string>(
-    packs[0]?.code ?? "MA",
-  );
+  const countryCode = resolveActivePack(packs)?.code ?? ACTIVE_COUNTRY_CODE;
   const [category, setCategory] = useState<DirectoryCategory>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
@@ -77,15 +78,6 @@ export function ProfilesDirectory({
   >([]);
   const [drivers, setDrivers] = useState<DirectoryDriverSummary[]>([]);
   const [facilities, setFacilities] = useState<DirectoryFacilitySummary[]>([]);
-
-  const regionOptions: readonly RegionTabOption[] = useMemo(
-    () =>
-      packs.map((pack) => ({
-        code: pack.code,
-        label: `${pack.code} · ${pack.name}`,
-      })),
-    [packs],
-  );
 
   const activePack = useMemo(
     () => packs.find((p) => p.code === countryCode) ?? packs[0],
@@ -210,10 +202,11 @@ export function ProfilesDirectory({
         </p>
 
         <div className="mt-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <RegionTabs
-            value={countryCode}
-            onChange={setCountryCode}
-            options={regionOptions}
+          <ActiveRegionPill
+            code={countryCode}
+            name={activePack?.name ?? "Morocco"}
+            currencyCode={activePack?.currencyCode}
+            emergencyHotline={activePack?.emergencyHotlines.ambulance}
           />
 
           <div className="relative w-full lg:max-w-xs">
@@ -279,7 +272,7 @@ export function ProfilesDirectory({
       {errorMsg ? <StatusBanner tone="warning" message={errorMsg} /> : null}
 
       {loading ? (
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {[1, 2, 3, 4].map((skeleton) => (
             <div
               key={skeleton}
@@ -303,7 +296,7 @@ export function ProfilesDirectory({
             </span>
           </div>
 
-          <div className="grid min-w-0 gap-4 md:grid-cols-2">
+          <div className="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {doctors.map((doc) => {
               const docPhoto =
                 doc.avatarUrl ??
@@ -406,7 +399,7 @@ export function ProfilesDirectory({
             </span>
           </div>
 
-          <div className="grid min-w-0 gap-4 md:grid-cols-2">
+          <div className="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {nurses.map((nurse) => {
               const nursePhoto =
                 nurse.avatarUrl ??
@@ -511,7 +504,7 @@ export function ProfilesDirectory({
             </span>
           </div>
 
-          <div className="grid min-w-0 gap-4 md:grid-cols-2">
+          <div className="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {filteredDrivers.map((drv) => {
               const driverPhoto =
                 drv.avatarUrl ?? resolveDefaultAvatar(drv.fullName, "DRIVER");
@@ -614,7 +607,7 @@ export function ProfilesDirectory({
             </span>
           </div>
 
-          <div className="grid min-w-0 gap-4 md:grid-cols-2">
+          <div className="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {filteredFacilities.map((fac) => {
               const facPhoto = resolveFacilityPicture(fac.kind);
               const kindLabel = formatFacilityKind(fac.kind);
