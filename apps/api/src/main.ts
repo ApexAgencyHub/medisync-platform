@@ -25,3 +25,18 @@ const server = await buildApiServer({
 });
 
 await server.listen({ port: env.PORT, host: env.HOST });
+
+let shuttingDown = false;
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  try {
+    await server.close();
+  } finally {
+    server.log.info(`MediSync API closed cleanly on ${signal}.`);
+    process.exit(0);
+  }
+}
+
+process.once("SIGINT", () => void shutdown("SIGINT"));
+process.once("SIGTERM", () => void shutdown("SIGTERM"));

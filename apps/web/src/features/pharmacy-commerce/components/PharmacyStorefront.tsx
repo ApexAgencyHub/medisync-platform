@@ -28,7 +28,9 @@ import {
 } from "lucide-react";
 import { checkBackendOnline, fetchDirectoryFacilities } from "@/shared/api/directory-client";
 import { readStoredSession } from "@/shared/auth/session-storage";
+import { formatRoleLabel } from "@/shared/i18n/human-labels";
 import { useLocale } from "@/shared/i18n/locale-store";
+import { ProductThumbnail } from "@/shared/ui/EntityAvatar";
 import {
   confirmPharmacyOrderPayment,
   createPharmacyOrder,
@@ -582,8 +584,8 @@ export function PharmacyStorefront({
                 Sign In to Checkout →
               </Link>
             ) : (
-              <span className="rounded-lg border border-teal-200 bg-teal-50 px-2.5 py-1 font-mono-tabular font-semibold text-teal-900">
-                {sessionRole} · {effectiveCountry}
+              <span className="rounded-lg border border-teal-200 bg-teal-50 px-2.5 py-1 text-xs font-semibold text-teal-900">
+                {formatRoleLabel(sessionRole)} · {effectiveCountry}
               </span>
             )}
           </div>
@@ -612,7 +614,7 @@ export function PharmacyStorefront({
 
       {activeMode === "store" ? (
         <div className="grid gap-6 lg:grid-cols-12">
-          <div className="space-y-4 lg:col-span-8">
+          <div className="min-w-0 space-y-4 lg:col-span-8">
             <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs">
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="relative">
@@ -727,25 +729,32 @@ export function PharmacyStorefront({
                     className="flex flex-col justify-between rounded-2xl border border-slate-200 bg-white p-4 shadow-xs"
                   >
                     <div>
-                      <div className="flex items-start justify-between gap-2">
+                      <div className="relative mb-3 overflow-hidden rounded-xl border border-slate-100 bg-slate-50">
+                        <ProductThumbnail
+                          name={product.name}
+                          category={product.category}
+                          imageUrl={product.imageUrl}
+                          className="h-36 w-full border-0"
+                        />
                         <span
-                          className={`rounded-full px-2 py-0.5 font-mono-tabular text-[10px] font-bold uppercase ${
+                          className={`absolute top-2 left-2 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase shadow-xs ${
                             product.requiresPrescription
                               ? "border border-amber-300 bg-amber-50 text-amber-900"
-                              : "border border-teal-200 bg-teal-50 text-teal-900"
+                              : "border border-teal-200 bg-white/95 text-teal-900"
                           }`}
                         >
                           {product.requiresPrescription ? "Rx Required" : "OTC"}
                         </span>
-                        <span className="font-mono-tabular text-[11px] font-medium text-slate-500">
+                      </div>
+                      <div className="flex items-start justify-between gap-2">
+                        <h2 className="text-sm font-bold text-slate-900">
+                          {product.name}
+                        </h2>
+                        <span className="shrink-0 font-mono-tabular text-[11px] font-medium text-slate-500">
                           {product.sku}
                         </span>
                       </div>
-
-                      <h2 className="mt-2 text-base font-bold text-slate-900">
-                        {product.name}
-                      </h2>
-                      <p className="text-xs text-slate-600">
+                      <p className="mt-0.5 text-xs text-slate-600">
                         {product.genericName ?? product.dosageForm} ·{" "}
                         {product.strength}
                       </p>
@@ -783,7 +792,7 @@ export function PharmacyStorefront({
             )}
           </div>
 
-          <aside className="lg:col-span-4">
+          <aside className="min-w-0 lg:col-span-4">
             <form
               onSubmit={(e) => void handleCheckoutAndPay(e)}
               className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-4"
@@ -807,18 +816,26 @@ export function PharmacyStorefront({
                   {cart.map((line) => (
                     <li
                       key={line.product.id}
-                      className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2.5"
+                      className="flex items-center justify-between gap-2.5 rounded-xl border border-slate-200 bg-slate-50 p-2.5"
                     >
-                      <div className="min-w-0">
-                        <p className="truncate text-xs font-semibold text-slate-900">
-                          {line.product.name}
-                        </p>
+                      <div className="flex min-w-0 items-center gap-2.5">
+                        <ProductThumbnail
+                          name={line.product.name}
+                          category={line.product.category}
+                          imageUrl={line.product.imageUrl}
+                          className="h-10 w-10 shrink-0 rounded-lg"
+                        />
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-semibold text-slate-900">
+                            {line.product.name}
+                          </p>
                         <p className="font-mono-tabular text-[11px] text-slate-600">
                           {formatMinorMoney(
                             line.product.priceMinor * line.quantity,
                             line.product.currencyCode,
                           )}
                         </p>
+                        </div>
                       </div>
                       <div className="flex items-center gap-1">
                         <button
@@ -1139,19 +1156,19 @@ export function PharmacyStorefront({
             className="space-y-3 rounded-2xl border border-slate-200 bg-white p-6 shadow-xs lg:col-span-5"
           >
             <h2 className="text-base font-bold text-slate-900">
-              Add Pharmacy SKU ({effectiveCountry})
+              Add Pharmacy Medication ({effectiveCountry})
             </h2>
             {!canManageCatalog ? (
               <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-                Sign in with a Pharmacist, Hospital Admin, or Ops Admin demo
-                persona on Portal to create or restock SKUs.
+                Sign in with a Pharmacist, Hospital Coordinator, or Operations account
+                on the Portal to add or restock medications.
               </p>
             ) : null}
             <div className="grid gap-3 sm:grid-cols-2">
               <input
                 type="text"
                 required
-                placeholder="SKU (e.g. MA-AZITH-500)"
+                placeholder="Product Code (e.g. MA-AZITH-500)"
                 value={newSku}
                 onChange={(e) => setNewSku(e.target.value)}
                 className="rounded-xl border border-slate-300 px-3 py-2 text-xs"
@@ -1217,7 +1234,7 @@ export function PharmacyStorefront({
               disabled={busy || !canManageCatalog}
               className="min-h-[42px] w-full rounded-xl bg-teal-800 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
             >
-              Create Catalog SKU
+              Add to Pharmacy Catalog
             </button>
           </form>
 
@@ -1229,14 +1246,22 @@ export function PharmacyStorefront({
               {products.map((prod) => (
                 <div
                   key={prod.id}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs"
+                  className="flex flex-wrap items-center justify-between gap-2.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs"
                 >
-                  <div>
-                    <p className="font-semibold text-slate-900">{prod.name}</p>
-                    <p className="font-mono-tabular text-[11px] text-slate-600">
-                      {prod.sku} · {prod.facilityName} · Stock:{" "}
-                      <strong>{prod.stockQty}</strong>
-                    </p>
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <ProductThumbnail
+                      name={prod.name}
+                      category={prod.category}
+                      imageUrl={prod.imageUrl}
+                      className="h-10 w-10 shrink-0 rounded-lg"
+                    />
+                    <div className="min-w-0">
+                      <p className="truncate font-semibold text-slate-900">{prod.name}</p>
+                      <p className="font-mono-tabular text-[11px] text-slate-600">
+                        {prod.sku} · {prod.facilityName} · Stock:{" "}
+                        <strong>{prod.stockQty}</strong>
+                      </p>
+                    </div>
                   </div>
                   <button
                     type="button"

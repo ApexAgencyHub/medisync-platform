@@ -25,7 +25,9 @@ import {
   verifyFacilityStatus,
 } from "@/features/auth-portal";
 import { listDispatchRequests } from "@/features/maps-dispatch";
+import { formatRoleLabel } from "@/shared/i18n/human-labels";
 import { useLocale } from "@/shared/i18n/locale-store";
+import { EntityAvatar } from "@/shared/ui/EntityAvatar";
 import {
   MediaPreviewModal,
   formatByteSize,
@@ -130,7 +132,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
   // User Role Governance Editor State
   const [roleDrafts, setRoleDrafts] = useState<Record<string, UserRole>>({});
   const [countryDrafts, setCountryDrafts] = useState<Record<string, string>>({});
-  const [roleReason, setRoleReason] = useState("Operational RBAC review");
+  const [roleReason, setRoleReason] = useState("Standard permission review");
 
   // Dispatch Override State
   const [overrideStatusDrafts, setOverrideStatusDrafts] = useState<
@@ -544,7 +546,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
     setBusy(false);
     setBanner({
       tone: "success",
-      text: `Dispatch ${res.data.dispatch.id.slice(0, 8)} overridden to ${res.data.dispatch.status} and broadcast to SSE.`,
+      text: `Dispatch ${res.data.dispatch.id.slice(0, 8)} status updated to ${res.data.dispatch.status} on live boards.`,
     });
   }
 
@@ -670,22 +672,22 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
     {
       label: "Open Disputes",
       value: overview ? String(overview.openDisputes) : "-",
-      detail: "Safety & SLA queue",
+      detail: "Safety & service quality queue",
     },
   ];
 
   const tabs: readonly { id: AdminTab; label: string }[] = [
     { id: "overview", label: "Overview" },
     { id: "facilities", label: `Facilities (${facilities.length})` },
-    { id: "users", label: `RBAC Users (${users.length})` },
+    { id: "users", label: `Staff & Users (${users.length})` },
     { id: "dispatches", label: `Dispatches (${dispatches.length})` },
     { id: "disputes", label: `Disputes (${disputes.length})` },
-    { id: "audit", label: `Audit Trail (${auditLogs.length})` },
+    { id: "audit", label: `Activity Log (${auditLogs.length})` },
   ];
 
   return (
     <div className="space-y-6">
-      {/* Header & CountryPack Jurisdiction Selector */}
+      {/* Header & Region Selector */}
       <section
         aria-label="Master Administration Command Bar"
         className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs"
@@ -700,7 +702,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
             </h1>
             {activePack ? (
               <p className="mt-1 text-sm text-slate-600">
-                Jurisdiction Focus:{" "}
+                Region Focus:{" "}
                 <strong className="text-slate-900">
                   {selectedScope === "ALL" && isOpsAdmin
                     ? "Global All-Countries View"
@@ -721,7 +723,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
           <div
             className="flex flex-wrap gap-2"
             role="group"
-            aria-label="Admin CountryPack filter"
+            aria-label="Admin region filter"
           >
             {isOpsAdmin || !currentUser ? (
               <button
@@ -764,8 +766,8 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
         </div>
       </section>
 
-      {/* KPI Telemetry Grid */}
-      <section aria-label="Operational KPI Telemetry">
+      {/* Regional Overview Metrics */}
+      <section aria-label="Operational overview metrics">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
           {kpiCards.map((kpi) => (
             <article
@@ -804,26 +806,36 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
         </div>
       ) : null}
 
-      {/* Operator Session + Governance Workspace */}
+      {/* Staff Session + Regional Oversight Workspace */}
       <div className="grid gap-6 lg:grid-cols-12">
-        <aside className="space-y-4 lg:col-span-4">
+        <aside className="min-w-0 space-y-4 lg:col-span-4">
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
             {currentUser ? (
               <div className="space-y-4">
                 <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="font-mono-tabular text-xs font-semibold uppercase tracking-wide text-teal-800">
-                      Operator Session
-                    </p>
-                    <h2 className="text-lg font-semibold text-slate-900">
-                      {currentUser.fullName}
-                    </h2>
-                    <p className="text-xs text-slate-500">{currentUser.email}</p>
+                  <div className="flex min-w-0 items-center gap-3">
+                    <EntityAvatar
+                      name={currentUser.fullName}
+                      role={currentUser.role}
+                      avatarUrl={currentUser.avatarUrl}
+                      size="md"
+                    />
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-teal-800">
+                        Signed-in Account
+                      </p>
+                      <h2 className="truncate text-lg font-semibold text-slate-900">
+                        {currentUser.fullName}
+                      </h2>
+                      <p className="truncate text-xs text-slate-500">
+                        {currentUser.email}
+                      </p>
+                    </div>
                   </div>
                   <button
                     type="button"
                     onClick={handleSignOut}
-                    className="inline-flex min-h-[36px] items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                    className="inline-flex min-h-[36px] shrink-0 items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
                   >
                     <LogOut className="h-3.5 w-3.5" />
                     Sign out
@@ -832,13 +844,13 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
 
                 <dl className="grid grid-cols-2 gap-2 rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs">
                   <div>
-                    <dt className="text-slate-500">Assigned Role</dt>
-                    <dd className="font-mono-tabular font-semibold text-slate-900">
-                      {currentUser.role}
+                    <dt className="text-slate-500">Access Level</dt>
+                    <dd className="font-semibold text-slate-900">
+                      {formatRoleLabel(currentUser.role)}
                     </dd>
                   </div>
                   <div>
-                    <dt className="text-slate-500">CountryPack</dt>
+                    <dt className="text-slate-500">Care Region</dt>
                     <dd className="font-mono-tabular font-semibold text-slate-900">
                       {currentUser.countryCode}
                     </dd>
@@ -860,14 +872,14 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                   className="inline-flex min-h-[40px] w-full items-center justify-center gap-2 rounded-lg bg-teal-800 px-3 py-2 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-60"
                 >
                   <RefreshCw className="h-3.5 w-3.5" />
-                  Refresh Live Governance Telemetry
+                  Refresh Live Status
                 </button>
 
                 {!isAdminViewer ? (
                   <p className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-900">
-                    Signed in as {currentUser.role}. Admin tabs require{" "}
-                    <code>OPS_ADMIN</code> or <code>HOSPITAL_ADMIN</code>; you may
-                    still file and track safety disputes.
+                    Signed in as {formatRoleLabel(currentUser.role)}. Network
+                    oversight tabs require Platform or Hospital Admin access; you
+                    may still submit and track service issue reports.
                   </p>
                 ) : null}
               </div>
@@ -876,13 +888,12 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                 <div className="flex items-center gap-2">
                   <KeyRound className="h-4 w-4 text-teal-800" />
                   <h2 className="text-base font-semibold text-slate-900">
-                    Sign In for Governance Ops
+                    Sign In for Operations
                   </h2>
                 </div>
                 <p className="text-xs leading-relaxed text-slate-600">
-                  Authenticate with an <code>OPS_ADMIN</code>,{" "}
-                  <code>HOSPITAL_ADMIN</code>, or member account to inspect live
-                  PostgreSQL/Redis telemetry or log a dispute.
+                  Sign in with a Platform Admin, Hospital Admin, or member account
+                  to view live facility activity or report a care issue.
                 </p>
                 <label className="block space-y-1 text-xs font-medium text-slate-700">
                   <span>Email Address</span>
@@ -919,7 +930,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
         </aside>
 
         {/* Main Operational Tabs */}
-        <section className="space-y-4 lg:col-span-8">
+        <section className="min-w-0 space-y-4 lg:col-span-8">
           <div
             className="flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-xs"
             role="tablist"
@@ -952,11 +963,11 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                 <div className="flex items-center gap-2">
                   <Activity className="h-4 w-4 text-teal-800" />
                   <h2 className="text-base font-semibold text-slate-900">
-                    Recent Sovereign Audit Feed
+                    Recent Activity & Compliance Log
                   </h2>
                 </div>
-                <span className="font-mono-tabular text-xs text-slate-500">
-                  Append-only ledger
+                <span className="text-xs font-medium text-slate-500">
+                  Tamper-evident record
                 </span>
               </div>
 
@@ -987,8 +998,8 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                 </div>
               ) : (
                 <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
-                  Sign in as <code>OPS_ADMIN</code> or <code>HOSPITAL_ADMIN</code> and
-                  click Refresh to inspect live audit telemetry and cross-slice KPIs.
+                  Sign in as a Platform Admin or Hospital Admin and click
+                  Refresh to inspect live network activity and metrics.
                 </p>
               )}
             </div>
@@ -1181,7 +1192,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                 <div className="flex items-center gap-2">
                   <Users className="h-4 w-4 text-teal-800" />
                   <h2 className="text-base font-semibold text-slate-900">
-                    User Role & CountryPack Governance
+                    Team Roles & Regional Access
                   </h2>
                 </div>
                 {isOpsAdmin ? (
@@ -1216,26 +1227,18 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                       >
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="flex items-center gap-2.5">
-                            {user.avatarUrl ? (
-                              <img
-                                src={user.avatarUrl}
-                                alt={user.fullName}
-                                className="h-9 w-9 shrink-0 rounded-full border border-teal-200 object-cover"
-                              />
-                            ) : (
-                              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-xs font-bold text-slate-700">
-                                {user.fullName.slice(0, 2).toUpperCase()}
-                              </div>
-                            )}
+                            <EntityAvatar
+                              name={user.fullName}
+                              role={user.role}
+                              avatarUrl={user.avatarUrl}
+                              size="sm"
+                            />
                             <div>
                               <h3 className="text-sm font-semibold text-slate-900">
                                 {user.fullName}
                               </h3>
                               <p className="text-xs text-slate-500">
-                                {user.email} ·{" "}
-                                <span className="font-mono-tabular">
-                                  {user.id.slice(0, 8)}
-                                </span>
+                                {user.email}
                               </p>
                             </div>
                           </div>
@@ -1250,9 +1253,9 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                               Credentials
                             </button>
                             <span
-                              className={`rounded border px-2 py-0.5 font-mono-tabular text-[11px] font-semibold ${ROLE_BADGE_COLORS[user.role]}`}
+                              className={`rounded border px-2 py-0.5 text-[11px] font-semibold ${ROLE_BADGE_COLORS[user.role]}`}
                             >
-                              {user.role} · {user.countryCode}
+                              {formatRoleLabel(user.role)} · {user.countryCode}
                             </span>
                           </div>
                         </div>
@@ -1397,7 +1400,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
 
               {dispatches.length === 0 ? (
                 <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
-                  No active dispatch requests in this CountryPack scope.
+                  No active medical transport requests in this region.
                 </p>
               ) : (
                 <div className="space-y-3">
@@ -1515,7 +1518,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                 <div className="flex items-center gap-2">
                   <AlertTriangle className="h-4 w-4 text-teal-800" />
                   <h2 className="text-base font-semibold text-slate-900">
-                    File Governance or SLA Dispute
+                    Report Care Issue or Service Dispute
                   </h2>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
@@ -1683,7 +1686,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
               <div className="flex items-center gap-2">
                 <FileCheck2 className="h-4 w-4 text-teal-800" />
                 <h2 className="text-base font-semibold text-slate-900">
-                  Filterable Immutable Audit Stream
+                  Searchable Activity Log
                 </h2>
               </div>
 

@@ -1,6 +1,11 @@
+"use client";
+
 import Image from "next/image";
+import { useLocale } from "@/shared/i18n/locale-store";
 
 export function BrandMark() {
+  const { t } = useLocale();
+
   return (
     <div className="flex items-center gap-3">
       <Image
@@ -15,8 +20,8 @@ export function BrandMark() {
         <span className="block text-base font-bold tracking-tight text-slate-900">
           MediSync Global
         </span>
-        <span className="block font-mono-tabular text-[11px] font-medium uppercase tracking-wider text-teal-800">
-          Sovereign Health OS
+        <span className="block text-[11px] font-semibold tracking-wide text-teal-800">
+          {t("brand.tagline")}
         </span>
       </div>
     </div>

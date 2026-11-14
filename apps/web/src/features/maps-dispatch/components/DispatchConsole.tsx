@@ -24,7 +24,15 @@ import {
   readStoredSession,
   writeStoredSession,
 } from "@/shared/auth/session-storage";
+import {
+  formatDispatchStatus,
+  formatFacilityKind,
+  formatOpenStatus,
+  formatRoleLabel,
+  formatUrgencyLabel,
+} from "@/shared/i18n/human-labels";
 import { useLocale } from "@/shared/i18n/locale-store";
+import { EntityAvatar } from "@/shared/ui/EntityAvatar";
 import {
   CheckCircle2,
   KeyRound,
@@ -601,9 +609,10 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
                       {activeFacility.name}
                     </p>
                     <p className="text-slate-700">{activeFacility.address}</p>
-                    <p className="font-mono-tabular text-[11px] text-teal-900">
-                      {activeFacility.kind} · {activeFacility.openStatus}
-                      {activeFacility.is24_7 ? " · 24/7" : ""}
+                    <p className="text-[11px] font-medium text-teal-900">
+                      {formatFacilityKind(activeFacility.kind)} ·{" "}
+                      {formatOpenStatus(activeFacility.openStatus)}
+                      {activeFacility.is24_7 ? " · Open 24/7" : ""}
                       {activeFacility.specialties.length > 0
                         ? ` · ${activeFacility.specialties.slice(0, 3).join(", ")}`
                         : ""}
@@ -619,7 +628,7 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
                       }}
                       className="rounded-lg border border-teal-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-teal-900 hover:bg-teal-100"
                     >
-                      Set Pickup Coordinates
+                      Use for Pickup
                     </button>
                     <Link
                       href={`/booking?country=${encodeURIComponent(activeFacility.countryCode)}&facilityId=${encodeURIComponent(activeFacility.id)}`}
@@ -635,13 +644,13 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
 
           <div className="space-y-2">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-700">
-              Viewport Facility Results ({facilities.length})
+              Nearby Care Centers ({facilities.length})
             </h2>
             {facilities.length === 0 ? (
               <p className="text-sm text-slate-500">
                 {apiOnline
-                  ? "No verified medical centers matched these bounds or filters."
-                  : "Click Search This Area once online to inspect verified medical centers."}
+                  ? "No verified medical centers found in this area or filter."
+                  : "Click Search This Area once connected to view nearby care centers."}
               </p>
             ) : (
               <ul className="space-y-2">
@@ -658,15 +667,15 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <p className="font-semibold text-slate-900">{fac.name}</p>
-                        <p className="font-mono-tabular text-xs text-slate-600">
-                          {fac.kind} · {fac.licenseNumber}
+                        <p className="text-xs text-slate-600">
+                          {formatFacilityKind(fac.kind)} · {fac.licenseNumber}
                           {fac.distanceMeters !== null
                             ? ` · ${(fac.distanceMeters / 1000).toFixed(2)} km`
                             : ""}
                         </p>
                       </div>
-                      <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 font-mono-tabular text-[11px] font-semibold text-slate-800">
-                        {fac.openStatus}
+                      <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-800">
+                        {formatOpenStatus(fac.openStatus)}
                       </span>
                     </div>
                     <p className="mt-1 text-xs text-slate-600">{fac.address}</p>
@@ -682,32 +691,41 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <Radio
-                  className={`h-4 w-4 ${
-                    streamConnected ? "text-emerald-600" : "text-slate-400"
-                  }`}
-                  aria-hidden="true"
-                />
+                {currentUser ? (
+                  <EntityAvatar
+                    name={currentUser.fullName}
+                    role={currentUser.role}
+                    avatarUrl={currentUser.avatarUrl}
+                    size="xs"
+                  />
+                ) : (
+                  <Radio
+                    className={`h-4 w-4 ${
+                      streamConnected ? "text-emerald-600" : "text-slate-400"
+                    }`}
+                    aria-hidden="true"
+                  />
+                )}
                 <h2 className="text-base font-semibold text-slate-900">
-                  {currentUser ? currentUser.fullName : "Live Dispatch Stream"}
+                  {currentUser ? currentUser.fullName : "Live Medical Transport"}
                 </h2>
               </div>
 
               <span
-                className={`rounded-full px-2.5 py-0.5 font-mono-tabular text-[11px] font-semibold ${
+                className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
                   streamConnected
                     ? "bg-emerald-100 text-emerald-800"
                     : "bg-slate-100 text-slate-700"
                 }`}
               >
-                {streamConnected ? "SSE Connected" : "Offline Preview"}
+                {streamConnected ? "Live Updates On" : "Preview Mode"}
               </span>
             </div>
 
             {currentUser ? (
               <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3 text-xs">
-                <span className="font-mono-tabular font-semibold text-teal-800">
-                  {currentUser.role} · {currentUser.countryCode}
+                <span className="font-semibold text-teal-800">
+                  {formatRoleLabel(currentUser.role)} · {currentUser.countryCode}
                 </span>
                 <button
                   type="button"
@@ -757,7 +775,7 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
                   className="inline-flex min-h-[40px] w-full items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-3.5 py-2 text-xs font-semibold text-white hover:bg-slate-800"
                 >
                   <KeyRound className="h-3.5 w-3.5" aria-hidden="true" />
-                  <span>Connect Authenticated Stream</span>
+                  <span>Sign In to Coordinate Care</span>
                 </button>
               </form>
             )}
@@ -798,17 +816,17 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
                   onChange={(e) => setDriverStatus(e.target.value as DriverStatus)}
                   className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
                 >
-                  <option value="AVAILABLE">AVAILABLE</option>
-                  <option value="ASSIGNED">ASSIGNED</option>
-                  <option value="EN_ROUTE">EN_ROUTE</option>
-                  <option value="OFF_DUTY">OFF_DUTY</option>
+                  <option value="AVAILABLE">Ready for Requests</option>
+                  <option value="ASSIGNED">Assigned to Patient</option>
+                  <option value="EN_ROUTE">On the Way</option>
+                  <option value="OFF_DUTY">Off Duty</option>
                 </select>
                 <button
                   type="submit"
                   disabled={busy}
                   className="min-h-[42px] w-full rounded-xl bg-teal-800 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-900"
                 >
-                  Transmit Live GPS Ping
+                  Update Ambulance Location
                 </button>
               </form>
             </section>
@@ -826,6 +844,9 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
                 </h2>
               </div>
               <form onSubmit={handleDispatchSubmit} className="mt-3 space-y-3">
+                <p className="text-[11px] text-slate-500">
+                  Tip: Click any hospital or clinic on the map to auto-fill pickup details.
+                </p>
                 <input
                   type="text"
                   required
@@ -861,16 +882,16 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
                   onChange={(e) => setUrgency(e.target.value as DispatchUrgency)}
                   className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
                 >
-                  <option value="ROUTINE">ROUTINE</option>
-                  <option value="URGENT">URGENT</option>
-                  <option value="EMERGENCY">EMERGENCY</option>
+                  <option value="ROUTINE">Standard Medical Transfer</option>
+                  <option value="URGENT">Urgent Care Pickup</option>
+                  <option value="EMERGENCY">Emergency Dispatch</option>
                 </select>
                 <button
                   type="submit"
                   disabled={busy}
                   className="min-h-[42px] w-full rounded-xl bg-red-700 px-4 py-2 text-sm font-semibold text-white hover:bg-red-800"
                 >
-                  Broadcast Dispatch Request
+                  Request Medical Pickup
                 </button>
               </form>
             </section>
@@ -878,11 +899,11 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
 
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
             <h2 className="text-base font-semibold text-slate-900">
-              Scoped Dispatch Queue ({dispatches.length})
+              Active Transport Requests ({dispatches.length})
             </h2>
             {dispatches.length === 0 ? (
               <p className="mt-2 text-xs text-slate-500">
-                No active dispatches loaded for your role and jurisdiction scope.
+                No active medical transport requests right now.
               </p>
             ) : (
               <ul className="mt-3 space-y-2.5">
@@ -893,16 +914,16 @@ export function DispatchConsole({ packs, apiBaseUrl }: DispatchConsoleProps) {
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span
-                        className={`rounded-full px-2 py-0.5 font-mono-tabular font-semibold ${
+                        className={`rounded-full px-2 py-0.5 font-semibold ${
                           item.urgency === "EMERGENCY"
                             ? "bg-red-100 text-red-800"
                             : "bg-slate-200 text-slate-800"
                         }`}
                       >
-                        {item.urgency}
+                        {formatUrgencyLabel(item.urgency)}
                       </span>
-                      <span className="font-mono-tabular font-semibold text-teal-800">
-                        {item.status}
+                      <span className="font-semibold text-teal-800">
+                        {formatDispatchStatus(item.status)}
                       </span>
                     </div>
                     <p className="mt-1.5 font-medium text-slate-900">

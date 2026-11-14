@@ -6,6 +6,12 @@ import {
   readStoredSession,
   writeStoredSession,
 } from "@/shared/auth/session-storage";
+import {
+  formatFacilityKind,
+  formatRoleLabel,
+  getLicenseExample,
+} from "@/shared/i18n/human-labels";
+import { EntityAvatar } from "@/shared/ui/EntityAvatar";
 import { useLocale } from "@/shared/i18n/locale-store";
 import {
   ALLOWED_AVATAR_MIME_TYPES,
@@ -479,7 +485,7 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
     setSelectedCountry(res.data.user.countryCode);
     setStatusMessage({
       tone: "success",
-      text: `Authenticated as ${res.data.user.fullName} (${res.data.user.role} · ${res.data.user.countryCode}).`,
+      text: `Signed in as ${res.data.user.fullName} (${formatRoleLabel(res.data.user.role)} · ${res.data.user.countryCode}).`,
     });
     await Promise.all([
       refreshScopedFacilities(res.data.token, res.data.user.countryCode),
@@ -531,7 +537,7 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
     setCurrentUser(res.data.user);
     setStatusMessage({
       tone: "success",
-      text: `Registered ${res.data.user.role} account under CountryPack ${res.data.user.countryCode}.`,
+      text: `Welcome! Created ${formatRoleLabel(res.data.user.role)} account in ${res.data.user.countryCode}.`,
     });
     await refreshScopedFacilities(res.data.token, res.data.user.countryCode);
   }
@@ -706,14 +712,14 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
             </h1>
             {activePack ? (
               <p className="mt-1 text-sm text-slate-600">
-                Jurisdiction: <strong className="text-slate-900"><bdi dir="auto">{activePack.name}</bdi></strong> ·{" "}
+                Care Region: <strong className="text-slate-900"><bdi dir="auto">{activePack.name}</bdi></strong> ·{" "}
                 {t("home.hotlineLabel")}{" "}
                 <bdi dir="ltr" className="font-mono-tabular font-semibold text-red-700">
                   {activePack.emergencyHotlines.ambulance}
                 </bdi>{" "}
-                · Format{" "}
+                · License Example:{" "}
                 <code dir="ltr" className="rounded bg-slate-100 px-1.5 py-0.5 font-mono-tabular text-xs text-slate-800">
-                  {activePack.licenseNumberPattern}
+                  {getLicenseExample(activePack.code)}
                 </code>
               </p>
             ) : null}
@@ -769,7 +775,7 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
 
       <div className="grid gap-6 lg:grid-cols-12">
         {/* Left Column: Auth & Onboarding Workspace */}
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs lg:col-span-7">
+        <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-6 shadow-xs lg:col-span-7">
           <div
             role="tablist"
             aria-label="Portal workflow modes"
@@ -815,7 +821,7 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
               }`}
             >
               <Building2 className="h-4 w-4 shrink-0" aria-hidden="true" />
-              <span>Onboard Facility</span>
+              <span>Register Facility</span>
             </button>
             <button
               type="button"
@@ -888,10 +894,10 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
                 <div className="space-y-2.5 border-t border-slate-100 pt-4">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-xs font-bold uppercase tracking-wider text-slate-600">
-                      1-Click Demo Personas ({selectedCountry})
+                      Quick Demo Accounts ({selectedCountry})
                     </p>
-                    <span className="font-mono-tabular text-[11px] text-slate-500">
-                      Instant RBAC Switch
+                    <span className="text-[11px] font-medium text-slate-500">
+                      1-Click Switch
                     </span>
                   </div>
                   <div className="grid gap-2 sm:grid-cols-2">
@@ -914,19 +920,26 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
                               persona.demoPassword,
                             );
                           }}
-                          className="rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-left transition-colors hover:border-teal-700 hover:bg-teal-50/50 disabled:opacity-60"
+                          className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-left transition-colors hover:border-teal-700 hover:bg-teal-50/50 disabled:opacity-60"
                         >
-                          <div className="flex items-center justify-between gap-1.5">
-                            <span className="truncate text-xs font-semibold text-slate-900">
-                              {persona.fullName}
-                            </span>
-                            <span className="shrink-0 rounded bg-white px-1.5 py-0.5 font-mono-tabular text-[10px] font-bold text-teal-900 border border-teal-200">
-                              {persona.role}
-                            </span>
+                          <EntityAvatar
+                            name={persona.fullName}
+                            role={persona.role}
+                            size="sm"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between gap-1.5">
+                              <span className="truncate text-xs font-semibold text-slate-900">
+                                {persona.fullName}
+                              </span>
+                              <span className="shrink-0 rounded border border-teal-200 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-teal-900">
+                                {formatRoleLabel(persona.role)}
+                              </span>
+                            </div>
+                            <p className="mt-0.5 truncate text-[11px] text-slate-600">
+                              {persona.headline}
+                            </p>
                           </div>
-                          <p className="mt-0.5 truncate text-[11px] text-slate-600">
-                            {persona.headline}
-                          </p>
                         </button>
                       ))}
                   </div>
@@ -961,7 +974,7 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
                     htmlFor="reg-role"
                     className="block text-xs font-semibold uppercase tracking-wider text-slate-700"
                   >
-                    Ecosystem Actor Role
+                    Account Type
                   </label>
                   <select
                     id="reg-role"
@@ -973,7 +986,7 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
                   >
                     {PublicSelfRegisterRoleSchema.options.map((roleOption) => (
                       <option key={roleOption} value={roleOption}>
-                        {ROLE_LABELS[roleOption]} ({roleOption})
+                        {ROLE_LABELS[roleOption]}
                       </option>
                     ))}
                   </select>
@@ -1020,10 +1033,9 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
               </div>
 
               <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                Country scope will lock to{" "}
-                <strong className="font-mono-tabular text-slate-900">{selectedCountry}</strong>.
-                System super-admin (<code className="font-mono-tabular">OPS_ADMIN</code>) accounts are
-                excluded from self-registration by Zod boundary policy.
+                Your profile will be registered for{" "}
+                <strong className="font-semibold text-slate-900">{selectedCountry}</strong>{" "}
+                care services. Administrative staff accounts are provisioned internally.
               </p>
 
               <button
@@ -1031,7 +1043,7 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
                 disabled={busy}
                 className="min-h-[44px] w-full rounded-xl bg-teal-800 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-teal-900 active:scale-[0.99] disabled:opacity-60"
               >
-                {busy ? "Creating Sovereign Account..." : "Create Account"}
+                {busy ? "Creating Account..." : "Create Account"}
               </button>
             </form>
           ) : null}
@@ -1089,11 +1101,13 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
                   </label>
                   {facLicense.trim().length > 0 ? (
                     <span
-                      className={`font-mono-tabular text-xs font-semibold ${
+                      className={`text-xs font-semibold ${
                         licenseMatchesPack ? "text-emerald-700" : "text-red-700"
                       }`}
                     >
-                      {licenseMatchesPack ? "Pattern Valid" : "Invalid Jurisdiction Format"}
+                      {licenseMatchesPack
+                        ? "Valid Format"
+                        : `Check Format (${getLicenseExample(selectedCountry)})`}
                     </span>
                   ) : null}
                 </div>
@@ -1103,7 +1117,7 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
                   required
                   value={facLicense}
                   onChange={(e) => setFacLicense(e.target.value)}
-                  placeholder="MA-CLIN-90812"
+                  placeholder={getLicenseExample(selectedCountry)}
                   className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 font-mono-tabular text-sm text-slate-900 placeholder:text-slate-400 focus:border-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-700/20"
                 />
               </div>
@@ -1132,7 +1146,7 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
                     htmlFor="fac-lat"
                     className="block text-xs font-semibold uppercase tracking-wider text-slate-700"
                   >
-                    Latitude (WGS84)
+                    Map Latitude
                   </label>
                   <input
                     id="fac-lat"
@@ -1149,7 +1163,7 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
                     htmlFor="fac-lng"
                     className="block text-xs font-semibold uppercase tracking-wider text-slate-700"
                   >
-                    Longitude (WGS84)
+                    Map Longitude
                   </label>
                   <input
                     id="fac-lng"
@@ -1349,11 +1363,11 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
         </section>
 
         {/* Right Column: Session State & Scoped Registry */}
-        <aside className="space-y-4 lg:col-span-5">
+        <aside className="min-w-0 space-y-4 lg:col-span-5">
           <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs">
             <div className="flex items-center justify-between">
               <h2 className="text-base font-semibold text-slate-900">
-                Active Identity Scope
+                Signed-In Profile
               </h2>
               {currentUser ? (
                 <button
@@ -1371,23 +1385,18 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
               <div className="mt-4 space-y-4">
                 <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
                   <div className="flex min-w-0 items-center gap-3">
-                    {currentUser.avatarUrl ? (
-                      <img
-                        src={currentUser.avatarUrl}
-                        alt={currentUser.fullName}
-                        className="h-12 w-12 shrink-0 rounded-full border border-teal-200 object-cover"
-                      />
-                    ) : (
-                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-teal-200 bg-teal-50 font-bold text-teal-800">
-                        {currentUser.fullName.slice(0, 2).toUpperCase()}
-                      </div>
-                    )}
+                    <EntityAvatar
+                      name={currentUser.fullName}
+                      role={currentUser.role}
+                      avatarUrl={currentUser.avatarUrl}
+                      size="lg"
+                    />
                     <div className="min-w-0">
                       <p className="truncate text-sm font-semibold text-slate-900">
                         <bdi dir="auto">{currentUser.fullName}</bdi>
                       </p>
-                      <p className="font-mono-tabular text-xs font-semibold text-teal-800">
-                        {currentUser.role} · {currentUser.countryCode}
+                      <p className="text-xs font-semibold text-teal-800">
+                        {formatRoleLabel(currentUser.role)} · {currentUser.countryCode}
                       </p>
                       <div className="mt-1 flex flex-wrap gap-1">
                         <span
@@ -1546,8 +1555,8 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
             {facilities.length === 0 ? (
               <p className="mt-3 text-sm text-slate-500">
                 {currentUser
-                  ? "No verified or owned facilities in your country scope yet."
-                  : "Sign in to load verified clinics, hospitals, pharmacies, and diagnostic labs for your jurisdiction."}
+                  ? "No registered healthcare facilities in your region yet."
+                  : "Sign in above to view licensed clinics, hospitals, pharmacies, and diagnostic labs in your region."}
               </p>
             ) : (
               <ul className="mt-4 space-y-3">
@@ -1561,18 +1570,20 @@ export function PortalWorkspace({ packs, apiBaseUrl }: PortalWorkspaceProps) {
                         <p className="text-sm font-semibold text-slate-900">
                           {facility.name}
                         </p>
-                        <p className="mt-0.5 font-mono-tabular text-xs text-slate-600">
-                          {facility.kind} · {facility.licenseNumber}
+                        <p className="mt-0.5 text-xs text-slate-600">
+                          {formatFacilityKind(facility.kind)} · {facility.licenseNumber}
                         </p>
                       </div>
                       <span
-                        className={`rounded-full px-2 py-0.5 font-mono-tabular text-[11px] font-semibold ${
+                        className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
                           facility.verificationStatus === "VERIFIED"
                             ? "bg-emerald-100 text-emerald-800"
                             : "bg-amber-100 text-amber-800"
                         }`}
                       >
-                        {facility.verificationStatus}
+                        {facility.verificationStatus === "VERIFIED"
+                          ? "Verified"
+                          : "Pending Review"}
                       </span>
                     </div>
                     <p className="mt-2 text-xs text-slate-600">{facility.address}</p>

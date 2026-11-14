@@ -102,11 +102,9 @@ export function EcosystemSlicesGrid() {
                   {t(summaryKey)}
                 </p>
               </div>
-              <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-2.5 text-[11px] text-slate-500">
+              <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-2.5 text-[11px] font-semibold text-teal-800">
                 <span>{t("ecosystem.openPortal")}</span>
-                <span dir="ltr" className="font-mono-tabular font-semibold text-teal-800">
-                  {portal.href}
-                </span>
+                <span aria-hidden="true">→</span>
               </div>
             </Link>
           );

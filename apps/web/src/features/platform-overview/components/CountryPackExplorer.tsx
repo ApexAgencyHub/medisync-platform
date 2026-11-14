@@ -3,6 +3,10 @@
 import { useState } from "react";
 import type { CountryPack } from "@medisync/contracts";
 import { Globe, PhoneCall, ShieldCheck } from "lucide-react";
+import {
+  formatCoverageHub,
+  formatLanguageList,
+} from "@/shared/i18n/human-labels";
 import { useLocale } from "@/shared/i18n/locale-store";
 
 interface CountryPackExplorerProps {
@@ -69,11 +73,8 @@ export function CountryPackExplorer({ packs }: CountryPackExplorerProps) {
           <dt className="text-xs font-medium text-slate-500">
             {t("country.dirLocale")}
           </dt>
-          <dd
-            dir="ltr"
-            className="mt-1 font-mono-tabular text-sm font-semibold text-slate-900"
-          >
-            {active.direction.toUpperCase()} · {active.defaultLocale}
+          <dd className="mt-1 text-sm font-semibold text-slate-900">
+            <bdi dir="auto">{formatLanguageList(active.supportedLocales)}</bdi>
           </dd>
         </div>
         <div>
@@ -96,16 +97,19 @@ export function CountryPackExplorer({ packs }: CountryPackExplorerProps) {
             dir="ltr"
             className="mt-1 font-mono-tabular text-sm font-semibold text-slate-900"
           >
-            {active.currencyCode} · {active.measurementSystem}
+            {active.currencyCode} ·{" "}
+            {active.measurementSystem === "metric" ? "Metric" : "Imperial"}
           </dd>
         </div>
         <div>
           <dt className="text-xs font-medium text-slate-500">
             {t("country.dataResidency")}
           </dt>
-          <dd className="mt-1 flex items-center gap-1.5 font-mono-tabular text-sm font-semibold text-teal-800">
+          <dd className="mt-1 flex items-center gap-1.5 text-sm font-semibold text-teal-800">
             <ShieldCheck className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-            <bdi dir="ltr">{active.dataResidencyRegion}</bdi>
+            <bdi dir="auto">
+              {formatCoverageHub(active.dataResidencyRegion)}
+            </bdi>
           </dd>
         </div>
       </dl>

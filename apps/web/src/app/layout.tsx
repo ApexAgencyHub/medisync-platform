@@ -15,9 +15,9 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "MediSync Global — Multi-Jurisdiction Clinical & Emergency Platform",
+  title: "MediSync Global — Connected Medical & Emergency Care",
   description:
-    "Unified geospatial medical coordination for clinics, hospitals, ambulances, doctors, pharmacies, diagnostic labs, and patients worldwide.",
+    "Locate trusted hospitals and pharmacies, book clinic or video appointments, verify digital prescriptions, and coordinate medical transport in one connected network.",
   icons: {
     icon: [
       { url: "/favicon.ico", sizes: "32x32" },
