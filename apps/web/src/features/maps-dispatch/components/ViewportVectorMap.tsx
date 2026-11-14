@@ -21,12 +21,18 @@ import {
   ArrowUp,
   Building2,
   FlaskConical,
+  LocateFixed,
   Minus,
   Pill,
   Plus,
   RotateCcw,
   Search,
 } from "lucide-react";
+import {
+  formatDriverStatus,
+  formatFacilityKind,
+  formatOpenStatus,
+} from "@/shared/i18n/human-labels";
 import { useLocale } from "@/shared/i18n/locale-store";
 import {
   estimateZoomForViewport,
@@ -230,26 +236,22 @@ export function ViewportVectorMap({
     }
   }
 
-  const mapBusyOrMs =
-    postgisQueryMs !== null ? `${facilities.length} · ${postgisQueryMs}ms` : `${facilities.length}`;
-  const unitTelemetryText =
-    redisQueryMs !== null
-      ? `${drivers.length} ${t("map.activeUnits")} · ${redisQueryMs}ms`
-      : `${drivers.length} ${t("map.activeUnits")}`;
+  const facilitiesLabel = `${t("map.facilitiesFound")}: ${facilities.length}`;
+  const unitTelemetryText = `${drivers.length} ${t("map.activeUnits")}`;
+  // Preserve optional telemetry props without surfacing ms timings to patients
+  void postgisQueryMs;
+  void redisQueryMs;
 
   return (
     <div className="space-y-3">
-      {/* Consumer District & Live Telemetry Readout */}
+      {/* District & Live Care Summary Bar */}
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs">
-        <div className="min-w-0 break-words">
+        <div className="flex min-w-0 items-center gap-2 break-words">
           <span className="font-semibold text-slate-900">
             <bdi dir="auto">{viewport.districtLabel}</bdi>
           </span>
-          <span
-            dir="ltr"
-            className="block font-mono-tabular text-slate-500 sm:ml-2 sm:inline"
-          >
-            [{countryCode}] Z{zoom} · {center.lat.toFixed(3)}, {center.lng.toFixed(3)}
+          <span className="rounded-md border border-slate-200 bg-white px-1.5 py-0.5 font-mono-tabular text-[11px] font-semibold text-teal-800">
+            {countryCode}
           </span>
         </div>
 
@@ -259,9 +261,7 @@ export function ViewportVectorMap({
             className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 py-0.5 text-slate-700"
           >
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-600" />
-            <span>
-              {t("map.facilitiesFound")}: {mapBusyOrMs}
-            </span>
+            <span>{facilitiesLabel}</span>
           </span>
           <span
             dir="ltr"
@@ -353,9 +353,14 @@ export function ViewportVectorMap({
           >
             <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
           </button>
-          <span className="flex h-7 w-7 items-center justify-center font-mono-tabular text-[10px] font-bold text-slate-400">
-            Z{zoom}
-          </span>
+          <button
+            type="button"
+            aria-label="Center map on region"
+            onClick={onReset}
+            className="flex h-7 w-7 items-center justify-center rounded text-teal-800 hover:bg-teal-50"
+          >
+            <LocateFixed className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
           <button
             type="button"
             aria-label="Pan east"
@@ -411,7 +416,7 @@ export function ViewportVectorMap({
               key={facility.id}
               type="button"
               onClick={() => onSelectFacility(facility.id)}
-              aria-label={`${facility.name} (${facility.kind})`}
+              aria-label={`${facility.name} (${formatFacilityKind(facility.kind)}, ${formatOpenStatus(facility.openStatus)})`}
               style={{ left: `${px}px`, top: `${py}px` }}
               className={`absolute -translate-x-1/2 -translate-y-1/2 flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold shadow-md transition-transform hover:z-30 hover:scale-105 active:scale-95 ${
                 cfg.bg
@@ -449,15 +454,15 @@ export function ViewportVectorMap({
             <div
               key={driver.driverId}
               style={{ left: `${px}px`, top: `${py}px` }}
-              title={`Unit ${driver.driverId.slice(0, 8)} (${driver.status})`}
-              className={`absolute z-15 -translate-x-1/2 -translate-y-1/2 flex items-center gap-1 rounded-lg border px-2 py-1 font-mono-tabular text-[10px] font-bold shadow-md ${
+              title={`Medical Unit (${formatDriverStatus(driver.status)})`}
+              className={`absolute z-15 -translate-x-1/2 -translate-y-1/2 flex items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-bold shadow-md ${
                 driver.status === "EN_ROUTE"
                   ? "border-red-700 bg-red-50 text-red-900"
                   : "border-teal-800 bg-white text-teal-900"
               }`}
             >
               <Ambulance className="h-3.5 w-3.5 text-red-700" aria-hidden="true" />
-              <span>{driver.status}</span>
+              <span>{formatDriverStatus(driver.status)}</span>
             </div>
           );
         })}

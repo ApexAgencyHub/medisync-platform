@@ -85,7 +85,7 @@ export function QrPrescriptionCard({
               .join(" · ")}
           </p>
           <p className="text-[11px] text-slate-500">
-            Issued by {prescription.doctorName} · HMAC-SHA256 Signed
+            Issued by {prescription.doctorName} · Verified Digital Signature
           </p>
         </div>
       </div>
@@ -101,7 +101,7 @@ export function QrPrescriptionCard({
           ) : (
             <Copy className="h-3.5 w-3.5" aria-hidden="true" />
           )}
-          <span>{copied ? "Copied Token" : "Copy QR Token"}</span>
+          <span>{copied ? "Copied Code" : "Copy Code"}</span>
         </button>
 
         {onUseForDispense && prescription.status === "ISSUED" ? (
@@ -110,7 +110,7 @@ export function QrPrescriptionCard({
             onClick={() => onUseForDispense(prescription.qrToken)}
             className="inline-flex min-h-[34px] items-center rounded-lg bg-teal-800 px-3 py-1 text-[11px] font-semibold text-white hover:bg-teal-900"
           >
-            Load at Pharmacy
+            Verify at Pharmacy
           </button>
         ) : null}
       </div>

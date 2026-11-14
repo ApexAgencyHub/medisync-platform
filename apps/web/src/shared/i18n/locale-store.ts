@@ -11,6 +11,7 @@ let initializedFromStorage = false;
 
 const TRANSLATIONS: Record<LocaleCode, Record<string, string>> = {
   en: {
+    "brand.tagline": "Connected Care Network",
     "nav.overview": "Overview",
     "nav.map": "Live Map",
     "nav.booking": "Booking",
@@ -32,11 +33,11 @@ const TRANSLATIONS: Record<LocaleCode, Record<string, string>> = {
     "home.hotlineLabel": "Emergency Hotline",
     "home.coverageLabel": "Licensed Clinics & 24/7 Pharmacies",
     "country.eyebrow": "Regional Health Standards",
-    "country.activePrefix": "Active CountryPack",
-    "country.dirLocale": "Layout & Language",
+    "country.activePrefix": "Care Region",
+    "country.dirLocale": "Languages",
     "country.emergencyNumbers": "Ambulance / Emergency",
     "country.currencyUnits": "Currency & Units",
-    "country.dataResidency": "Healthcare Data Region",
+    "country.dataResidency": "Care Network",
     "ecosystem.heading": "Connected Care Portals by Role",
     "ecosystem.subtitle":
       "Seamless tools tailored for patients, physicians, medical transport teams, pharmacies, laboratories, and operations.",
@@ -84,13 +85,13 @@ const TRANSLATIONS: Record<LocaleCode, Record<string, string>> = {
     "map.openNowOnly": "Open Now Only",
     "map.facilitiesFound": "Medical Centers",
     "map.activeUnits": "Active Units",
-    "map.driverBeaconTitle": "Driver Live GPS Beacon",
+    "map.driverBeaconTitle": "Ambulance Location Sharing",
     "map.emptyOverlay":
       "Click Search This Area or select a region to view verified hospitals, clinics, pharmacies, and laboratories.",
 
     // Booking (/booking)
     "booking.eyebrow": "Same-Day Clinic & Specialist Scheduling",
-    "booking.heading": "Doctor Shift Roster & Appointment Engine",
+    "booking.heading": "Doctor Appointments & Clinic Hours",
     "booking.subtitle":
       "Compare open specialist hours, reserve clinic or video consultations with conflict-free slot locking, and track visit statuses.",
 
@@ -113,7 +114,7 @@ const TRANSLATIONS: Record<LocaleCode, Record<string, string>> = {
     "pharma.heading": "Online Pharmacy Catalog & Courier Checkout",
     "pharma.subtitle":
       "Browse country-licensed pharmacies, add OTC & prescription items, verify Rx links, pay securely, and dispatch live couriers.",
-    "pharma.searchPlaceholder": "Search medications, SKU, or active ingredient...",
+    "pharma.searchPlaceholder": "Search medications or active ingredients...",
     "pharma.addToCart": "Add to Cart",
     "pharma.cartTitle": "Shopping Cart & Checkout",
     "pharma.placeOrder": "Place Order & Pay Now",
@@ -125,6 +126,7 @@ const TRANSLATIONS: Record<LocaleCode, Record<string, string>> = {
     "admin.heading": "Master Operations & Compliance Center",
   },
   fr: {
+    "brand.tagline": "Réseau de Soins Connecté",
     "nav.overview": "Aperçu",
     "nav.map": "Carte Live",
     "nav.booking": "Rendez-vous",
@@ -146,11 +148,11 @@ const TRANSLATIONS: Record<LocaleCode, Record<string, string>> = {
     "home.hotlineLabel": "Urgences Médicales",
     "home.coverageLabel": "Cliniques agréées & Pharmacies 24/7",
     "country.eyebrow": "Standards Sanitaires Régionaux",
-    "country.activePrefix": "Active CountryPack",
-    "country.dirLocale": "Sens & Langue",
+    "country.activePrefix": "Région Active",
+    "country.dirLocale": "Langues",
     "country.emergencyNumbers": "SAMU / Urgences",
     "country.currencyUnits": "Devise & Unités",
-    "country.dataResidency": "Hébergement des données",
+    "country.dataResidency": "Réseau de Soins",
     "ecosystem.heading": "Portails de Soins par Rôle",
     "ecosystem.subtitle":
       "Des outils dédiés aux patients, médecins, secours d'urgence, pharmacies, laboratoires et équipes de régulation.",
@@ -198,13 +200,13 @@ const TRANSLATIONS: Record<LocaleCode, Record<string, string>> = {
     "map.openNowOnly": "Ouvert maintenant",
     "map.facilitiesFound": "Centres de soins",
     "map.activeUnits": "Unités actives",
-    "map.driverBeaconTitle": "Balise GPS Véhicule Médical",
+    "map.driverBeaconTitle": "Position Ambulance en Direct",
     "map.emptyOverlay":
       "Cliquez sur Rechercher dans cette zone pour afficher les hôpitaux, cliniques, pharmacies et laboratoires vérifiés.",
 
     // Booking (/booking)
     "booking.eyebrow": "Plannings Praticiens & Prise de Rendez-vous",
-    "booking.heading": "Planning Médical & Réservation",
+    "booking.heading": "Rendez-vous Médicaux & Horaires",
     "booking.subtitle":
       "Consultez les créneaux disponibles en cabinet ou téléconsultation avec réservation instantanée garantie sans doublon.",
 
@@ -227,7 +229,7 @@ const TRANSLATIONS: Record<LocaleCode, Record<string, string>> = {
     "pharma.heading": "Pharmacie en Ligne & Livraison Express",
     "pharma.subtitle":
       "Parcourez les officines agréées, commandez sans ou avec ordonnance, payez en ligne et suivez le coursier.",
-    "pharma.searchPlaceholder": "Rechercher un médicament, SKU ou principe actif...",
+    "pharma.searchPlaceholder": "Rechercher un médicament ou principe actif...",
     "pharma.addToCart": "Ajouter",
     "pharma.cartTitle": "Panier & Paiement",
     "pharma.placeOrder": "Commander & Payer",
@@ -239,6 +241,7 @@ const TRANSLATIONS: Record<LocaleCode, Record<string, string>> = {
     "admin.heading": "Centre d'Opérations & Conformité",
   },
   ar: {
+    "brand.tagline": "شبكة الرعاية الصحية المتصلة",
     "nav.overview": "نظرة عامة",
     "nav.map": "الخريطة الحية",
     "nav.booking": "الحجوزات",
@@ -260,11 +263,11 @@ const TRANSLATIONS: Record<LocaleCode, Record<string, string>> = {
     "home.hotlineLabel": "طوارئ الإسعاف",
     "home.coverageLabel": "عيادات مرخصة وصيدليات 24/7",
     "country.eyebrow": "المعايير الصحية الإقليمية",
-    "country.activePrefix": "النطاق النشط",
-    "country.dirLocale": "الاتجاه واللغة",
+    "country.activePrefix": "المنطقة الصحية",
+    "country.dirLocale": "اللغات المتاحة",
     "country.emergencyNumbers": "الإسعاف والطوارئ",
     "country.currencyUnits": "العملة والوحدات",
-    "country.dataResidency": "منطقة حفظ البيانات",
+    "country.dataResidency": "شبكة الرعاية",
     "ecosystem.heading": "بوابات الرعاية حسب الدور",
     "ecosystem.subtitle":
       "واجهات متخصصة للمرضى والأطباء وفرق الإسعاف والصيدليات والمختبرات وفرق الإشراف.",
@@ -312,13 +315,13 @@ const TRANSLATIONS: Record<LocaleCode, Record<string, string>> = {
     "map.openNowOnly": "مفتوح الآن فقط",
     "map.facilitiesFound": "منشأة طبية",
     "map.activeUnits": "وحدة نشطة",
-    "map.driverBeaconTitle": "جهاز البث الحي لسيارة الإسعاف",
+    "map.driverBeaconTitle": "مشاركة موقع سيارة الإسعاف",
     "map.emptyOverlay":
       "اضغط على البحث في هذه المنطقة لعرض المستشفيات والعيادات والصيدليات والمختبرات المعتمدة.",
 
     // Booking (/booking)
     "booking.eyebrow": "مواعيد الأخصائيين وحجز العيادات",
-    "booking.heading": "جدول مناوبات الأطباء ومحرك الحجز",
+    "booking.heading": "حجز المواعيد الطبية وجدول العيادات",
     "booking.subtitle":
       "قارن مواعيد الأطباء المتاحة واحجز استشارتك الحضورية أو المرئية فوراً مع منع تضارب المواعيد.",
 
@@ -341,7 +344,7 @@ const TRANSLATIONS: Record<LocaleCode, Record<string, string>> = {
     "pharma.heading": "الصيدلية الإلكترونية والدفع والتوصيل الفوري",
     "pharma.subtitle":
       "تصفح الصيدليات المعتمدة، أضف الأدوية والمستلزمات الطبية، اربط الوصفة الرقمية وأكمل الدفع بأمان.",
-    "pharma.searchPlaceholder": "ابحث عن دواء أو رمز المنتج...",
+    "pharma.searchPlaceholder": "ابحث عن دواء أو مادة فعالة...",
     "pharma.addToCart": "إضافة للسلة",
     "pharma.cartTitle": "سلة المشتريات والدفع",
     "pharma.placeOrder": "تأكيد الطلب والدفع",

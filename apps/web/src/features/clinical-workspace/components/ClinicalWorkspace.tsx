@@ -33,7 +33,12 @@ import {
   fetchDirectoryFacilities,
   fetchDirectoryPatients,
 } from "@/shared/api/directory-client";
+import {
+  formatClinicalFileType,
+  formatRoleLabel,
+} from "@/shared/i18n/human-labels";
 import { useLocale } from "@/shared/i18n/locale-store";
+import { EntityAvatar } from "@/shared/ui/EntityAvatar";
 import { EntityPicker } from "@/shared/ui/EntityPicker";
 import { QrPrescriptionCard } from "@/shared/ui/QrPrescriptionCard";
 import {
@@ -309,7 +314,7 @@ export function ClinicalWorkspace({
     setPlan("");
     setBanner({
       tone: "success",
-      text: `Recorded immutable SOAP note for ${res.data.visitNote.patientName}.`,
+      text: `Consultation visit note saved for ${res.data.visitNote.patientName}.`,
     });
     await refreshClinicalData(sessionToken, selectedCountry);
   }
@@ -366,7 +371,7 @@ export function ClinicalWorkspace({
     setVerifiedRx(res.data.prescription);
     setBanner({
       tone: "success",
-      text: `Cryptographic QR signature verified for ${res.data.prescription.patientName}.`,
+      text: `Prescription signature verified for ${res.data.prescription.patientName}.`,
     });
   }
 
@@ -399,7 +404,7 @@ export function ClinicalWorkspace({
     setVerifiedRx(res.data.prescription);
     setBanner({
       tone: "success",
-      text: `Prescription ${res.data.prescription.id.slice(0, 8)} marked DISPENSED atomically.`,
+      text: `Medication prescription marked as dispensed.`,
     });
     await refreshClinicalData(sessionToken, selectedCountry);
   }
@@ -436,7 +441,7 @@ export function ClinicalWorkspace({
     if (!effectivePatientId) {
       setBanner({
         tone: "error",
-        text: "Specify a Patient UUID (or sign in as a patient) before uploading medical media.",
+        text: "Select a patient (or sign in as a patient) before uploading a medical file.",
       });
       return;
     }
@@ -613,7 +618,7 @@ export function ClinicalWorkspace({
             <div className="space-y-6">
               <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
                 <h2 className="border-b border-slate-200 pb-3 text-base font-bold text-slate-900">
-                  Physician SOAP Consultation & QR Prescription
+                  Consultation Visit Notes & QR E-Prescription
                 </h2>
 
                 <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -621,7 +626,7 @@ export function ClinicalWorkspace({
                     id="clin-patient-uuid"
                     label="Patient"
                     placeholder="Filter patient by name or email..."
-                    emptyLabel="Sign in to browse in-country patients"
+                    emptyLabel="Sign in to browse patients in this region"
                     options={patientPickerOptions}
                     value={patientUuid}
                     onChange={setPatientUuid}
@@ -632,7 +637,7 @@ export function ClinicalWorkspace({
                       htmlFor="clin-icd10"
                       className="block text-xs font-semibold text-slate-700"
                     >
-                      ICD-10 Codes (comma separated)
+                      Diagnosis Codes (Optional, e.g. J06.9)
                     </label>
                     <input
                       id="clin-icd10"
@@ -779,12 +784,12 @@ export function ClinicalWorkspace({
 
               <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
                 <h3 className="text-sm font-bold text-slate-900">
-                  Scoped SOAP Notes ({visitNotes.length})
+                  Consultation History ({visitNotes.length})
                 </h3>
                 {visitNotes.length === 0 ? (
                   <p className="mt-2 text-xs text-slate-600">
-                    Sign in as a Doctor or Patient in {selectedCountry} to inspect
-                    role-scoped visit notes.
+                    Sign in as a Doctor or Patient in {selectedCountry} to view
+                    consultation visit notes.
                   </p>
                 ) : (
                   <ul className="mt-3 space-y-2.5">
@@ -794,8 +799,13 @@ export function ClinicalWorkspace({
                         className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs"
                       >
                         <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span className="font-bold text-slate-900">
-                            {note.patientName} · Dr. {note.doctorName}
+                          <span className="flex items-center gap-2 font-bold text-slate-900">
+                            <EntityAvatar
+                              name={note.doctorName}
+                              role="DOCTOR"
+                              size="xs"
+                            />
+                            <span>{note.patientName} · Dr. {note.doctorName}</span>
                           </span>
                           <span className="font-mono-tabular text-teal-800">
                             {note.icd10Codes.join(", ") || "UNSPECIFIED"}
@@ -836,7 +846,7 @@ export function ClinicalWorkspace({
           {activeTab === "pharmacy" ? (
             <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
               <h2 className="border-b border-slate-200 pb-3 text-base font-bold text-slate-900">
-                Pharmacy QR Verification & Atomic Dispensing
+                Pharmacy QR Verification & Safe Dispensing
               </h2>
 
               <form onSubmit={(e) => void handleVerifyQr(e)} className="space-y-3">
@@ -845,7 +855,7 @@ export function ClinicalWorkspace({
                     htmlFor="rx-qr-token"
                     className="block text-xs font-semibold text-slate-700"
                   >
-                    Signed QR E-Prescription Token
+                    Prescription QR Code
                   </label>
                   <textarea
                     id="rx-qr-token"
@@ -853,7 +863,7 @@ export function ClinicalWorkspace({
                     required
                     value={qrInput}
                     onChange={(e) => setQrInput(e.target.value)}
-                    placeholder="v1.eyJyeElkIjoi..."
+                    placeholder="Paste prescription code from the patient's digital QR card..."
                     className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-mono-tabular text-xs"
                   />
                 </div>
@@ -863,11 +873,10 @@ export function ClinicalWorkspace({
                     disabled={busy || !sessionToken}
                     className="min-h-[38px] rounded-lg bg-teal-800 px-4 py-2 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-60"
                   >
-                    Verify Cryptographic QR
+                    Verify Prescription
                   </button>
                   <span className="text-xs text-slate-600">
-                    Tampered signatures return <code className="font-mono-tabular">400 INVALID_QR_SIGNATURE</code>;
-                    duplicate dispenses return <code className="font-mono-tabular">409</code>.
+                    Every digital prescription is checked for authenticity and cannot be dispensed twice.
                   </span>
                 </div>
               </form>
@@ -905,7 +914,7 @@ export function ClinicalWorkspace({
                         onClick={() => void handleDispense(verifiedRx.id)}
                         className="min-h-[36px] rounded-lg bg-emerald-700 px-3.5 py-1.5 font-semibold text-white hover:bg-emerald-800"
                       >
-                        Dispense Atomically
+                        Confirm Dispensed
                       </button>
                     </div>
                   ) : null}
@@ -971,7 +980,7 @@ export function ClinicalWorkspace({
                         htmlFor="s3-mime-type"
                         className="block text-xs font-semibold text-slate-700"
                       >
-                        Allowed Clinical MIME
+                        Document Format
                       </label>
                       <select
                         id="s3-mime-type"
@@ -981,11 +990,11 @@ export function ClinicalWorkspace({
                             ClinicalMediaMimeTypeSchema.parse(e.target.value),
                           )
                         }
-                        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 font-mono-tabular text-xs"
+                        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs"
                       >
                         {ALLOWED_MEDIA_MIME_TYPES.map((mime) => (
                           <option key={mime} value={mime}>
-                            {mime}
+                            {formatClinicalFileType(mime)}
                           </option>
                         ))}
                       </select>
@@ -1031,7 +1040,7 @@ export function ClinicalWorkspace({
                 {latestPresigned ? (
                   <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 text-xs">
                     <p className="font-semibold text-emerald-950">
-                      Verified S3 Object Key: {latestPresigned.mediaObject.objectKey}
+                      Diagnostic report uploaded and verified: {latestPresigned.mediaObject.fileName}
                     </p>
                   </div>
                 ) : null}
@@ -1045,7 +1054,7 @@ export function ClinicalWorkspace({
                       id="clin-lab-facility"
                       label="Diagnostic Lab"
                       placeholder="Filter lab by name or city..."
-                      emptyLabel="No verified diagnostic labs in CountryPack"
+                      emptyLabel="No diagnostic labs available in this region"
                       options={labFacilityPickerOptions}
                       value={labFacilityId}
                       onChange={setLabFacilityId}
@@ -1235,13 +1244,21 @@ export function ClinicalWorkspace({
 
             {currentUser ? (
               <div className="mt-3 space-y-3">
-                <div className="rounded-xl border border-teal-200 bg-teal-50 p-3 text-xs">
-                  <p className="font-bold text-teal-950">
-                    {currentUser.fullName}
-                  </p>
-                  <p className="font-mono-tabular text-teal-800">
-                    {currentUser.role} · {currentUser.countryCode}
-                  </p>
+                <div className="flex items-center gap-3 rounded-xl border border-teal-200 bg-teal-50 p-3 text-xs">
+                  <EntityAvatar
+                    name={currentUser.fullName}
+                    role={currentUser.role}
+                    avatarUrl={currentUser.avatarUrl}
+                    size="sm"
+                  />
+                  <div className="min-w-0">
+                    <p className="truncate font-bold text-teal-950">
+                      {currentUser.fullName}
+                    </p>
+                    <p className="text-xs font-semibold text-teal-800">
+                      {formatRoleLabel(currentUser.role)} · {currentUser.countryCode}
+                    </p>
+                  </div>
                 </div>
                 <button
                   type="button"

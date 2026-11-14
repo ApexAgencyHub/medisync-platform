@@ -27,12 +27,14 @@ import {
   fetchDirectoryDoctors,
   fetchDirectoryFacilities,
 } from "@/shared/api/directory-client";
+import { EntityAvatar } from "@/shared/ui/EntityAvatar";
 import { EntityPicker } from "@/shared/ui/EntityPicker";
 import {
   clearStoredSession,
   readStoredSession,
   writeStoredSession,
 } from "@/shared/auth/session-storage";
+import { formatRoleLabel, formatVisitMode } from "@/shared/i18n/human-labels";
 import { useLocale } from "@/shared/i18n/locale-store";
 import {
   CalendarClock,
@@ -383,7 +385,7 @@ export function BookingWorkspace({
         tone: "error",
         text:
           res.status === 409
-            ? "Slot was just booked concurrently by another patient across a partner clinic."
+            ? "That time slot was just reserved by another patient. Please pick another time."
             : `Booking failed: ${res.error}`,
       });
       await handleSearchSlots();
@@ -392,7 +394,7 @@ export function BookingWorkspace({
 
     setBanner({
       tone: "success",
-      text: `Confirmed ${res.data.appointment.visitMode} booking with ${res.data.appointment.doctorName} at ${res.data.appointment.facilityName}.`,
+      text: `Confirmed ${formatVisitMode(res.data.appointment.visitMode)} booking with ${res.data.appointment.doctorName} at ${res.data.appointment.facilityName}.`,
     });
     await Promise.all([
       handleSearchSlots(),
@@ -548,7 +550,7 @@ export function BookingWorkspace({
               htmlFor="booking-date"
               className="block text-xs font-semibold text-slate-700"
             >
-              Consultation Date (UTC)
+              Preferred Date
             </label>
             <input
               id="booking-date"
@@ -714,7 +716,7 @@ export function BookingWorkspace({
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-mono-tabular text-sm font-bold text-slate-900">
                           {slot.slotStartIso.slice(11, 16)}–
-                          {slot.slotEndIso.slice(11, 16)} UTC
+                          {slot.slotEndIso.slice(11, 16)}
                         </span>
                         <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700">
                           {slot.visitMode === "TELEHEALTH" ? (
@@ -722,13 +724,22 @@ export function BookingWorkspace({
                           ) : (
                             <Stethoscope className="h-3 w-3 text-teal-700" />
                           )}
-                          {slot.visitMode}
+                          {formatVisitMode(slot.visitMode)}
                         </span>
                       </div>
-                      <p className="text-xs font-semibold text-slate-900">
-                        {slot.doctorName} · {slot.specialty}
-                      </p>
-                      <p className="text-xs text-slate-600">{slot.facilityName}</p>
+                      <div className="mt-2 flex items-center gap-2.5">
+                        <EntityAvatar
+                          name={slot.doctorName}
+                          role="DOCTOR"
+                          size="sm"
+                        />
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-semibold text-slate-900">
+                            {slot.doctorName} · {slot.specialty}
+                          </p>
+                          <p className="truncate text-xs text-slate-600">{slot.facilityName}</p>
+                        </div>
+                      </div>
                     </div>
 
                     <div className="mt-3 flex items-center justify-between gap-2 border-t border-slate-200 pt-2">
@@ -767,8 +778,13 @@ export function BookingWorkspace({
                       key={sched.id}
                       className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"
                     >
-                      <span className="font-semibold text-slate-900">
-                        {sched.doctorName} @ {sched.facilityName}
+                      <span className="flex items-center gap-2 font-semibold text-slate-900">
+                        <EntityAvatar
+                          name={sched.doctorName}
+                          role="DOCTOR"
+                          size="xs"
+                        />
+                        <span>{sched.doctorName} · {sched.facilityName}</span>
                       </span>
                       <span className="font-mono-tabular text-slate-600">
                         {WEEKDAY_LABELS[sched.dayOfWeek]} {sched.startTimeUtc}–
@@ -813,18 +829,26 @@ export function BookingWorkspace({
 
             {currentUser ? (
               <div className="mt-3 space-y-3">
-                <div className="rounded-xl border border-teal-200 bg-teal-50 p-3 text-xs">
-                  <p className="font-bold text-teal-950">
-                    {currentUser.fullName}
-                  </p>
-                  <p className="font-mono-tabular text-teal-800">
-                    {currentUser.role} · {currentUser.countryCode}
-                  </p>
+                <div className="flex items-center gap-3 rounded-xl border border-teal-200 bg-teal-50 p-3 text-xs">
+                  <EntityAvatar
+                    name={currentUser.fullName}
+                    role={currentUser.role}
+                    avatarUrl={currentUser.avatarUrl}
+                    size="sm"
+                  />
+                  <div className="min-w-0">
+                    <p className="truncate font-bold text-teal-950">
+                      {currentUser.fullName}
+                    </p>
+                    <p className="text-xs font-semibold text-teal-800">
+                      {formatRoleLabel(currentUser.role)} · {currentUser.countryCode}
+                    </p>
+                  </div>
                 </div>
 
                 <div className="flex items-center justify-between gap-2">
                   <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600">
-                    Scoped Bookings Queue
+                    Your Appointments
                   </h3>
                   <button
                     type="button"
@@ -856,7 +880,7 @@ export function BookingWorkspace({
                       >
                         <div className="flex items-center justify-between gap-2">
                           <span className="font-mono-tabular font-bold text-slate-900">
-                            {appt.slotStartIso.slice(0, 16).replace("T", " ")} UTC
+                            {appt.slotStartIso.slice(0, 16).replace("T", " ")}
                           </span>
                           <span
                             className={`rounded-full border px-2 py-0.5 font-mono-tabular text-[11px] font-semibold ${STATUS_STYLES[appt.status]}`}
@@ -864,12 +888,21 @@ export function BookingWorkspace({
                             {appt.status}
                           </span>
                         </div>
-                        <p className="mt-1 font-semibold text-slate-800">
-                          {appt.doctorName} · {appt.facilityName}
-                        </p>
-                        <p className="text-slate-600">
-                          Patient: {appt.patientName} ({appt.visitMode})
-                        </p>
+                        <div className="mt-2 flex items-center gap-2">
+                          <EntityAvatar
+                            name={appt.doctorName}
+                            role="DOCTOR"
+                            size="xs"
+                          />
+                          <div className="min-w-0">
+                            <p className="truncate font-semibold text-slate-800">
+                              {appt.doctorName} · {appt.facilityName}
+                            </p>
+                            <p className="truncate text-slate-600">
+                              Patient: {appt.patientName} ({formatVisitMode(appt.visitMode)})
+                            </p>
+                          </div>
+                        </div>
                         <div className="mt-2 flex flex-wrap gap-1.5">
                           {appt.status === "CONFIRMED" ? (
                             <button
@@ -1010,7 +1043,7 @@ export function BookingWorkspace({
                     id="booking-doctor-picker"
                     label="Doctor"
                     placeholder="Filter doctor by name or specialty..."
-                    emptyLabel="No doctors indexed in selected CountryPack"
+                    emptyLabel="No doctors listed in this region"
                     options={doctorPickerOptions}
                     value={schedDoctorId}
                     onChange={setSchedDoctorId}
@@ -1022,7 +1055,7 @@ export function BookingWorkspace({
                   id="booking-facility-picker"
                   label="Facility"
                   placeholder="Filter hospital or clinic by name..."
-                  emptyLabel="No verified facilities in selected CountryPack"
+                  emptyLabel="No clinics available in this region"
                   options={facilityPickerOptions}
                   value={schedFacilityId}
                   onChange={setSchedFacilityId}
@@ -1032,7 +1065,7 @@ export function BookingWorkspace({
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="block font-semibold text-slate-700">
-                      UTC Day
+                      Day of Week
                     </label>
                     <select
                       value={schedDay}
@@ -1048,7 +1081,7 @@ export function BookingWorkspace({
                   </div>
                   <div>
                     <label className="block font-semibold text-slate-700">
-                      Visit Mode
+                      Visit Type
                     </label>
                     <select
                       value={schedMode}
@@ -1057,13 +1090,13 @@ export function BookingWorkspace({
                       }
                       className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2"
                     >
-                      <option value="IN_PERSON">IN_PERSON</option>
-                      <option value="TELEHEALTH">TELEHEALTH</option>
+                      <option value="IN_PERSON">Clinic Visit</option>
+                      <option value="TELEHEALTH">Video Consultation</option>
                     </select>
                   </div>
                   <div>
                     <label className="block font-semibold text-slate-700">
-                      Start (UTC)
+                      Start Time
                     </label>
                     <input
                       type="text"
@@ -1074,7 +1107,7 @@ export function BookingWorkspace({
                   </div>
                   <div>
                     <label className="block font-semibold text-slate-700">
-                      End (UTC)
+                      End Time
                     </label>
                     <input
                       type="text"

@@ -45,7 +45,36 @@ export interface BuildServerOptions {
 export async function buildApiServer(
   options: BuildServerOptions,
 ): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
+  const app = Fastify({
+    logger: false,
+    bodyLimit: 1_048_576,
+  });
+
+  app.addHook("onSend", async (_request, reply) => {
+    reply.header("X-Content-Type-Options", "nosniff");
+    reply.header("X-Frame-Options", "DENY");
+    reply.header("Referrer-Policy", "strict-origin-when-cross-origin");
+    reply.header("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  });
+
+  app.setErrorHandler((error, _request, reply) => {
+    const errWithStatus = error as { statusCode?: number; message?: string };
+    const statusCode =
+      typeof errWithStatus.statusCode === "number" &&
+      errWithStatus.statusCode >= 400 &&
+      errWithStatus.statusCode < 500
+        ? errWithStatus.statusCode
+        : 500;
+
+    if (statusCode >= 500) {
+      return reply.status(500).send({ error: "INTERNAL_SERVER_ERROR" });
+    }
+
+    return reply.status(statusCode).send({
+      error: "REQUEST_REJECTED",
+      message: errWithStatus.message ?? "Request could not be processed.",
+    });
+  });
   const ownsPool = !options.pool;
   const ownsRedis = !options.redis;
   const pool = options.pool ?? createDbPool(options.databaseUrl);

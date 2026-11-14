@@ -57,6 +57,8 @@ describe("api slice 9 system-ops: health metrics, mobile telemetry & Redis rate 
       url: "/v1/metrics",
     });
     expect(metricsRes.statusCode).toBe(200);
+    expect(metricsRes.headers["x-content-type-options"]).toBe("nosniff");
+    expect(metricsRes.headers["x-frame-options"]).toBe("DENY");
     expect(metricsRes.headers["x-ratelimit-limit"]).toBe("4");
     expect(metricsRes.headers["x-ratelimit-remaining"]).toBe("3");
 
