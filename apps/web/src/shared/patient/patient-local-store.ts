@@ -23,11 +23,36 @@ let cachedBookmarksValue: readonly BookmarkItem[] = EMPTY_BOOKMARKS;
 let cachedPassesRaw: string | null = null;
 let cachedPassesValue: readonly GuestActivityPass[] = EMPTY_PASSES;
 
+function readStorageItem(key: string): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    // Restricted storage contexts (private mode / sandboxed iframes)
+    return null;
+  }
+}
+
+function writeStorageItem(key: string, value: string): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  try {
+    window.localStorage.setItem(key, value);
+    return true;
+  } catch {
+    // Storage quota exceeded or restricted storage context
+    return false;
+  }
+}
+
 function readBookmarksSnapshot(): readonly BookmarkItem[] {
   if (typeof window === "undefined") {
     return EMPTY_BOOKMARKS;
   }
-  const raw = window.localStorage.getItem(BOOKMARKS_KEY);
+  const raw = readStorageItem(BOOKMARKS_KEY);
   if (raw === cachedBookmarksRaw) {
     return cachedBookmarksValue;
   }
@@ -49,7 +74,7 @@ function readPassesSnapshot(): readonly GuestActivityPass[] {
   if (typeof window === "undefined") {
     return EMPTY_PASSES;
   }
-  const raw = window.localStorage.getItem(GUEST_PASSES_KEY);
+  const raw = readStorageItem(GUEST_PASSES_KEY);
   if (raw === cachedPassesRaw) {
     return cachedPassesValue;
   }
@@ -71,12 +96,21 @@ function subscribePatientLocal(onStoreChange: () => void): () => void {
   if (typeof window === "undefined") {
     return () => {};
   }
-  const handler = () => onStoreChange();
-  window.addEventListener("storage", handler);
-  window.addEventListener(PATIENT_LOCAL_EVENT, handler);
+  const storageHandler = (event: StorageEvent) => {
+    if (
+      event.key === null ||
+      event.key === BOOKMARKS_KEY ||
+      event.key === GUEST_PASSES_KEY
+    ) {
+      onStoreChange();
+    }
+  };
+  const localHandler = () => onStoreChange();
+  window.addEventListener("storage", storageHandler);
+  window.addEventListener(PATIENT_LOCAL_EVENT, localHandler);
   return () => {
-    window.removeEventListener("storage", handler);
-    window.removeEventListener(PATIENT_LOCAL_EVENT, handler);
+    window.removeEventListener("storage", storageHandler);
+    window.removeEventListener(PATIENT_LOCAL_EVENT, localHandler);
   };
 }
 
@@ -86,22 +120,28 @@ function emitPatientLocalChange(): void {
   }
 }
 
-function persistBookmarks(items: readonly BookmarkItem[]): void {
-  if (typeof window === "undefined") return;
+function persistBookmarks(items: readonly BookmarkItem[]): boolean {
+  if (typeof window === "undefined") return false;
   const serialized = JSON.stringify(items);
+  if (!writeStorageItem(BOOKMARKS_KEY, serialized)) {
+    return false;
+  }
   cachedBookmarksRaw = serialized;
   cachedBookmarksValue = items;
-  window.localStorage.setItem(BOOKMARKS_KEY, serialized);
   emitPatientLocalChange();
+  return true;
 }
 
-function persistPasses(passes: readonly GuestActivityPass[]): void {
-  if (typeof window === "undefined") return;
+function persistPasses(passes: readonly GuestActivityPass[]): boolean {
+  if (typeof window === "undefined") return false;
   const serialized = JSON.stringify(passes);
+  if (!writeStorageItem(GUEST_PASSES_KEY, serialized)) {
+    return false;
+  }
   cachedPassesRaw = serialized;
   cachedPassesValue = passes;
-  window.localStorage.setItem(GUEST_PASSES_KEY, serialized);
   emitPatientLocalChange();
+  return true;
 }
 
 /** Adds or removes a bookmarked provider/facility and notifies all mounted workspaces. */
@@ -111,8 +151,10 @@ export function toggleBookmark(
   const current = readBookmarksSnapshot();
   const exists = current.some((item) => item.id === entry.id);
   if (exists) {
-    persistBookmarks(current.filter((item) => item.id !== entry.id));
-    return false;
+    const persisted = persistBookmarks(
+      current.filter((item) => item.id !== entry.id),
+    );
+    return !persisted;
   }
   const parsed = BookmarkItemSchema.safeParse({
     ...entry,
@@ -121,8 +163,7 @@ export function toggleBookmark(
   if (!parsed.success) {
     return false;
   }
-  persistBookmarks([parsed.data, ...current].slice(0, 60));
-  return true;
+  return persistBookmarks([parsed.data, ...current].slice(0, 60));
 }
 
 /** Removes a specific bookmarked provider/facility by ID. */

@@ -21,6 +21,30 @@ export function formatByteSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
+export function matchesAcceptRule(file: File, accept: string): boolean {
+  const tokens = accept
+    .split(",")
+    .map((token) => token.trim().toLowerCase())
+    .filter(Boolean);
+  if (tokens.length === 0 || tokens.includes("*/*")) {
+    return true;
+  }
+
+  const fileType = file.type.toLowerCase();
+  const fileName = file.name.toLowerCase();
+
+  return tokens.some((token) => {
+    if (token.startsWith(".")) {
+      return fileName.endsWith(token);
+    }
+    if (token.endsWith("/*")) {
+      const prefix = token.slice(0, -1);
+      return fileType.startsWith(prefix);
+    }
+    return fileType === token;
+  });
+}
+
 export function FileUploadDropzone({
   id,
   label,
@@ -35,18 +59,73 @@ export function FileUploadDropzone({
   const generatedId = useId();
   const inputId = id ?? generatedId;
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const dragDepthRef = useRef(0);
   const [dragActive, setDragActive] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
 
   const isImage = selectedFile?.type.startsWith("image/") ?? false;
+  const clampedProgress =
+    typeof progressPercent === "number"
+      ? Math.max(0, Math.min(100, Math.round(progressPercent)))
+      : null;
+
+  function resetInputValue() {
+    if (inputRef.current) {
+      inputRef.current.value = "";
+    }
+  }
 
   function handleFiles(fileList: FileList | null) {
     const file = fileList?.[0] ?? null;
+    if (!file) {
+      setValidationError(null);
+      onFileSelected(null);
+      return;
+    }
+
+    if (file.size === 0) {
+      resetInputValue();
+      setValidationError("Selected file is empty.");
+      return;
+    }
+
+    if (file.size > maxBytes) {
+      resetInputValue();
+      setValidationError(
+        `File exceeds maximum size of ${formatByteSize(maxBytes)}.`,
+      );
+      return;
+    }
+
+    if (!matchesAcceptRule(file, accept)) {
+      resetInputValue();
+      setValidationError(`Unsupported file type for "${file.name}".`);
+      return;
+    }
+
+    setValidationError(null);
     onFileSelected(file);
+  }
+
+  function handleDragEnter(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    if (disabled) return;
+    dragDepthRef.current += 1;
+    setDragActive(true);
+  }
+
+  function handleDragLeave(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) {
+      setDragActive(false);
+    }
   }
 
   function handleDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
     event.stopPropagation();
+    dragDepthRef.current = 0;
     setDragActive(false);
     if (disabled) return;
     handleFiles(event.dataTransfer.files);
@@ -62,16 +141,18 @@ export function FileUploadDropzone({
       </label>
 
       <div
+        onDragEnter={handleDragEnter}
         onDragOver={(e) => {
           e.preventDefault();
-          if (!disabled) setDragActive(true);
         }}
-        onDragLeave={() => setDragActive(false)}
+        onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         className={`rounded-xl border-2 border-dashed p-3.5 transition-colors ${
           dragActive
             ? "border-teal-700 bg-teal-50/80"
-            : "border-slate-300 bg-slate-50/70 hover:border-teal-700/60"
+            : validationError
+              ? "border-red-300 bg-red-50/40"
+              : "border-slate-300 bg-slate-50/70 hover:border-teal-700/60"
         } ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
       >
         <input
@@ -119,7 +200,8 @@ export function FileUploadDropzone({
                 disabled={disabled}
                 aria-label={`Remove ${selectedFile.name}`}
                 onClick={() => {
-                  if (inputRef.current) inputRef.current.value = "";
+                  resetInputValue();
+                  setValidationError(null);
                   onFileSelected(null);
                 }}
                 className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:border-red-300 hover:text-red-700 active:scale-95"
@@ -153,16 +235,32 @@ export function FileUploadDropzone({
           </div>
         )}
 
-        {typeof progressPercent === "number" ? (
+        {validationError ? (
+          <p
+            role="alert"
+            className="mt-2 text-xs font-medium text-red-700"
+          >
+            {validationError}
+          </p>
+        ) : null}
+
+        {clampedProgress !== null ? (
           <div className="mt-2.5 space-y-1">
             <div className="flex justify-between font-mono-tabular text-[11px] font-semibold text-teal-900">
               <span>Uploading securely...</span>
-              <span>{progressPercent}%</span>
+              <span>{clampedProgress}%</span>
             </div>
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+            <div
+              role="progressbar"
+              aria-label="Upload progress"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={clampedProgress}
+              className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200"
+            >
               <div
                 className="h-full rounded-full bg-teal-700 transition-all"
-                style={{ width: `${Math.max(4, progressPercent)}%` }}
+                style={{ width: `${Math.max(4, clampedProgress)}%` }}
               />
             </div>
           </div>
