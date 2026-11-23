@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const VisitModeSchema = z.enum(["IN_PERSON", "TELEHEALTH"]);
+export const VisitModeSchema = z.enum(["IN_PERSON", "TELEHEALTH", "HOME_VISIT"]);
 
 export type VisitMode = z.infer<typeof VisitModeSchema>;
 
@@ -39,6 +39,7 @@ export const DoctorProfileSummarySchema = z.object({
   licenseNumber: z.string(),
   consultationFeeMinor: z.number().int().min(0),
   bio: z.string().nullable(),
+  avatarUrl: z.string().url().nullable().optional(),
   updatedAtIso: z.string().datetime(),
 });
 
@@ -68,11 +69,56 @@ export const CreateScheduleSchema = z
 
 export type CreateScheduleInput = z.infer<typeof CreateScheduleSchema>;
 
+export const UpdateScheduleSchema = z
+  .object({
+    facilityId: z.string().uuid().optional(),
+    dayOfWeek: z.coerce.number().int().min(0).max(6).optional(),
+    startTimeUtc: z
+      .string()
+      .regex(TIME_HH_MM_REGEX, "Expected HH:MM UTC")
+      .optional(),
+    endTimeUtc: z
+      .string()
+      .regex(TIME_HH_MM_REGEX, "Expected HH:MM UTC")
+      .optional(),
+    slotDurationMinutes: z.coerce.number().int().min(10).max(120).optional(),
+    visitMode: VisitModeSchema.optional(),
+    isActive: z.boolean().optional(),
+  })
+  .refine(
+    (data) => {
+      if (data.startTimeUtc && data.endTimeUtc) {
+        const dur = data.slotDurationMinutes ?? 10;
+        return (
+          parseHhMmToMinutes(data.endTimeUtc) -
+            parseHhMmToMinutes(data.startTimeUtc) >=
+          dur
+        );
+      }
+      return true;
+    },
+    {
+      message: "endTimeUtc must exceed startTimeUtc",
+      path: ["endTimeUtc"],
+    },
+  );
+
+export type UpdateScheduleInput = z.infer<typeof UpdateScheduleSchema>;
+
+export const DeleteScheduleResponseSchema = z.object({
+  deleted: z.literal(true),
+  scheduleId: z.string().uuid(),
+});
+export type DeleteScheduleResponse = z.infer<
+  typeof DeleteScheduleResponseSchema
+>;
+
 export const DoctorScheduleSummarySchema = z.object({
   id: z.string().uuid(),
   countryCode: z.string().regex(/^[A-Z]{2,4}$/),
   doctorUserId: z.string().uuid(),
   doctorName: z.string(),
+  doctorAvatarUrl: z.string().url().nullable().optional(),
   specialty: z.string(),
   facilityId: z.string().uuid(),
   facilityName: z.string(),
@@ -91,6 +137,12 @@ export const ScheduleListQuerySchema = z.object({
   countryCode: z.string().regex(/^[A-Z]{2,4}$/).optional(),
   facilityId: z.string().uuid().optional(),
   doctorUserId: z.string().uuid().optional(),
+  includeInactive: z
+    .union([
+      z.boolean(),
+      z.enum(["true", "false"]).transform((value) => value === "true"),
+    ])
+    .optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 
@@ -117,6 +169,7 @@ export const AvailableSlotSchema = z.object({
   scheduleId: z.string().uuid(),
   doctorUserId: z.string().uuid(),
   doctorName: z.string(),
+  doctorAvatarUrl: z.string().url().nullable().optional(),
   specialty: z.string(),
   facilityId: z.string().uuid(),
   facilityName: z.string(),
@@ -167,9 +220,11 @@ export const AppointmentSummarySchema = z.object({
   facilityName: z.string(),
   doctorUserId: z.string().uuid(),
   doctorName: z.string(),
+  doctorAvatarUrl: z.string().url().nullable().optional(),
   specialty: z.string(),
   patientUserId: z.string().uuid(),
   patientName: z.string(),
+  patientPhone: z.string().nullable().optional(),
   bookedByUserId: z.string().uuid(),
   visitMode: VisitModeSchema,
   slotStartIso: z.string().datetime(),

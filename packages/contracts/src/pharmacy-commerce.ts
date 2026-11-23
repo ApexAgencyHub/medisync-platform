@@ -32,6 +32,22 @@ export type CreatePharmacyProductInput = z.infer<
   typeof CreatePharmacyProductSchema
 >;
 
+export const UpdatePharmacyProductSchema = z.object({
+  sku: z.string().trim().min(2).max(48).optional(),
+  name: z.string().trim().min(2).max(160).optional(),
+  genericName: z.string().trim().max(160).nullable().optional(),
+  category: PharmacyProductCategorySchema.optional(),
+  dosageForm: z.string().trim().min(1).max(80).optional(),
+  strength: z.string().trim().min(1).max(64).optional(),
+  requiresPrescription: z.boolean().optional(),
+  priceMinor: z.coerce.number().int().min(10).max(100_000_000).optional(),
+  stockQty: z.coerce.number().int().min(0).max(100_000).optional(),
+  isActive: z.boolean().optional(),
+});
+export type UpdatePharmacyProductInput = z.infer<
+  typeof UpdatePharmacyProductSchema
+>;
+
 export const PharmacyProductSummarySchema = z.object({
   id: z.string().uuid(),
   countryCode: z.string().regex(/^[A-Z]{2,4}$/),
@@ -64,6 +80,10 @@ export const ListPharmacyProductsQuerySchema = z.object({
     .union([z.boolean(), z.enum(["true", "false"])])
     .optional()
     .transform((v) => (v === "true" || v === true ? true : undefined)),
+  includeInactive: z
+    .union([z.boolean(), z.enum(["true", "false"])])
+    .optional()
+    .transform((v) => (v === "true" || v === true ? true : undefined)),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 export type ListPharmacyProductsQuery = z.infer<
@@ -72,6 +92,7 @@ export type ListPharmacyProductsQuery = z.infer<
 
 export const PharmacyProductsResponseSchema = z.object({
   products: z.array(PharmacyProductSummarySchema),
+  deliveryFeeMinor: z.number().int().nonnegative().optional(),
 });
 export type PharmacyProductsResponse = z.infer<
   typeof PharmacyProductsResponseSchema

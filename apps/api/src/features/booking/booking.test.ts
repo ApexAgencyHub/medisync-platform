@@ -7,9 +7,12 @@ import type {
   AppointmentResponse,
   AppointmentsListResponse,
   AuthResponse,
+  DeleteScheduleResponse,
   DoctorProfileSummary,
   DoctorScheduleSummary,
   FacilitySummary,
+  ScheduleResponse,
+  SchedulesListResponse,
   SlotsListResponse,
 } from "@medisync/contracts";
 import { buildApiServer } from "../../server.js";
@@ -95,7 +98,7 @@ describe("api slice 3 booking: multi-clinic doctor schedules & transactional loc
   async function registerAccount(input: {
     email: string;
     fullName: string;
-    role: "PATIENT" | "DOCTOR" | "CLINIC_STAFF" | "DRIVER";
+    role: "PATIENT" | "DOCTOR" | "NURSE" | "CLINIC_STAFF" | "DRIVER";
     countryCode: string;
   }): Promise<AuthResponse> {
     const res = await app.inject({
@@ -429,5 +432,117 @@ describe("api slice 3 booking: multi-clinic doctor schedules & transactional loc
     expect(listDocRes.statusCode).toBe(200);
     const docList = listDocRes.json<AppointmentsListResponse>();
     expect(docList.appointments.some((a) => a.id === rebooked.id)).toBe(true);
+
+    // Doctor schedule supports choosing either workplace visit (IN_PERSON) or Video Call (TELEHEALTH) on remaining 09:30 slot
+    const flexSlotIso = "2026-11-16T09:30:00.000Z";
+    const telehealthSlotsRes = await app.inject({
+      method: "GET",
+      url: `/v1/booking/slots?countryCode=MA&date=${testDate}&doctorUserId=${doctor.user.id}&visitMode=TELEHEALTH&includeBooked=false`,
+    });
+    expect(telehealthSlotsRes.statusCode).toBe(200);
+    expect(
+      telehealthSlotsRes
+        .json<SlotsListResponse>()
+        .slots.some(
+          (s) => s.scheduleId === schedAlpha.id && s.visitMode === "TELEHEALTH",
+        ),
+    ).toBe(true);
+
+    const bookVideoOnClinicSched = await app.inject({
+      method: "POST",
+      url: "/v1/booking/appointments",
+      headers: { authorization: `Bearer ${patientB.token}` },
+      payload: {
+        scheduleId: schedAlpha.id,
+        slotStartIso: flexSlotIso,
+        visitMode: "TELEHEALTH",
+        reason: "Video follow-up preferred",
+      },
+    });
+    expect(bookVideoOnClinicSched.statusCode).toBe(201);
+    const videoAppt =
+      bookVideoOnClinicSched.json<AppointmentResponse>().appointment;
+    createdAppointmentIds.push(videoAppt.id);
+    expect(videoAppt.visitMode).toBe("TELEHEALTH");
+
+    // Reject HOME_VISIT on a doctor clinic/telehealth schedule
+    const rejectHomeRes = await app.inject({
+      method: "POST",
+      url: "/v1/booking/appointments",
+      headers: { authorization: `Bearer ${patientA.token}` },
+      payload: {
+        scheduleId: schedBeta.id,
+        slotStartIso: flexSlotIso,
+        visitMode: "HOME_VISIT",
+      },
+    });
+    expect(rejectHomeRes.statusCode).toBe(400);
+
+    // Pause / resume doctor schedule + list includeInactive filtering
+    const pauseSchedRes = await app.inject({
+      method: "PATCH",
+      url: `/v1/booking/schedules/${schedBeta.id}`,
+      headers: { authorization: `Bearer ${doctor.token}` },
+      payload: { isActive: false },
+    });
+    expect(pauseSchedRes.statusCode).toBe(200);
+    expect(pauseSchedRes.json<ScheduleResponse>().schedule.isActive).toBe(false);
+
+    const publicScheds = await app.inject({
+      method: "GET",
+      url: `/v1/booking/schedules?countryCode=MA&doctorUserId=${doctor.user.id}`,
+    });
+    expect(publicScheds.statusCode).toBe(200);
+    expect(
+      publicScheds.json<SchedulesListResponse>().schedules.some((s) => s.id === schedBeta.id),
+    ).toBe(false);
+
+    const allSchedsWithPaused = await app.inject({
+      method: "GET",
+      url: `/v1/booking/schedules?countryCode=MA&doctorUserId=${doctor.user.id}&includeInactive=true`,
+    });
+    expect(allSchedsWithPaused.statusCode).toBe(200);
+    expect(
+      allSchedsWithPaused.json<SchedulesListResponse>().schedules.some((s) => s.id === schedBeta.id),
+    ).toBe(true);
+
+    // Nurse (NURSE) publishes and deletes their own HOME_VISIT schedule while patient cannot tamper
+    const nurse = await registerAccount({
+      email: `nurse.book.${runSuffix}@medisync.ma`,
+      fullName: "Nora Benali",
+      role: "NURSE",
+      countryCode: "MA",
+    });
+    const nurseSchedRes = await app.inject({
+      method: "POST",
+      url: "/v1/booking/schedules",
+      headers: { authorization: `Bearer ${nurse.token}` },
+      payload: {
+        facilityId: clinicAlpha.id,
+        dayOfWeek: 3,
+        startTimeUtc: "14:00",
+        endTimeUtc: "16:00",
+        slotDurationMinutes: 30,
+        visitMode: "HOME_VISIT",
+      },
+    });
+    expect(nurseSchedRes.statusCode).toBe(201);
+    const nurseSched = nurseSchedRes.json<ScheduleResponse>().schedule;
+
+    const intruderPatch = await app.inject({
+      method: "PATCH",
+      url: `/v1/booking/schedules/${nurseSched.id}`,
+      headers: { authorization: `Bearer ${patientA.token}` },
+      payload: { isActive: false },
+    });
+    expect(intruderPatch.statusCode).toBe(403);
+
+    const deleteNurseSched = await app.inject({
+      method: "DELETE",
+      url: `/v1/booking/schedules/${nurseSched.id}`,
+      headers: { authorization: `Bearer ${nurse.token}` },
+    });
+    expect(deleteNurseSched.statusCode).toBe(200);
+    expect(deleteNurseSched.json<DeleteScheduleResponse>().deleted).toBe(true);
   });
 });

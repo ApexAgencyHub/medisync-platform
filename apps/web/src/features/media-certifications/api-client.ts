@@ -1,6 +1,8 @@
 import {
+  AdminUserMediaListResponseSchema,
   AuthenticatedUserSchema,
   ClinicalMediaObjectResponseSchema,
+  DeleteUserMediaResponseSchema,
   FacilityMediaDocumentResponseSchema,
   FacilityMediaListResponseSchema,
   FacilityPresignedUploadResponseSchema,
@@ -12,9 +14,13 @@ import {
   UserMediaListResponseSchema,
   UserPresignedUploadResponseSchema,
   type AdminFacilityMediaQuery,
+  type AdminUserMediaListResponse,
+  type AdminUserMediaQuery,
+  type ClinicalMediaCategory,
   type ClinicalMediaObjectResponse,
   type ClinicalMediaMimeType,
   type CertificationMimeType,
+  type DeleteUserMediaResponse,
   type FacilityMediaCategory,
   type FacilityMediaDocumentResponse,
   type FacilityMediaListResponse,
@@ -70,7 +76,7 @@ export function uploadBinaryToPresignedUrl(
       resolve({
         ok: false,
         error:
-          "Network or CORS error uploading binary directly to MinIO S3 storage.",
+          "Network error while uploading the document. Please retry.",
       });
     };
 
@@ -100,6 +106,7 @@ export async function uploadClinicalMediaEndToEnd(params: {
   token: string;
   patientUserId: string;
   labOrderId?: string;
+  mediaCategory?: ClinicalMediaCategory;
   file: File;
   mimeType: ClinicalMediaMimeType;
   onProgress?: (percent: number) => void;
@@ -111,6 +118,7 @@ export async function uploadClinicalMediaEndToEnd(params: {
   const input: PresignClinicalUploadInput = {
     patientUserId: params.patientUserId,
     ...(params.labOrderId ? { labOrderId: params.labOrderId } : {}),
+    ...(params.mediaCategory ? { mediaCategory: params.mediaCategory } : {}),
     fileName: params.file.name,
     mimeType: params.mimeType,
     sizeBytes: params.file.size,
@@ -151,7 +159,7 @@ export async function uploadClinicalMediaEndToEnd(params: {
   if (!putRes.ok) {
     return {
       ok: false,
-      error: putRes.error ?? "Direct S3 binary transfer failed.",
+      error: putRes.error ?? "Document transfer failed. Please retry.",
     };
   }
 
@@ -226,7 +234,7 @@ export async function uploadFacilityMediaEndToEnd(params: {
   if (!putRes.ok) {
     return {
       ok: false,
-      error: putRes.error ?? "Direct S3 binary upload failed.",
+      error: putRes.error ?? "Document upload failed. Please retry.",
     };
   }
 
@@ -366,7 +374,7 @@ export async function uploadUserMediaEndToEnd(params: {
   if (!putRes.ok) {
     return {
       ok: false,
-      error: putRes.error ?? "Direct S3 binary upload failed.",
+      error: putRes.error ?? "Document upload failed. Please retry.",
     };
   }
 
@@ -408,6 +416,31 @@ export function listMyUserMedia(
   );
 }
 
+export function listAllAdminUserMedia(
+  apiBaseUrl: string,
+  token: string,
+  query: Partial<AdminUserMediaQuery> = {},
+): Promise<ApiResult<AdminUserMediaListResponse>> {
+  const qs = new URLSearchParams();
+  if (query.countryCode) qs.set("countryCode", query.countryCode);
+  if (query.userId) qs.set("userId", query.userId);
+  if (query.reviewStatus) qs.set("reviewStatus", query.reviewStatus);
+  if (query.category) qs.set("category", query.category);
+  if (query.limit) qs.set("limit", String(query.limit));
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+
+  return requestTyped(
+    `${apiBaseUrl}/v1/admin/user-media${suffix}`,
+    {
+      method: "GET",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    },
+    AdminUserMediaListResponseSchema,
+  );
+}
+
 export function listAdminUserMedia(
   apiBaseUrl: string,
   token: string,
@@ -422,6 +455,23 @@ export function listAdminUserMedia(
       },
     },
     UserMediaListResponseSchema,
+  );
+}
+
+export function deleteMyUserMedia(
+  apiBaseUrl: string,
+  token: string,
+  mediaId: string,
+): Promise<ApiResult<DeleteUserMediaResponse>> {
+  return requestTyped(
+    `${apiBaseUrl}/v1/users/me/media/${encodeURIComponent(mediaId)}`,
+    {
+      method: "DELETE",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    },
+    DeleteUserMediaResponseSchema,
   );
 }
 

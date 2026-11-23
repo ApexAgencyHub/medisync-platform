@@ -1,23 +1,48 @@
+import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { listCountryPacks } from "@medisync/country-packs";
-import { PortalWorkspace } from "@/features/auth-portal";
-import { AppHeader } from "@/shared/ui/AppHeader";
+import { PatientPortalWorkspace } from "@/features/auth-portal";
+import { resolvePublicApiUrl } from "@/shared/config/deployment";
+import { WorkspaceShell } from "@/shared/ui/WorkspaceShell";
+
+export const metadata: Metadata = {
+  title: "Patient & Family Sign In — MediSync Global",
+  description:
+    "Sign in or register as a patient or family caregiver using SMS OTP, phone, email, or Google to book care and track visits.",
+};
 
 export const dynamic = "force-dynamic";
 
-export default function PortalPage() {
+type SearchParamValue = string | string[] | undefined;
+
+function firstParam(val: SearchParamValue): string | undefined {
+  return Array.isArray(val) ? val[0] : val;
+}
+
+export default async function PortalPage({
+  searchParams,
+}: {
+  searchParams?: Promise<Record<string, SearchParamValue>>;
+}) {
+  const resolved = searchParams ? await searchParams : {};
+  const track = firstParam(resolved.track);
+  const tab = firstParam(resolved.tab);
+  const role = firstParam(resolved.role);
+
+  if (track === "staff" || tab === "facility") {
+    const query = new URLSearchParams();
+    if (tab && tab !== "signin") query.set("tab", tab);
+    if (role) query.set("role", role);
+    const qs = query.toString();
+    redirect(qs ? `/pro?${qs}` : "/pro");
+  }
+
   const packs = [...listCountryPacks()];
-  const apiBaseUrl =
-    process.env.API_URL ??
-    process.env.NEXT_PUBLIC_API_URL ??
-    "http://127.0.0.1:4000";
+  const apiBaseUrl = resolvePublicApiUrl();
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <AppHeader activeRoute="/portal" />
-
-      <main className="mx-auto max-w-7xl px-4 py-7 sm:px-6 lg:px-8">
-        <PortalWorkspace packs={packs} apiBaseUrl={apiBaseUrl} />
-      </main>
-    </div>
+    <WorkspaceShell activeRoute="/portal" maxWidthClass="max-w-5xl">
+      <PatientPortalWorkspace packs={packs} apiBaseUrl={apiBaseUrl} />
+    </WorkspaceShell>
   );
 }

@@ -4,12 +4,17 @@ import type { Pool } from "pg";
 import { z } from "zod";
 import {
   AdminFacilityMediaQuerySchema,
+  AdminUserMediaQuerySchema,
   PresignFacilityMediaSchema,
   PresignUserMediaSchema,
   ReviewFacilityDocumentSchema,
   type UserRole,
 } from "@medisync/contracts";
 import { authenticateRequest } from "../foundation/index.js";
+import {
+  bumpCacheGeneration,
+  DIRECTORY_CACHE_GEN_KEY,
+} from "../../shared/redis/cache.js";
 import type { S3PresignConfig } from "../../shared/storage/s3-presign.js";
 import {
   MediaBadRequestError,
@@ -18,7 +23,9 @@ import {
   MediaNotFoundError,
   confirmFacilityMediaUpload,
   confirmUserMediaUpload,
+  deleteUserMediaScoped,
   listAdminFacilityMediaScoped,
+  listAdminUserMediaScoped,
   listFacilityMediaScoped,
   listUserMediaScoped,
   presignFacilityMediaUpload,
@@ -73,8 +80,12 @@ export async function registerMediaCertificationRoutes(
     redis?: Redis;
     authSecret: string;
     s3Config: S3PresignConfig;
+    requireProviderVerification?: boolean;
   },
 ): Promise<void> {
+  const verifiedAdminOptions = {
+    requireVerifiedProvider: Boolean(deps.requireProviderVerification),
+  };
   app.post<{ Params: { id: string } }>(
     "/v1/facilities/:id/media/presign-upload",
     async (request, reply) => {
@@ -171,6 +182,7 @@ export async function registerMediaCertificationRoutes(
       reply,
       { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       ADMIN_MEDIA_VIEWER_ROLES,
+      verifiedAdminOptions,
     );
     if (!claims) return;
 
@@ -200,6 +212,7 @@ export async function registerMediaCertificationRoutes(
         reply,
         { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
         OPS_ADMIN_ONLY,
+        verifiedAdminOptions,
       );
       if (!claims) return;
 
@@ -275,6 +288,9 @@ export async function registerMediaCertificationRoutes(
           claims,
           deps.s3Config,
         );
+        if (result.document.category === "AVATAR") {
+          await bumpCacheGeneration(deps.redis, DIRECTORY_CACHE_GEN_KEY);
+        }
         return result;
       } catch (err) {
         return handleMediaError(err, reply);
@@ -303,6 +319,62 @@ export async function registerMediaCertificationRoutes(
     }
   });
 
+  app.delete<{ Params: { mediaId: string } }>(
+    "/v1/users/me/media/:mediaId",
+    async (request, reply) => {
+      const claims = await authenticateRequest(request, reply, {
+        authSecret: deps.authSecret,
+        pool: deps.pool,
+        redis: deps.redis,
+      });
+      if (!claims) return;
+
+      const params = MediaIdParamSchema.safeParse(request.params);
+      if (!params.success) {
+        return reply.status(400).send({ error: "INVALID_MEDIA_ID" });
+      }
+
+      try {
+        return await deleteUserMediaScoped(
+          deps.pool,
+          params.data.mediaId,
+          claims,
+          deps.s3Config,
+        );
+      } catch (err) {
+        return handleMediaError(err, reply);
+      }
+    },
+  );
+
+  app.get("/v1/admin/user-media", async (request, reply) => {
+    const claims = await authenticateRequest(
+      request,
+      reply,
+      { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
+      ADMIN_MEDIA_VIEWER_ROLES,
+      verifiedAdminOptions,
+    );
+    if (!claims) return;
+
+    const query = AdminUserMediaQuerySchema.safeParse(request.query);
+    if (!query.success) {
+      return reply.status(400).send({ error: "INVALID_USER_MEDIA_QUERY" });
+    }
+
+    try {
+      const documents = await listAdminUserMediaScoped(
+        deps.pool,
+        claims,
+        deps.s3Config,
+        query.data,
+      );
+      return { documents };
+    } catch (err) {
+      return handleMediaError(err, reply);
+    }
+  });
+
   app.get<{ Params: { id: string } }>(
     "/v1/admin/users/:id/media",
     async (request, reply) => {
@@ -311,6 +383,7 @@ export async function registerMediaCertificationRoutes(
         reply,
         { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
         ADMIN_MEDIA_VIEWER_ROLES,
+        verifiedAdminOptions,
       );
       if (!claims) return;
 
@@ -341,6 +414,7 @@ export async function registerMediaCertificationRoutes(
         reply,
         { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
         OPS_ADMIN_ONLY,
+        verifiedAdminOptions,
       );
       if (!claims) return;
 

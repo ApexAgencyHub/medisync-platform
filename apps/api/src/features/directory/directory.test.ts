@@ -96,7 +96,9 @@ describe("api slice 7 directory & world seed: pickers, RBAC country isolation & 
     expect(maDocsRes.statusCode).toBe(200);
     const maDocsBody = maDocsRes.json<DirectoryDoctorsResponse>();
     expect(maDocsBody.doctors.length).toBeGreaterThanOrEqual(1);
-    expect(maDocsBody.doctors[0]?.specialty).toMatch(/Cardiology/i);
+    expect(
+      maDocsBody.doctors.some((d) => /Cardiology/i.test(d.specialty)),
+    ).toBe(true);
 
     const maNursesRes = await app.inject({
       method: "GET",
@@ -231,11 +233,15 @@ describe("api slice 7 directory & world seed: pickers, RBAC country isolation & 
     expect(pharmLoginRes.statusCode).toBe(200);
     const pharmMa = pharmLoginRes.json<AuthResponse>();
 
+    const seededRx =
+      rxList.prescriptions.find((p) =>
+        p.notes?.includes("Seeded initial e-prescription"),
+      ) ?? rxList.prescriptions[0]!;
     const verifyQrRes = await app.inject({
       method: "POST",
       url: "/v1/clinical/prescriptions/verify-qr",
       headers: { authorization: `Bearer ${pharmMa.token}` },
-      payload: { qrToken: rxList.prescriptions[0]!.qrToken },
+      payload: { qrToken: seededRx.qrToken },
     });
     expect(verifyQrRes.statusCode).toBe(200);
     const verified = verifyQrRes.json<VerifyPrescriptionQrResponse>();

@@ -37,7 +37,7 @@
       ]
     },
     "extra": {
-      "apiBaseUrl": "http://127.0.0.1:4200",
+      "apiBaseUrl": "http://127.0.0.1:4000",
       "eas": {
         "projectId": "medisync-global-production-mobile"
       }

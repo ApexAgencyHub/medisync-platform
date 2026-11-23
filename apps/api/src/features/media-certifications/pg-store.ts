@@ -1,10 +1,13 @@
 import crypto from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import {
+  AdminUserMediaItemSchema,
   FacilityMediaDocumentSchema,
   MAX_MEDIA_UPLOAD_BYTES,
   UserMediaDocumentSchema,
   type AdminFacilityMediaQuery,
+  type AdminUserMediaItem,
+  type AdminUserMediaQuery,
   type FacilityMediaDocument,
   type FacilityPresignedUploadResponse,
   type PresignFacilityMediaInput,
@@ -23,6 +26,7 @@ import {
   S3InvalidSignatureError,
   S3ObjectNotFoundError,
   createSigV4PresignedUrl,
+  deleteS3Object,
   inspectUploadedS3Object,
   sanitizeUploadFileName,
   type S3PresignConfig,
@@ -126,6 +130,25 @@ function hydrateUserDocument(
   });
 }
 
+const FACILITY_DOCUMENT_STAFF_ROLES = new Set<string>([
+  "HOSPITAL_ADMIN",
+  "CLINIC_STAFF",
+  "DOCTOR",
+  "NURSE",
+  "PHARMACIST",
+  "LAB_TECH",
+]);
+
+function isAssignedFacilityDocumentStaff(
+  actor: Pick<AuthTokenClaims, "role" | "facilityId">,
+  facilityId: string,
+): boolean {
+  return (
+    actor.facilityId === facilityId &&
+    FACILITY_DOCUMENT_STAFF_ROLES.has(actor.role)
+  );
+}
+
 async function assertFacilityManagePermission(
   db: Pick<Pool, "query"> | PoolClient,
   facilityId: string,
@@ -156,13 +179,7 @@ async function assertFacilityManagePermission(
   }
 
   const isOwner = fac.ownerUserId === actor.sub;
-  const isAssignedStaff =
-    actor.facilityId === fac.id &&
-    (actor.role === "HOSPITAL_ADMIN" ||
-      actor.role === "CLINIC_STAFF" ||
-      actor.role === "DOCTOR" ||
-      actor.role === "PHARMACIST" ||
-      actor.role === "LAB_TECH");
+  const isAssignedStaff = isAssignedFacilityDocumentStaff(actor, fac.id);
 
   if (!isOwner && !isAssignedStaff) {
     throw new MediaForbiddenError(
@@ -401,9 +418,8 @@ export async function listFacilityMediaScoped(
 
   const canViewSensitiveDocs =
     actor.role === "OPS_ADMIN" ||
-    (actor.role === "HOSPITAL_ADMIN" &&
-      (actor.facilityId === fac.id || fac.ownerUserId === actor.sub)) ||
-    fac.ownerUserId === actor.sub;
+    fac.ownerUserId === actor.sub ||
+    isAssignedFacilityDocumentStaff(actor, fac.id);
 
   const res = await pool.query(
     `SELECT ${FACILITY_MEDIA_SELECT}
@@ -923,4 +939,161 @@ export async function reviewUserDocumentAdmin(
     refreshed.rows[0] as Record<string, unknown>,
     s3Config,
   );
+}
+
+export async function listAdminUserMediaScoped(
+  pool: Pool,
+  actor: AuthTokenClaims,
+  s3Config: S3PresignConfig,
+  query: AdminUserMediaQuery,
+): Promise<AdminUserMediaItem[]> {
+  const effectiveCountry =
+    actor.role === "OPS_ADMIN"
+      ? (query.countryCode?.trim().toUpperCase() ?? null)
+      : actor.countryCode;
+
+  if (
+    actor.role !== "OPS_ADMIN" &&
+    query.countryCode &&
+    query.countryCode.trim().toUpperCase() !== actor.countryCode
+  ) {
+    throw new MediaForbiddenError(
+      "Hospital admins may only inspect user credentials in their assigned CountryPack.",
+    );
+  }
+
+  const res = await pool.query<Record<string, unknown>>(
+    `SELECT
+       d.id,
+       d.country_code AS "countryCode",
+       d.user_id AS "userId",
+       d.category,
+       d.object_key AS "objectKey",
+       d.file_name AS "fileName",
+       d.mime_type AS "mimeType",
+       d.size_bytes AS "sizeBytes",
+       d.confirmed_size_bytes AS "confirmedSizeBytes",
+       d.upload_status AS "uploadStatus",
+       d.review_status AS "reviewStatus",
+       d.reviewer_note AS "reviewerNote",
+       d.reviewed_by_user_id AS "reviewedByUserId",
+       d.sha256_checksum AS "sha256Checksum",
+       CASE WHEN d.reviewed_at IS NULL THEN NULL ELSE to_char(d.reviewed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "reviewedAtIso",
+       to_char(d.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso",
+       u.full_name AS "userName",
+       u.email AS "userEmail",
+       u.role AS "userRole",
+       u.account_status AS "accountStatus",
+       u.credential_verified AS "credentialVerified"
+     FROM user_media_documents d
+     JOIN users u ON u.id = d.user_id
+     WHERE d.category <> 'AVATAR'
+       AND ($1::text IS NULL OR d.country_code = $1)
+       AND ($2::uuid IS NULL OR d.user_id = $2)
+       AND ($3::text IS NULL OR d.review_status = $3)
+       AND ($4::text IS NULL OR d.category = $4)
+     ORDER BY
+       CASE WHEN d.review_status = 'PENDING_REVIEW' THEN 0 ELSE 1 END ASC,
+       d.created_at DESC
+     LIMIT $5`,
+    [
+      effectiveCountry,
+      query.userId ?? null,
+      query.reviewStatus ?? null,
+      query.category ?? null,
+      query.limit,
+    ],
+  );
+
+  return res.rows.map((row) =>
+    AdminUserMediaItemSchema.parse({
+      ...row,
+      downloadUrl: createSigV4PresignedUrl({
+        config: s3Config,
+        method: "GET",
+        objectKey: String(row.objectKey),
+      }),
+    }),
+  );
+}
+
+export async function deleteUserMediaScoped(
+  pool: Pool,
+  mediaId: string,
+  actor: AuthTokenClaims,
+  s3Config?: S3PresignConfig,
+): Promise<{ deleted: true; mediaId: string }> {
+  const client = await pool.connect();
+  let deletedObjectKey: string | null = null;
+  try {
+    await client.query("BEGIN");
+    const existingRes = await client.query<{
+      id: string;
+      userId: string;
+      countryCode: string;
+      category: string;
+      reviewStatus: string;
+      objectKey: string;
+    }>(
+      `SELECT
+         id,
+         user_id AS "userId",
+         country_code AS "countryCode",
+         category,
+         review_status AS "reviewStatus",
+         object_key AS "objectKey"
+       FROM user_media_documents
+       WHERE id = $1
+       FOR UPDATE`,
+      [mediaId],
+    );
+    const existing = existingRes.rows[0];
+    if (!existing) {
+      throw new MediaNotFoundError("User credential document not found.");
+    }
+    if (existing.userId !== actor.sub && actor.role !== "OPS_ADMIN") {
+      throw new MediaForbiddenError(
+        "Cannot delete another user's credential document.",
+      );
+    }
+    if (existing.reviewStatus === "APPROVED" && actor.role !== "OPS_ADMIN") {
+      throw new MediaBadRequestError(
+        "Approved compliance documents are locked for audit history.",
+      );
+    }
+
+    await client.query(`DELETE FROM user_media_documents WHERE id = $1`, [
+      mediaId,
+    ]);
+    if (existing.category === "PROFILE_AVATAR") {
+      await client.query(
+        `UPDATE users SET avatar_object_key = NULL WHERE id = $1 AND avatar_object_key = $2`,
+        [existing.userId, existing.objectKey],
+      );
+    }
+    deletedObjectKey = existing.objectKey;
+    await appendAuditLog(client, {
+      countryCode: existing.countryCode,
+      actorId: actor.sub,
+      actorRole: actor.role,
+      action: "USER_MEDIA_DELETED",
+      resourceType: "user_media",
+      resourceId: mediaId,
+      metadata: {
+        category: existing.category,
+        previousReviewStatus: existing.reviewStatus,
+      },
+    });
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  if (s3Config && deletedObjectKey) {
+    await deleteS3Object(s3Config, deletedObjectKey);
+  }
+  return { deleted: true as const, mediaId };
 }

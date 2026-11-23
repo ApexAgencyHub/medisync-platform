@@ -9,6 +9,7 @@ import {
 } from "@medisync/contracts";
 
 const DRIVER_STATE_TTL_SECONDS = 120;
+const DRIVER_OFF_DUTY_TTL_SECONDS = 86_400;
 
 const StoredDriverStateSchema = z.object({
   driverId: z.string().uuid(),
@@ -26,6 +27,24 @@ function driverGeoKey(countryCode: string): string {
 
 function driverStateKey(countryCode: string, driverId: string): string {
   return `medisync:driver:state:${countryCode}:${driverId}`;
+}
+
+export function driverOffDutyKey(driverId: string): string {
+  return `medisync:driver:off_duty:${driverId}`;
+}
+
+export async function isDriverOffDuty(
+  redis: Redis,
+  driverId: string,
+): Promise<boolean> {
+  return (await redis.exists(driverOffDutyKey(driverId))) === 1;
+}
+
+export async function clearDriverOffDuty(
+  redis: Redis,
+  driverId: string,
+): Promise<void> {
+  await redis.del(driverOffDutyKey(driverId));
 }
 
 export function dispatchPubSubChannel(countryCode: string): string {
@@ -56,14 +75,21 @@ export async function upsertDriverLocation(
 
   const geoKey = driverGeoKey(input.countryCode);
   const stateKey = driverStateKey(input.countryCode, input.driverId);
+  const offDutyKey = driverOffDutyKey(input.driverId);
 
   if (input.status === "OFF_DUTY") {
-    await redis.multi().zrem(geoKey, input.driverId).del(stateKey).exec();
+    await redis
+      .multi()
+      .zrem(geoKey, input.driverId)
+      .del(stateKey)
+      .set(offDutyKey, "1", "EX", DRIVER_OFF_DUTY_TTL_SECONDS)
+      .exec();
   } else {
     await redis
       .multi()
       .geoadd(geoKey, input.lng, input.lat, input.driverId)
       .set(stateKey, JSON.stringify(state), "EX", DRIVER_STATE_TTL_SECONDS)
+      .del(offDutyKey)
       .exec();
   }
 

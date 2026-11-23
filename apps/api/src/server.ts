@@ -1,12 +1,18 @@
 import crypto from "node:crypto";
 import Fastify, { type FastifyInstance } from "fastify";
+import compress from "@fastify/compress";
+import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import type { Redis } from "ioredis";
 import type { Pool } from "pg";
-import { registerFoundationRoutes } from "./features/foundation/index.js";
+import {
+  registerFoundationRoutes,
+  SESSION_COOKIE_NAME,
+} from "./features/foundation/index.js";
 import { registerCountryPackRoutes } from "./features/country-packs/index.js";
 import { registerMapsDispatchRoutes } from "./features/maps-dispatch/index.js";
 import { registerBookingRoutes } from "./features/booking/index.js";
+import { registerTelehealthRoutes } from "./features/telehealth/index.js";
 import { registerClinicalRoutes } from "./features/clinical-pharmacy-labs/index.js";
 import { registerAdminOpsRoutes } from "./features/admin-ops/index.js";
 import { registerMediaCertificationRoutes } from "./features/media-certifications/index.js";
@@ -18,14 +24,18 @@ import { registerUserRecoveryRoutes } from "./features/user-recovery/index.js";
 import { registerPharmacyCommerceRoutes } from "./features/pharmacy-commerce/index.js";
 import { registerMedicalPlatformRoutes } from "./features/medical-platform/index.js";
 import {
+  recordHttpMetric,
   registerApiRateLimiterHook,
   registerSystemOpsRoutes,
 } from "./features/system-ops/index.js";
 import { createDbPool } from "./shared/db/pool.js";
 import { runMigrations } from "./shared/db/migrate.js";
+import { readOptionalEnvBool, readOptionalEnvString } from "./shared/env.js";
 import { createRedisClient } from "./shared/redis/client.js";
+import { closeRedisPubSubHub } from "./shared/redis/pubsub-hub.js";
 import {
   DEFAULT_DEV_S3_CONFIG,
+  ensureS3BucketCors,
   ensureS3BucketExists,
   type S3PresignConfig,
 } from "./shared/storage/s3-presign.js";
@@ -45,10 +55,21 @@ export interface BuildServerOptions {
   rateLimitKeyPrefix?: string;
   allowPublicRegistration?: boolean;
   requireProviderVerification?: boolean;
+  googleClientId?: string;
+  googleTokenVerifier?: (idToken: string) => Promise<{
+    sub: string;
+    email: string | null;
+    emailVerified: boolean;
+    fullName: string | null;
+  } | null>;
   dbPoolMax?: number;
   dbStatementTimeoutMs?: number;
   trustProxy?: boolean;
   enableRequestLogs?: boolean;
+  allowSimulatedPayments?: boolean | undefined;
+  paymentWebhookSecret?: string | undefined;
+  driverOfferTtlMs?: number | undefined;
+  s3AutoConfigureCors?: boolean | undefined;
 }
 
 export async function buildApiServer(
@@ -98,6 +119,27 @@ export async function buildApiServer(
         "max-age=31536000; includeSubDomains",
       );
     }
+    const existingCacheControl = reply.getHeader("cache-control");
+    if (
+      !existingCacheControl &&
+      (request.url.startsWith("/v1/auth") ||
+        request.url.startsWith("/v1/users") ||
+        request.url.startsWith("/v1/clinical") ||
+        request.url.startsWith("/v1/admin") ||
+        request.url.startsWith("/v1/billing") ||
+        request.url.startsWith("/v1/pharmacy/orders") ||
+        request.url.startsWith("/v1/dispatch") ||
+        request.url.startsWith("/v1/booking") ||
+        request.url.startsWith("/v1/telehealth") ||
+        request.url.startsWith("/v1/media") ||
+        request.url.startsWith("/v1/facilities"))
+    ) {
+      reply.header("Cache-Control", "private, no-store");
+    }
+  });
+
+  app.addHook("onResponse", async (request, reply) => {
+    recordHttpMetric(request.method, reply.statusCode, reply.elapsedTime);
   });
 
   app.setErrorHandler((error, request, reply) => {
@@ -140,19 +182,99 @@ export async function buildApiServer(
   }
 
   const allowedOrigins = options.corsOrigins ?? [];
+  await app.register(cookie);
+  await app.register(compress, {
+    global: true,
+    threshold: 1024,
+  });
+
+  // CSRF origin guard for HttpOnly cookie-authenticated state-changing requests
+  app.addHook("onRequest", async (request, reply) => {
+    if (
+      request.method === "GET" ||
+      request.method === "HEAD" ||
+      request.method === "OPTIONS"
+    ) {
+      return;
+    }
+    if (request.headers.authorization) {
+      return;
+    }
+    const sessionCookie = request.cookies?.[SESSION_COOKIE_NAME];
+    if (!sessionCookie) {
+      return;
+    }
+    const originHeader =
+      typeof request.headers.origin === "string"
+        ? request.headers.origin
+        : undefined;
+    const refererHeader =
+      typeof request.headers.referer === "string"
+        ? request.headers.referer
+        : undefined;
+    const secFetchSite =
+      typeof request.headers["sec-fetch-site"] === "string"
+        ? request.headers["sec-fetch-site"].toLowerCase()
+        : undefined;
+    if (secFetchSite === "cross-site") {
+      return reply.status(403).send({
+        error: "CSRF_ORIGIN_REJECTED",
+        message: "Cross-site state-changing cookie requests are forbidden.",
+      });
+    }
+    let effectiveOrigin = originHeader;
+    if (!effectiveOrigin && refererHeader) {
+      try {
+        effectiveOrigin = new URL(refererHeader).origin;
+      } catch {
+        effectiveOrigin = undefined;
+      }
+    }
+    if (
+      effectiveOrigin &&
+      allowedOrigins.length > 0 &&
+      !allowedOrigins.includes(effectiveOrigin)
+    ) {
+      return reply.status(403).send({
+        error: "CSRF_ORIGIN_REJECTED",
+        message: "Cross-site state-changing cookie requests are forbidden.",
+      });
+    }
+  });
+
   await app.register(cors, {
     origin: (origin, callback) => {
       if (!origin || allowedOrigins.includes(origin)) {
         callback(null, true);
         return;
       }
-      callback(new Error("Origin not allowed by CORS"), false);
+      callback(null, false);
     },
+    methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: [
+      "Authorization",
+      "Content-Type",
+      "X-Requested-With",
+      "X-MediSync-Signature",
+    ],
     credentials: true,
   });
 
   const s3Config = options.s3Config ?? DEFAULT_DEV_S3_CONFIG;
   await ensureS3BucketExists(s3Config);
+  const autoConfigureS3Cors =
+    options.s3AutoConfigureCors ??
+    readOptionalEnvBool("S3_AUTO_CONFIGURE_CORS") ??
+    false;
+  if (autoConfigureS3Cors && allowedOrigins.length > 0) {
+    const corsOk = await ensureS3BucketCors(s3Config, allowedOrigins);
+    if (!corsOk) {
+      app.log.warn(
+        { bucket: s3Config.bucket, endpoint: s3Config.endpoint },
+        "S3 PutBucketCors did not succeed (MinIO configures CORS via MINIO_API_CORS_ALLOW_ORIGIN; on AWS S3/R2 check s3:PutBucketCORS permission).",
+      );
+    }
+  }
 
   const envRateLimit = Number.parseInt(
     process.env.RATE_LIMIT_MAX_PER_MIN ?? "600",
@@ -180,10 +302,10 @@ export async function buildApiServer(
 
   const allowPublicRegistration =
     options.allowPublicRegistration ??
-    process.env.ALLOW_PUBLIC_REGISTRATION !== "false";
+    (readOptionalEnvBool("ALLOW_PUBLIC_REGISTRATION") ?? true);
   const requireProviderVerification =
     options.requireProviderVerification ??
-    process.env.REQUIRE_PROVIDER_VERIFICATION === "true";
+    (readOptionalEnvBool("REQUIRE_PROVIDER_VERIFICATION") ?? !isTestEnv);
 
   const resolvedRateLimitKeyPrefix =
     options.rateLimitKeyPrefix ??
@@ -200,12 +322,20 @@ export async function buildApiServer(
       : {}),
   });
 
+  const resolvedGoogleClientId =
+    options.googleClientId ?? readOptionalEnvString("GOOGLE_CLIENT_ID");
+
   await registerFoundationRoutes(app, {
     pool,
     redis,
     authSecret: options.authSecret,
     s3Config,
     allowPublicRegistration,
+    requireProviderVerification,
+    ...(resolvedGoogleClientId ? { googleClientId: resolvedGoogleClientId } : {}),
+    ...(options.googleTokenVerifier
+      ? { googleTokenVerifier: options.googleTokenVerifier }
+      : {}),
   });
   await registerCountryPackRoutes(app);
   await registerMapsDispatchRoutes(app, {
@@ -214,11 +344,23 @@ export async function buildApiServer(
     authSecret: options.authSecret,
     corsOrigins: allowedOrigins,
     requireProviderVerification,
+    ...(options.driverOfferTtlMs !== undefined
+      ? { driverOfferTtlMs: options.driverOfferTtlMs }
+      : {}),
   });
   await registerBookingRoutes(app, {
     pool,
     redis,
     authSecret: options.authSecret,
+    s3Config,
+    requireProviderVerification,
+  });
+  await registerTelehealthRoutes(app, {
+    pool,
+    redis,
+    authSecret: options.authSecret,
+    corsOrigins: allowedOrigins,
+    s3Config,
     requireProviderVerification,
   });
   await registerClinicalRoutes(app, {
@@ -233,24 +375,28 @@ export async function buildApiServer(
     redis,
     authSecret: options.authSecret,
     requireProviderVerification,
+    allowSimulatedPayments: options.allowSimulatedPayments,
   });
   await registerAdminOpsRoutes(app, {
     pool,
     redis,
     authSecret: options.authSecret,
     s3Config,
+    requireProviderVerification,
   });
   await registerMediaCertificationRoutes(app, {
     pool,
     redis,
     authSecret: options.authSecret,
     s3Config,
+    requireProviderVerification,
   });
   await registerDirectoryRoutes(app, {
     pool,
     redis,
     authSecret: options.authSecret,
     s3Config,
+    requireProviderVerification,
   });
   await registerUserRecoveryRoutes(app, {
     pool,
@@ -263,6 +409,9 @@ export async function buildApiServer(
     redis,
     authSecret: options.authSecret,
     s3Config,
+    requireProviderVerification,
+    allowSimulatedPayments: options.allowSimulatedPayments,
+    paymentWebhookSecret: options.paymentWebhookSecret,
   });
   await registerSystemOpsRoutes(app, { pool, redis });
 
@@ -270,16 +419,21 @@ export async function buildApiServer(
     await seedRealisticWorld(pool, redis, options.authSecret);
   }
 
-  if (ownsPool || ownsRedis) {
-    app.addHook("onClose", async () => {
-      if (ownsRedis) {
-        await redis.quit().catch(() => undefined);
-      }
-      if (ownsPool) {
-        await pool.end();
-      }
-    });
-  }
+  // Drain hijacked SSE streams before Fastify's server.close() waits on open sockets.
+  app.addHook("preClose", async () => {
+    await closeRedisPubSubHub(redis).catch(() => undefined);
+    app.server.closeIdleConnections?.();
+  });
+
+  app.addHook("onClose", async () => {
+    await closeRedisPubSubHub(redis).catch(() => undefined);
+    if (ownsRedis) {
+      await redis.quit().catch(() => undefined);
+    }
+    if (ownsPool) {
+      await pool.end();
+    }
+  });
 
   return app;
 }

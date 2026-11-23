@@ -12,7 +12,7 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
-    command: `pnpm exec next start -H 127.0.0.1 -p ${E2E_PORT}`,
+    command: `node ./node_modules/next/dist/bin/next start -H 127.0.0.1 -p ${E2E_PORT}`,
     url: E2E_ORIGIN,
     reuseExistingServer: false,
     timeout: 60_000,

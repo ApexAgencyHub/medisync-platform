@@ -10,10 +10,11 @@ export interface RateLimiterOptions {
 
 const ATOMIC_INCR_EXPIRE_LUA = `
 local current = redis.call("INCR", KEYS[1])
-if current == 1 then
-  redis.call("EXPIRE", KEYS[1], ARGV[1])
-end
 local ttl = redis.call("TTL", KEYS[1])
+if current == 1 or ttl < 0 then
+  redis.call("EXPIRE", KEYS[1], ARGV[1])
+  ttl = tonumber(ARGV[1])
+end
 return { current, ttl }
 `;
 
@@ -23,6 +24,10 @@ function isAuthSensitiveRoute(method: string, urlPath: string): boolean {
     urlPath === "/v1/auth/login" ||
     urlPath === "/v1/auth/register" ||
     urlPath === "/v1/auth/password-reset" ||
+    urlPath === "/v1/auth/change-password" ||
+    urlPath === "/v1/auth/phone/request-otp" ||
+    urlPath === "/v1/auth/phone/verify-otp" ||
+    urlPath === "/v1/auth/google" ||
     urlPath.startsWith("/v1/auth/verification/")
   );
 }
@@ -70,18 +75,17 @@ export function registerApiRateLimiterHook(
     }
 
     const clientIp = (request.ip || "127.0.0.1").replace(/[^a-zA-Z0-9.:_-]/g, "_");
-    const epochMinute = Math.floor(Date.now() / 60_000);
-    const generalKey = `${prefix}:${clientIp}:${epochMinute}`;
+    const generalKey = `${prefix}:${clientIp}`;
 
     try {
       // Stricter sub-bucket for authentication & credential recovery endpoints
       if (isAuthSensitiveRoute(request.method, urlPath)) {
-        const authKey = `${prefix}:auth:${clientIp}:${epochMinute}`;
+        const authKey = `${prefix}:auth:${clientIp}`;
         const authResult = await consumeBucket(
           options.redis,
           authKey,
           authMaxPerMinute,
-          65,
+          60,
         );
         if (authResult.exceeded) {
           reply.header("x-ratelimit-tier", "auth");
@@ -101,7 +105,7 @@ export function registerApiRateLimiterHook(
         options.redis,
         generalKey,
         generalMaxPerMinute,
-        65,
+        60,
       );
       const remaining = Math.max(0, generalMaxPerMinute - result.count);
       reply.header("x-ratelimit-limit", String(generalMaxPerMinute));

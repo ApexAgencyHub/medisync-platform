@@ -1,6 +1,7 @@
 import {
   AppointmentResponseSchema,
   AppointmentsListResponseSchema,
+  DeleteScheduleResponseSchema,
   DoctorProfileResponseSchema,
   DoctorProfilesListResponseSchema,
   ScheduleResponseSchema,
@@ -10,12 +11,14 @@ import {
   type AppointmentsListResponse,
   type CreateAppointmentInput,
   type CreateScheduleInput,
+  type DeleteScheduleResponse,
   type DoctorProfileResponse,
   type DoctorProfilesListResponse,
   type ScheduleResponse,
   type SchedulesListResponse,
   type SlotsListResponse,
   type TransitionAppointmentStatusInput,
+  type UpdateScheduleInput,
   type UpsertDoctorProfileInput,
   type VisitMode,
 } from "@medisync/contracts";
@@ -60,12 +63,14 @@ export async function fetchSchedules(
     countryCode?: string | undefined;
     facilityId?: string | undefined;
     doctorUserId?: string | undefined;
+    includeInactive?: boolean | undefined;
   },
 ): Promise<ApiResult<SchedulesListResponse>> {
   const params = new URLSearchParams();
   if (query.countryCode) params.set("countryCode", query.countryCode);
   if (query.facilityId) params.set("facilityId", query.facilityId);
   if (query.doctorUserId) params.set("doctorUserId", query.doctorUserId);
+  if (query.includeInactive) params.set("includeInactive", "true");
   const qs = params.toString();
 
   return requestTyped(
@@ -91,6 +96,43 @@ export async function createSchedule(
       body: JSON.stringify(input),
     },
     ScheduleResponseSchema,
+  );
+}
+
+export async function updateSchedule(
+  apiBaseUrl: string,
+  token: string,
+  scheduleId: string,
+  input: UpdateScheduleInput,
+): Promise<ApiResult<ScheduleResponse>> {
+  return requestTyped(
+    `${apiBaseUrl}/v1/booking/schedules/${encodeURIComponent(scheduleId)}`,
+    {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(input),
+    },
+    ScheduleResponseSchema,
+  );
+}
+
+export async function deleteSchedule(
+  apiBaseUrl: string,
+  token: string,
+  scheduleId: string,
+): Promise<ApiResult<DeleteScheduleResponse>> {
+  return requestTyped(
+    `${apiBaseUrl}/v1/booking/schedules/${encodeURIComponent(scheduleId)}`,
+    {
+      method: "DELETE",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    },
+    DeleteScheduleResponseSchema,
   );
 }
 

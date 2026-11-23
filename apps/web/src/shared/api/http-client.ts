@@ -16,7 +16,10 @@ export async function requestTyped<T>(
   schema: SafeParseSchema<T>,
 ): Promise<ApiResult<T>> {
   try {
-    const response = await fetch(url, init);
+    const response = await fetch(url, {
+      credentials: "include",
+      ...init,
+    });
     const json: unknown = await response.json().catch(() => null);
 
     if (!response.ok) {

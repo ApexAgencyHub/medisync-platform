@@ -7,7 +7,32 @@ import type {
   VehicleType,
 } from "@medisync/contracts";
 import { ZoomIn } from "lucide-react";
+import { useLocale } from "@/shared/i18n/locale-store";
 import { useImageLightbox } from "./ImageLightboxProvider";
+
+const AVATAR_LABELS = {
+  en: {
+    viewPhotoAria: (name: string) => `View photo of ${name}`,
+    zoomHintTitle: "Click to inspect & zoom",
+    inspectProductAria: (name: string) => `Inspect ${name} photo`,
+    productZoomTitle: "Click to zoom product image",
+    zoomPill: "Zoom",
+  },
+  fr: {
+    viewPhotoAria: (name: string) => `Voir la photo de ${name}`,
+    zoomHintTitle: "Cliquer pour agrandir",
+    inspectProductAria: (name: string) => `Agrandir la photo : ${name}`,
+    productZoomTitle: "Cliquer pour zoomer le produit",
+    zoomPill: "Zoom",
+  },
+  ar: {
+    viewPhotoAria: (name: string) => `عرض صورة ${name}`,
+    zoomHintTitle: "اضغط للتكبير والمعاينة",
+    inspectProductAria: (name: string) => `تكبير صورة ${name}`,
+    productZoomTitle: "اضغط لتكبير صورة المنتج",
+    zoomPill: "تكبير",
+  },
+} as const;
 
 type AvatarSize = "xs" | "sm" | "md" | "lg" | "xl";
 
@@ -54,6 +79,7 @@ export function resolveDefaultAvatar(
   const normalizedRole = (role ?? "").toUpperCase();
 
   if (
+    normalizedRole === "NURSE" ||
     lowerSpecialty.includes("nursing") ||
     lowerSpecialty.includes("infirmier") ||
     lowerName.includes("infirmier")
@@ -129,10 +155,12 @@ export function EntityAvatar({
   subtitle,
   avatarUrl,
   size = "md",
-  zoomable = true,
+  zoomable = false,
   className = "",
 }: EntityAvatarProps) {
   const { openImage } = useImageLightbox();
+  const { locale } = useLocale();
+  const avLabels = AVATAR_LABELS[locale] ?? AVATAR_LABELS.en;
   const defaultSrc = resolveDefaultAvatar(name, role, specialty);
   const preferredSrc = avatarUrl && avatarUrl.length > 0 ? avatarUrl : defaultSrc;
   const [activeSrc, setActiveSrc] = useState(preferredSrc);
@@ -149,7 +177,7 @@ export function EntityAvatar({
     return (
       <div
         aria-hidden="true"
-        className={`flex shrink-0 items-center justify-center rounded-full border border-teal-200 bg-teal-50 font-bold text-teal-800 ${sizeClass} ${className}`}
+        className={`flex shrink-0 items-center justify-center rounded-full bg-emerald-50 font-bold text-emerald-800 ring-1 ring-slate-900/[0.08] ${sizeClass} ${className}`}
       >
         {name.slice(0, 2).toUpperCase()}
       </div>
@@ -167,7 +195,7 @@ export function EntityAvatar({
           setFallbackFailed(true);
         }
       }}
-      className={`h-full w-full rounded-full object-cover ${
+      className={`h-full w-full rounded-full object-cover object-top ${
         zoomable ? "transition-transform duration-150 group-hover:scale-105" : ""
       }`}
     />
@@ -176,7 +204,7 @@ export function EntityAvatar({
   if (!zoomable) {
     return (
       <div
-        className={`shrink-0 overflow-hidden rounded-full border border-teal-200 bg-slate-100 ${sizeClass} ${className}`}
+        className={`shrink-0 overflow-hidden rounded-full bg-slate-100 ring-1 ring-slate-900/[0.08] ${sizeClass} ${className}`}
       >
         {imgEl}
       </div>
@@ -194,9 +222,9 @@ export function EntityAvatar({
           ...(subtitle ? { subtitle } : {}),
         })
       }
-      aria-label={`View photo of ${name}`}
-      title="Click to inspect & zoom"
-      className={`group relative shrink-0 cursor-zoom-in overflow-hidden rounded-full border border-teal-200 bg-slate-100 transition hover:border-teal-700 hover:ring-2 hover:ring-teal-700/30 focus:outline-none focus:ring-2 focus:ring-teal-700 ${sizeClass} ${className}`}
+      aria-label={avLabels.viewPhotoAria(name)}
+      title={avLabels.zoomHintTitle}
+      className={`group relative shrink-0 cursor-zoom-in overflow-hidden rounded-full bg-slate-100 ring-1 ring-slate-900/[0.08] transition hover:ring-2 hover:ring-emerald-600/40 focus:outline-none focus:ring-2 focus:ring-emerald-600 ${sizeClass} ${className}`}
     >
       {imgEl}
     </button>
@@ -209,6 +237,7 @@ interface ProductThumbnailProps {
   subtitle?: string;
   imageUrl?: string | null;
   zoomable?: boolean;
+  fit?: "contain" | "cover";
   className?: string;
 }
 
@@ -218,10 +247,13 @@ export function ProductThumbnail({
   category,
   subtitle,
   imageUrl,
-  zoomable = true,
-  className = "h-52 sm:h-56 w-full",
+  zoomable = false,
+  fit = "contain",
+  className = "h-36 w-full",
 }: ProductThumbnailProps) {
   const { openImage } = useImageLightbox();
+  const { locale } = useLocale();
+  const avLabels = AVATAR_LABELS[locale] ?? AVATAR_LABELS.en;
   const defaultSrc = PRODUCT_CATEGORY_IMAGES[category];
   const preferredSrc = resolveProductPicture(category, imageUrl);
   const [activeSrc, setActiveSrc] = useState(preferredSrc);
@@ -236,6 +268,11 @@ export function ProductThumbnail({
     className.includes("h-14") ||
     className.includes("h-16");
 
+  const imgFitClass =
+    fit === "cover"
+      ? "object-cover object-center"
+      : "object-contain p-1.5";
+
   const imgEl = (
     <img
       src={activeSrc}
@@ -246,7 +283,7 @@ export function ProductThumbnail({
           setActiveSrc(defaultSrc);
         }
       }}
-      className={`h-full w-full rounded-xl bg-slate-50/90 object-contain p-1.5 ${
+      className={`h-full w-full rounded-xl bg-slate-50/90 ${imgFitClass} ${
         zoomable ? "transition-transform duration-150 group-hover:scale-[1.03]" : ""
       }`}
     />
@@ -273,15 +310,15 @@ export function ProductThumbnail({
           ...(subtitle ? { subtitle } : {}),
         })
       }
-      aria-label={`Inspect ${name} photo`}
-      title="Click to zoom product image"
-      className={`group relative block cursor-zoom-in overflow-hidden rounded-xl border border-slate-200 bg-slate-50 text-left transition hover:border-teal-700/60 focus:outline-none focus:ring-2 focus:ring-teal-700 ${className}`}
+      aria-label={avLabels.inspectProductAria(name)}
+      title={avLabels.productZoomTitle}
+      className={`group relative block cursor-zoom-in overflow-hidden rounded-xl border border-slate-200 bg-slate-50 text-start transition hover:border-teal-700/60 focus:outline-none focus:ring-2 focus:ring-teal-700 ${className}`}
     >
       {imgEl}
       {!isCompactThumb ? (
-        <span className="pointer-events-none absolute right-2.5 bottom-2.5 inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white/95 px-2 py-0.5 text-[11px] font-semibold text-slate-800 shadow-xs transition group-hover:border-teal-700 group-hover:text-teal-900">
+        <span className="pointer-events-none absolute end-2.5 bottom-2.5 inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white/95 px-2 py-0.5 text-[11px] font-semibold text-slate-800 shadow-xs transition group-hover:border-teal-700 group-hover:text-teal-900">
           <ZoomIn className="h-3 w-3 text-teal-800" aria-hidden="true" />
-          <span>Zoom</span>
+          <span>{avLabels.zoomPill}</span>
         </span>
       ) : null}
     </button>

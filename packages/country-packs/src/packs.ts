@@ -13,6 +13,7 @@ const RAW_COUNTRY_PACKS: readonly CountryPack[] = [
     measurementSystem: "metric",
     licenseNumberPattern: "^[A-Z0-9-]{6,24}$",
     dataResidencyRegion: "sovereign-local",
+    allowRxCourierDelivery: true,
   },
   {
     code: "MA",
@@ -26,6 +27,10 @@ const RAW_COUNTRY_PACKS: readonly CountryPack[] = [
     measurementSystem: "metric",
     licenseNumberPattern: "^MA-[A-Z]{2,4}-[0-9]{4,8}$",
     dataResidencyRegion: "ma-casablanca",
+    allowRxCourierDelivery: false,
+    pharmacyLawReference:
+      "Moroccan Law 17-04 (Code du Medicament et de la Pharmacie)",
+    dataPrivacyLawReference: "CNDP Law 09-08",
   },
   {
     code: "FR",
@@ -39,6 +44,7 @@ const RAW_COUNTRY_PACKS: readonly CountryPack[] = [
     measurementSystem: "metric",
     licenseNumberPattern: "^FR-[0-9]{9,11}$",
     dataResidencyRegion: "eu-paris",
+    allowRxCourierDelivery: true,
   },
   {
     code: "US",
@@ -52,6 +58,7 @@ const RAW_COUNTRY_PACKS: readonly CountryPack[] = [
     measurementSystem: "imperial",
     licenseNumberPattern: "^US-[A-Z]{2}-[0-9]{5,10}$",
     dataResidencyRegion: "us-east",
+    allowRxCourierDelivery: true,
   },
 ];
 

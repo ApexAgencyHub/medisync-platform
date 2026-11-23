@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AllergyWarningSchema } from "./compliance.js";
 import { MediaUploadStatusSchema } from "./media.js";
 
 export const ALLOWED_MEDIA_MIME_TYPES = [
@@ -263,6 +264,7 @@ export type VisitNotesListResponse = z.infer<
 
 export const PrescriptionResponseSchema = z.object({
   prescription: PrescriptionSummarySchema,
+  allergyWarnings: z.array(AllergyWarningSchema).optional(),
 });
 export type PrescriptionResponse = z.infer<typeof PrescriptionResponseSchema>;
 
@@ -276,6 +278,7 @@ export type PrescriptionsListResponse = z.infer<
 export const VerifyPrescriptionQrResponseSchema = z.object({
   valid: z.boolean(),
   prescription: PrescriptionSummarySchema,
+  allergyWarnings: z.array(AllergyWarningSchema).optional(),
 });
 export type VerifyPrescriptionQrResponse = z.infer<
   typeof VerifyPrescriptionQrResponseSchema

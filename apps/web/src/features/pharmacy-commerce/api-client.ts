@@ -12,6 +12,7 @@ import {
   type PharmacyProductSummary,
   type PrescriptionSummary,
   type UpdatePharmacyOrderStatusInput,
+  type UpdatePharmacyProductInput,
 } from "@medisync/contracts";
 import { requestTyped, type ApiResult } from "@/shared/api/http-client";
 
@@ -20,18 +21,29 @@ export type { ApiResult };
 export async function listPharmacyProducts(
   apiBaseUrl: string,
   query: Partial<ListPharmacyProductsQuery> = {},
-): Promise<ApiResult<{ products: PharmacyProductSummary[] }>> {
+  token?: string,
+): Promise<
+  ApiResult<{
+    products: PharmacyProductSummary[];
+    deliveryFeeMinor?: number | undefined;
+  }>
+> {
   const qs = new URLSearchParams();
   if (query.countryCode) qs.set("countryCode", query.countryCode);
   if (query.facilityId) qs.set("facilityId", query.facilityId);
   if (query.category) qs.set("category", query.category);
   if (query.q) qs.set("q", query.q);
   if (query.inStockOnly) qs.set("inStockOnly", "true");
+  if (query.includeInactive) qs.set("includeInactive", "true");
   if (query.limit) qs.set("limit", String(query.limit));
 
   return requestTyped(
     `${apiBaseUrl}/v1/pharmacy/products?${qs.toString()}`,
-    { method: "GET", cache: "no-store" },
+    {
+      method: "GET",
+      cache: "no-store",
+      ...(token ? { headers: { authorization: `Bearer ${token}` } } : {}),
+    },
     PharmacyProductsResponseSchema,
   );
 }
@@ -59,10 +71,10 @@ export async function updatePharmacyProductStock(
   apiBaseUrl: string,
   token: string,
   productId: string,
-  patch: { stockQty?: number; priceMinor?: number; isActive?: boolean },
+  patch: UpdatePharmacyProductInput,
 ): Promise<ApiResult<{ product: PharmacyProductSummary }>> {
   return requestTyped(
-    `${apiBaseUrl}/v1/pharmacy/products/${encodeURIComponent(productId)}/stock`,
+    `${apiBaseUrl}/v1/pharmacy/products/${encodeURIComponent(productId)}`,
     {
       method: "PATCH",
       headers: {

@@ -1,7 +1,17 @@
 import { NextResponse } from "next/server";
 
 const TILE_SIZE = 256;
-const TILE_TIMEOUT_MS = 2500;
+const TILE_TIMEOUT_MS = 1200;
+const MAX_TILE_BYTES = 2 * 1024 * 1024;
+
+interface ResolvedTilePayload {
+  body: ArrayBuffer | string;
+  contentType: string;
+  origin: string;
+  isFallback: boolean;
+}
+
+const inFlightTiles = new Map<string, Promise<ResolvedTilePayload>>();
 
 function parseIntCoord(raw: string): number | null {
   const cleaned = raw.trim().replace(/\.png$/i, "");
@@ -78,57 +88,89 @@ export async function GET(
       ? 0
       : Math.max(0, Math.min(worldTiles - 1, parsedY));
 
-  const tileSources: Array<{ origin: string; url: string }> = [
-    {
-      origin: "openstreetmap",
-      url: `https://tile.openstreetmap.org/${safeZ}/${safeX}/${safeY}.png`,
-    },
-    {
-      origin: "esri-world-street",
-      url: `https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/${safeZ}/${safeY}/${safeX}`,
-    },
-  ];
-
-  for (const source of tileSources) {
-    try {
-      const upstream = await fetch(source.url, {
-        signal: AbortSignal.timeout(TILE_TIMEOUT_MS),
-        headers: {
-          "User-Agent":
-            "MediSyncGlobal/1.0 (+https://github.com/ApexAgencyHub/medisync-platform)",
-          Referer: "https://github.com/ApexAgencyHub/medisync-platform",
-          Accept: "image/png,image/jpeg,image/webp,image/*;q=0.8",
+  const tileKey = `${safeZ}/${safeX}/${safeY}`;
+  let pending = inFlightTiles.get(tileKey);
+  if (!pending) {
+    pending = (async (): Promise<ResolvedTilePayload> => {
+      const tileSources: Array<{ origin: string; url: string }> = [
+        {
+          origin: "openstreetmap",
+          url: `https://tile.openstreetmap.org/${safeZ}/${safeX}/${safeY}.png`,
         },
-        next: { revalidate: 86400 },
-      });
+        {
+          origin: "esri-world-street",
+          url: `https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/${safeZ}/${safeY}/${safeX}`,
+        },
+      ];
 
-      const contentType = upstream.headers.get("content-type") ?? "";
-      if (upstream.ok && contentType.startsWith("image/")) {
-        const buffer = await upstream.arrayBuffer();
-        if (buffer.byteLength > 0) {
-          return new Response(buffer, {
-            status: 200,
+      for (const source of tileSources) {
+        try {
+          const upstream = await fetch(source.url, {
+            signal: AbortSignal.timeout(TILE_TIMEOUT_MS),
             headers: {
-              "Content-Type": contentType,
-              "Cache-Control":
-                "public, max-age=86400, stale-while-revalidate=604800",
-              "X-Tile-Origin": source.origin,
+              "User-Agent": "MediSyncGlobal/1.0 (clinical-map-tiles)",
+              Accept: "image/png,image/jpeg,image/webp,image/*;q=0.8",
             },
+            next: { revalidate: 86400 },
           });
+
+          const contentType = upstream.headers.get("content-type") ?? "";
+          const contentLen = Number(upstream.headers.get("content-length") ?? "0");
+          if (
+            upstream.ok &&
+            contentType.startsWith("image/") &&
+            (!Number.isFinite(contentLen) || contentLen <= MAX_TILE_BYTES)
+          ) {
+            const buffer = await upstream.arrayBuffer();
+            if (buffer.byteLength > 0 && buffer.byteLength <= MAX_TILE_BYTES) {
+              return {
+                body: buffer,
+                contentType,
+                origin: source.origin,
+                isFallback: false,
+              };
+            }
+          }
+        } catch {
+          // Offline or blocked upstream falls through to next source / vector fallback.
         }
       }
-    } catch {
-      // Offline or blocked upstream falls through to next source / vector fallback.
-    }
+
+      return {
+        body: buildFallbackStreetTileSvg(safeZ, safeX, safeY),
+        contentType: "image/svg+xml; charset=utf-8",
+        origin: "clinical-vector-fallback",
+        isFallback: true,
+      };
+    })();
+    inFlightTiles.set(tileKey, pending);
+    pending.finally(() => {
+      if (inFlightTiles.get(tileKey) === pending) {
+        inFlightTiles.delete(tileKey);
+      }
+    });
   }
 
-  const svgTile = buildFallbackStreetTileSvg(safeZ, safeX, safeY);
-  return new NextResponse(svgTile, {
+  const resolved = await pending;
+  if (!resolved.isFallback) {
+    return new Response(resolved.body, {
+      status: 200,
+      headers: {
+        "Content-Type": resolved.contentType,
+        "Cache-Control":
+          "public, max-age=86400, s-maxage=604800, stale-while-revalidate=2592000",
+        "X-Tile-Origin": resolved.origin,
+      },
+    });
+  }
+
+  return new NextResponse(resolved.body as string, {
     status: 200,
     headers: {
-      "Content-Type": "image/svg+xml; charset=utf-8",
-      "Cache-Control": "public, max-age=3600",
-      "X-Tile-Origin": "clinical-vector-fallback",
+      "Content-Type": resolved.contentType,
+      "Content-Security-Policy": "sandbox",
+      "Cache-Control": "public, max-age=30, no-transform",
+      "X-Tile-Origin": resolved.origin,
     },
   });
 }

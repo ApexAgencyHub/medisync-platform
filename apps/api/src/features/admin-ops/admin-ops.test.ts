@@ -313,7 +313,7 @@ describe("api slice 5 admin-ops: governance, RBAC, dispatch overrides, disputes 
     expect(resolvedDispute.dispute.status).toBe("RESOLVED");
     expect(resolvedDispute.dispute.resolvedByUserId).toBe(maHospitalAdmin.user.id);
 
-    // 5. Filtered audit event verification
+    // 5. Filtered audit event verification + pendingVerification query filter
     const auditRes = await app.inject({
       method: "GET",
       url: "/v1/admin/audit-events?countryCode=MA&action=ADMIN_DISPATCH_OVERRIDE",
@@ -325,7 +325,21 @@ describe("api slice 5 admin-ops: governance, RBAC, dispatch overrides, disputes 
       auditBody.logs.some(
         (log) =>
           log.action === "ADMIN_DISPATCH_OVERRIDE" &&
-          log.resourceId === dispatchBody.dispatch.id,
+          log.resourceId === dispatchBody.dispatch.id &&
+          log.metadata?.nextStatus === "ASSIGNED",
+      ),
+    ).toBe(true);
+
+    const pendingUsersRes = await app.inject({
+      method: "GET",
+      url: "/v1/admin/users?countryCode=MA&pendingVerification=true",
+      headers: { authorization: `Bearer ${opsAdmin.token}` },
+    });
+    expect(pendingUsersRes.statusCode).toBe(200);
+    const pendingList = pendingUsersRes.json() as AdminUsersListResponse;
+    expect(
+      pendingList.users.every(
+        (u) => u.accountStatus === "PENDING_APPROVAL" || !u.credentialVerified,
       ),
     ).toBe(true);
   });

@@ -8,6 +8,7 @@ import type {
   FacilitySummary,
   PharmacyOrderResponse,
   PharmacyProductResponse,
+  PharmacyProductsResponse,
   PrescriptionResponse,
 } from "@medisync/contracts";
 import { buildApiServer } from "../../server.js";
@@ -246,7 +247,7 @@ describe("api slice 8 pharmacy-commerce: catalog, atomic stock locks, Rx validat
     });
     expect(missingRxOrder.statusCode).toBe(400);
 
-    // Doctor issues real prescription -> patient orders Rx item with COURIER_DELIVERY & pays
+    // Doctor issues real prescription -> Morocco Law 17-04 blocks Rx courier delivery, allows Rx counter pickup, and allows courier dispatch for OTC/devices
     const rxRes = await app.inject({
       method: "POST",
       url: "/v1/clinical/prescriptions",
@@ -267,7 +268,24 @@ describe("api slice 8 pharmacy-commerce: catalog, atomic stock locks, Rx validat
     const issuedRx = rxRes.json<PrescriptionResponse>().prescription;
     createdRxIds.push(issuedRx.id);
 
-    const courierOrderRes = await app.inject({
+    const blockedRxCourierRes = await app.inject({
+      method: "POST",
+      url: "/v1/pharmacy/orders",
+      headers: { authorization: `Bearer ${patMa.token}` },
+      payload: {
+        facilityId: pharmacy.id,
+        prescriptionId: issuedRx.id,
+        items: [{ productId: rxProd.id, quantity: 1 }],
+        fulfillmentMode: "COURIER_DELIVERY",
+        deliveryAddress: "240 Boulevard d'Anfa, Casablanca",
+      },
+    });
+    expect(blockedRxCourierRes.statusCode).toBe(400);
+    expect(blockedRxCourierRes.json<{ error: string }>().error).toContain(
+      "PRESCRIPTION_PICKUP_REQUIRED_MA",
+    );
+
+    const rxPickupOrderRes = await app.inject({
       method: "POST",
       url: "/v1/pharmacy/orders",
       headers: { authorization: `Bearer ${patMa.token}` },
@@ -275,6 +293,42 @@ describe("api slice 8 pharmacy-commerce: catalog, atomic stock locks, Rx validat
         facilityId: pharmacy.id,
         prescriptionId: issuedRx.id,
         items: [{ productId: rxProd.id, quantity: 2 }],
+        fulfillmentMode: "PHARMACY_PICKUP",
+      },
+    });
+    expect(rxPickupOrderRes.statusCode).toBe(201);
+    const rxPickupOrder = rxPickupOrderRes.json<PharmacyOrderResponse>().order;
+    createdOrderIds.push(rxPickupOrder.id);
+    expect(rxPickupOrder.subtotalMinor).toBe(17000);
+    expect(rxPickupOrder.deliveryFeeMinor).toBe(0);
+    expect(rxPickupOrder.totalMinor).toBe(17000);
+
+    // Non-Rx medical device supports full COURIER_DELIVERY + dispatch creation
+    const otcDeviceCreate = await app.inject({
+      method: "POST",
+      url: "/v1/pharmacy/products",
+      headers: { authorization: `Bearer ${pharmMa.token}` },
+      payload: {
+        facilityId: pharmacy.id,
+        sku: `MA-DEV-${runSuffix}`,
+        name: "Digital BP Monitor",
+        category: "MEDICAL_DEVICE",
+        requiresPrescription: false,
+        priceMinor: 18000,
+        stockQty: 5,
+      },
+    });
+    expect(otcDeviceCreate.statusCode).toBe(201);
+    const otcDevice = otcDeviceCreate.json<PharmacyProductResponse>().product;
+    createdProductIds.push(otcDevice.id);
+
+    const courierOrderRes = await app.inject({
+      method: "POST",
+      url: "/v1/pharmacy/orders",
+      headers: { authorization: `Bearer ${patMa.token}` },
+      payload: {
+        facilityId: pharmacy.id,
+        items: [{ productId: otcDevice.id, quantity: 1 }],
         fulfillmentMode: "COURIER_DELIVERY",
         deliveryAddress: "240 Boulevard d'Anfa, Casablanca",
         deliveryLat: 33.5912,
@@ -284,9 +338,9 @@ describe("api slice 8 pharmacy-commerce: catalog, atomic stock locks, Rx validat
     expect(courierOrderRes.statusCode).toBe(201);
     const courierOrder = courierOrderRes.json<PharmacyOrderResponse>().order;
     createdOrderIds.push(courierOrder.id);
-    expect(courierOrder.subtotalMinor).toBe(17000);
+    expect(courierOrder.subtotalMinor).toBe(18000);
     expect(courierOrder.deliveryFeeMinor).toBe(2500);
-    expect(courierOrder.totalMinor).toBe(19500);
+    expect(courierOrder.totalMinor).toBe(20500);
 
     const payRes = await app.inject({
       method: "POST",
@@ -302,5 +356,40 @@ describe("api slice 8 pharmacy-commerce: catalog, atomic stock locks, Rx validat
     if (paidOrder.dispatchRequestId) {
       createdDispatchIds.push(paidOrder.dispatchRequestId);
     }
+
+    // 4. Pharmacist updates product metadata & pauses SKU; ?includeInactive=true enforces RBAC
+    const patchProdRes = await app.inject({
+      method: "PATCH",
+      url: `/v1/pharmacy/products/${rxProd.id}`,
+      headers: { authorization: `Bearer ${pharmMa.token}` },
+      payload: {
+        name: "Amoxicillin 500mg Clavulanate",
+        priceMinor: 9200,
+        isActive: false,
+      },
+    });
+    expect(patchProdRes.statusCode).toBe(200);
+    const updatedProd = patchProdRes.json<PharmacyProductResponse>().product;
+    expect(updatedProd.name).toBe("Amoxicillin 500mg Clavulanate");
+    expect(updatedProd.priceMinor).toBe(9200);
+    expect(updatedProd.isActive).toBe(false);
+
+    const anonInactiveAttempt = await app.inject({
+      method: "GET",
+      url: "/v1/pharmacy/products?countryCode=MA&includeInactive=true",
+    });
+    expect(anonInactiveAttempt.statusCode).toBe(401);
+
+    const pharmAllSkus = await app.inject({
+      method: "GET",
+      url: "/v1/pharmacy/products?countryCode=MA&includeInactive=true",
+      headers: { authorization: `Bearer ${pharmMa.token}` },
+    });
+    expect(pharmAllSkus.statusCode).toBe(200);
+    expect(
+      pharmAllSkus
+        .json<PharmacyProductsResponse>()
+        .products.some((p) => p.id === rxProd.id && !p.isActive),
+    ).toBe(true);
   });
 });

@@ -2,8 +2,11 @@
   "name": "@medisync/mobile",
   "version": "0.1.0",
   "private": true,
+  "main": "index.ts",
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test tests/native-adapters.test.mjs",
+    "build": "expo export --platform android --platform ios --output-dir dist"
   },
   "dependencies": {
     "@medisync/contracts": "workspace:*",

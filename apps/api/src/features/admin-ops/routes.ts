@@ -16,7 +16,15 @@ import {
   type UserRole,
 } from "@medisync/contracts";
 import { authenticateRequest } from "../foundation/index.js";
-import { publishDispatchUpdate } from "../maps-dispatch/index.js";
+import {
+  clearDriverOffDuty,
+  publishDispatchUpdate,
+} from "../maps-dispatch/index.js";
+import {
+  bumpCacheGeneration,
+  DIRECTORY_CACHE_GEN_KEY,
+  SCHEDULES_CACHE_GEN_KEY,
+} from "../../shared/redis/cache.js";
 import type { S3PresignConfig } from "../../shared/storage/s3-presign.js";
 import {
   AdminBadRequestError,
@@ -87,14 +95,20 @@ export async function registerAdminOpsRoutes(
     redis: Redis;
     authSecret: string;
     s3Config?: S3PresignConfig;
+    requireProviderVerification?: boolean;
   },
 ): Promise<void> {
+  const verifiedAdminOptions = {
+    requireVerifiedProvider: Boolean(deps.requireProviderVerification),
+  };
+
   app.get("/v1/admin/overview", async (request, reply) => {
     const claims = await authenticateRequest(
       request,
       reply,
       { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       ADMIN_OPS_VIEWER_ROLES,
+      verifiedAdminOptions,
     );
     if (!claims) return;
 
@@ -120,6 +134,7 @@ export async function registerAdminOpsRoutes(
       reply,
       { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       ADMIN_OPS_VIEWER_ROLES,
+      verifiedAdminOptions,
     );
     if (!claims) return;
 
@@ -150,6 +165,7 @@ export async function registerAdminOpsRoutes(
       reply,
       { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       OPS_ADMIN_ONLY,
+      verifiedAdminOptions,
     );
     if (!claims) return;
 
@@ -167,7 +183,7 @@ export async function registerAdminOpsRoutes(
         claims,
         body.data,
       );
-      await deps.redis.incr("medisync:cache:gen:directory").catch(() => undefined);
+      await bumpCacheGeneration(deps.redis, DIRECTORY_CACHE_GEN_KEY);
       return reply.status(201).send({ user });
     } catch (err) {
       return handleAdminError(err, reply);
@@ -182,6 +198,7 @@ export async function registerAdminOpsRoutes(
         reply,
         { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
         OPS_ADMIN_ONLY,
+        verifiedAdminOptions,
       );
       if (!claims) return;
 
@@ -207,7 +224,10 @@ export async function registerAdminOpsRoutes(
           deps.s3Config,
           deps.redis,
         );
-        await deps.redis.incr("medisync:cache:gen:directory").catch(() => undefined);
+        await Promise.all([
+          bumpCacheGeneration(deps.redis, DIRECTORY_CACHE_GEN_KEY),
+          bumpCacheGeneration(deps.redis, SCHEDULES_CACHE_GEN_KEY),
+        ]);
         return { user };
       } catch (err) {
         return handleAdminError(err, reply);
@@ -223,6 +243,7 @@ export async function registerAdminOpsRoutes(
         reply,
         { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
         OPS_ADMIN_ONLY,
+        verifiedAdminOptions,
       );
       if (!claims) return;
 
@@ -248,7 +269,10 @@ export async function registerAdminOpsRoutes(
           deps.s3Config,
           deps.redis,
         );
-        await deps.redis.incr("medisync:cache:gen:directory").catch(() => undefined);
+        await Promise.all([
+          bumpCacheGeneration(deps.redis, DIRECTORY_CACHE_GEN_KEY),
+          bumpCacheGeneration(deps.redis, SCHEDULES_CACHE_GEN_KEY),
+        ]);
         return { user };
       } catch (err) {
         return handleAdminError(err, reply);
@@ -264,6 +288,7 @@ export async function registerAdminOpsRoutes(
         reply,
         { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
         ADMIN_OPS_VIEWER_ROLES,
+        verifiedAdminOptions,
       );
       if (!claims) return;
 
@@ -287,6 +312,16 @@ export async function registerAdminOpsRoutes(
           claims,
           body.data,
         );
+        if (
+          dispatch.driverUserId &&
+          (dispatch.status === "ASSIGNED" ||
+            dispatch.status === "EN_ROUTE" ||
+            dispatch.status === "ARRIVED")
+        ) {
+          await clearDriverOffDuty(deps.redis, dispatch.driverUserId).catch(
+            () => undefined,
+          );
+        }
         await publishDispatchUpdate(deps.redis, dispatch);
         return { dispatch };
       } catch (err) {
@@ -351,6 +386,7 @@ export async function registerAdminOpsRoutes(
         reply,
         { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
         ADMIN_OPS_VIEWER_ROLES,
+        verifiedAdminOptions,
       );
       if (!claims) return;
 
@@ -387,6 +423,7 @@ export async function registerAdminOpsRoutes(
       reply,
       { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       ADMIN_OPS_VIEWER_ROLES,
+      verifiedAdminOptions,
     );
     if (!claims) return;
 

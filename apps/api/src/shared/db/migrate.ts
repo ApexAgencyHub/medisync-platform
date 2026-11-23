@@ -8,6 +8,8 @@ const MIGRATIONS_DIR = path.resolve(
   "migrations",
 );
 
+const MIGRATION_ADVISORY_LOCK_KEY = 748392014;
+
 export async function runMigrations(pool: Pool): Promise<string[]> {
   const entries = (await fs.readdir(MIGRATIONS_DIR))
     .filter((file) => file.endsWith(".sql"))
@@ -17,6 +19,9 @@ export async function runMigrations(pool: Pool): Promise<string[]> {
   const applied: string[] = [];
 
   try {
+    await client.query("SELECT pg_advisory_lock($1)", [
+      MIGRATION_ADVISORY_LOCK_KEY,
+    ]);
     await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         version TEXT PRIMARY KEY,
@@ -49,6 +54,9 @@ export async function runMigrations(pool: Pool): Promise<string[]> {
       }
     }
   } finally {
+    await client
+      .query("SELECT pg_advisory_unlock($1)", [MIGRATION_ADVISORY_LOCK_KEY])
+      .catch(() => undefined);
     client.release();
   }
 

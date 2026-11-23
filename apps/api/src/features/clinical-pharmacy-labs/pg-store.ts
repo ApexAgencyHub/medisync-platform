@@ -1,11 +1,13 @@
 import crypto from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import {
+  AllergyWarningSchema,
   ClinicalMediaObjectSummarySchema,
   LabOrderSummarySchema,
   MAX_CLINICAL_UPLOAD_BYTES,
   PrescriptionSummarySchema,
   VisitNoteSummarySchema,
+  type AllergyWarning,
   type ClinicalFilterQuery,
   type ClinicalMediaObjectSummary,
   type CreateLabOrderInput,
@@ -297,7 +299,107 @@ export async function listVisitNotesScoped(
      LIMIT $3`,
     [scope.countryCode, scope.patientUserId, query.limit],
   );
+  if (actor.role !== "PATIENT" && actor.role !== "CAREGIVER" && res.rows.length > 0) {
+    await appendAuditLog(pool, {
+      countryCode: scope.countryCode ?? actor.countryCode,
+      actorId: actor.sub,
+      actorRole: actor.role,
+      action: "SENSITIVE_PHI_READ",
+      resourceType: "visit_notes_list",
+      resourceId: scope.patientUserId ?? actor.sub,
+      metadata: { recordCount: res.rows.length },
+    }).catch(() => undefined);
+  }
+
   return res.rows.map((row) => VisitNoteSummarySchema.parse(row));
+}
+
+const ALLERGY_CROSS_CLASS_MAP: ReadonlyArray<{
+  allergenKeywords: readonly string[];
+  medicationKeywords: readonly string[];
+}> = [
+  {
+    allergenKeywords: ["penicillin", "pénicilline", "amoxicillin", "beta-lactam"],
+    medicationKeywords: [
+      "amoxicillin",
+      "amoxicilline",
+      "augmentin",
+      "ampicillin",
+      "penicillin",
+      "piperacillin",
+      "clavulanate",
+    ],
+  },
+  {
+    allergenKeywords: ["cephalosporin", "céphalosporine"],
+    medicationKeywords: ["cephalexin", "ceftriaxone", "cefixime", "cefuroxime"],
+  },
+  {
+    allergenKeywords: ["sulfa", "sulfonamide", "sulfamide"],
+    medicationKeywords: ["sulfamethoxazole", "bactrim", "cotrimoxazole", "sulfasalazine"],
+  },
+  {
+    allergenKeywords: ["nsaid", "ains", "aspirin", "aspirine", "ibuprofen"],
+    medicationKeywords: ["ibuprofen", "ibuprofène", "aspirin", "aspirine", "naproxen", "diclofenac", "ketoprofen"],
+  },
+];
+
+export async function findMedicationAllergyWarnings(
+  db: Pick<Pool, "query">,
+  patientUserId: string,
+  medications: ReadonlyArray<{ name: string }>,
+): Promise<AllergyWarning[]> {
+  if (medications.length === 0) return [];
+  const profileRes = await db.query<{ allergies: unknown }>(
+    `SELECT allergies FROM patient_medical_profiles WHERE user_id = $1 LIMIT 1`,
+    [patientUserId],
+  );
+  const rawAllergies = profileRes.rows[0]?.allergies;
+  if (!Array.isArray(rawAllergies) || rawAllergies.length === 0) return [];
+
+  const warnings: AllergyWarning[] = [];
+  const seen = new Set<string>();
+
+  for (const item of rawAllergies) {
+    if (typeof item !== "object" || item === null) continue;
+    const allergenRaw =
+      typeof (item as { allergen?: unknown }).allergen === "string"
+        ? (item as { allergen: string }).allergen.trim()
+        : "";
+    if (!allergenRaw) continue;
+    const severity =
+      typeof (item as { severity?: unknown }).severity === "string"
+        ? (item as { severity: string }).severity
+        : "MODERATE";
+    const allergenLower = allergenRaw.toLowerCase();
+
+    for (const med of medications) {
+      const medLower = med.name.toLowerCase();
+      const directMatch =
+        medLower.includes(allergenLower) || allergenLower.includes(medLower);
+      const classMatch = ALLERGY_CROSS_CLASS_MAP.some(
+        (group) =>
+          group.allergenKeywords.some((k) => allergenLower.includes(k)) &&
+          group.medicationKeywords.some((k) => medLower.includes(k)),
+      );
+      if (directMatch || classMatch) {
+        const key = `${allergenLower}::${medLower}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          warnings.push(
+            AllergyWarningSchema.parse({
+              allergen: allergenRaw,
+              severity,
+              matchedMedication: med.name,
+              message: `Clinical safety alert: patient has a documented ${severity} allergy to ${allergenRaw} which conflicts with ${med.name}.`,
+            }),
+          );
+        }
+      }
+    }
+  }
+
+  return warnings;
 }
 
 async function fetchPrescriptionById(
@@ -485,6 +587,16 @@ export async function verifyPrescriptionQrRecord(
       "Cross-country prescription verification is forbidden.",
     );
   }
+
+  await appendAuditLog(pool, {
+    countryCode: rx.countryCode,
+    actorId: actor.sub,
+    actorRole: actor.role,
+    action: "SENSITIVE_PHI_READ",
+    resourceType: "prescription_qr",
+    resourceId: rx.id,
+    metadata: { patientUserId: rx.patientUserId },
+  }).catch(() => undefined);
 
   return rx;
 }
@@ -1123,6 +1235,22 @@ export async function listClinicalMediaScoped(
      LIMIT $3`,
     [scope.countryCode, scope.patientUserId, query.limit],
   );
+
+  if (
+    actor.role !== "PATIENT" &&
+    actor.role !== "CAREGIVER" &&
+    res.rows.length > 0
+  ) {
+    await appendAuditLog(pool, {
+      countryCode: scope.countryCode ?? actor.countryCode,
+      actorId: actor.sub,
+      actorRole: actor.role,
+      action: "SENSITIVE_PHI_READ",
+      resourceType: "clinical_media_list",
+      resourceId: scope.patientUserId ?? actor.sub,
+      metadata: { recordCount: res.rows.length },
+    }).catch(() => undefined);
+  }
 
   return res.rows.map((row) => {
     const record = row as Record<string, unknown>;

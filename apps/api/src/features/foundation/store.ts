@@ -3,11 +3,13 @@ import { z } from "zod";
 import {
   AuthenticatedUserSchema,
   FacilitySummarySchema,
+  normalizePhoneIdentifier,
   type AuditEvent,
   type AuthenticatedUser,
   type CreateFacilityInput,
   type FacilityListQuery,
   type FacilitySummary,
+  type PatientEasyRole,
   type RegisterUserInput,
   type UserRole,
   type VerificationStatus,
@@ -18,8 +20,10 @@ import {
 } from "../../shared/storage/s3-presign.js";
 
 const UserRowSchema = AuthenticatedUserSchema.extend({
-  passwordHash: z.string(),
+  passwordHash: z.string().nullable(),
   avatarObjectKey: z.string().nullable().optional(),
+  authProvider: z.enum(["LOCAL", "PHONE", "GOOGLE"]).default("LOCAL"),
+  googleSub: z.string().nullable().optional(),
   tokenVersion: z.number().int().default(1),
 });
 
@@ -54,6 +58,7 @@ const AuditRowSchema = z.object({
   action: z.string(),
   resourceType: z.string(),
   resourceId: z.string(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   occurredAtIso: z.string().datetime(),
 });
 
@@ -81,13 +86,20 @@ export async function pingDatabase(pool: Pool): Promise<boolean> {
 export async function insertUser(
   pool: Pool,
   input: Omit<RegisterUserInput, "role"> & { role: UserRole },
-  passwordHash: string,
+  passwordHash: string | null,
   options: {
     accountStatus?: "ACTIVE" | "PENDING_APPROVAL" | "SUSPENDED" | undefined;
     credentialVerified?: boolean | undefined;
     phone?: string | null | undefined;
+    authProvider?: "LOCAL" | "PHONE" | "GOOGLE" | undefined;
+    emailVerified?: boolean | undefined;
+    phoneVerified?: boolean | undefined;
   } = {},
 ): Promise<AuthenticatedUser> {
+  const normalizedEmail = input.email ? input.email.trim().toLowerCase() : null;
+  const rawPhone = options.phone ?? input.phone ?? null;
+  const normalizedPhone = rawPhone ? normalizePhoneIdentifier(rawPhone) : null;
+
   try {
     const res = await pool.query(
       `INSERT INTO users (
@@ -98,10 +110,13 @@ export async function insertUser(
          country_code,
          facility_id,
          phone,
+         phone_verified,
+         email_verified,
+         auth_provider,
          account_status,
          credential_verified
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING
          id,
          email,
@@ -112,18 +127,22 @@ export async function insertUser(
          email_verified AS "emailVerified",
          phone,
          phone_verified AS "phoneVerified",
+         auth_provider AS "authProvider",
          account_status AS "accountStatus",
          credential_verified AS "credentialVerified",
          CASE WHEN last_login_at IS NULL THEN NULL ELSE to_char(last_login_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "lastLoginAtIso",
          to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"`,
       [
-        input.email.trim().toLowerCase(),
+        normalizedEmail,
         passwordHash,
         input.fullName.trim(),
         input.role,
         input.countryCode.trim().toUpperCase(),
         input.facilityId ?? null,
-        options.phone ?? null,
+        normalizedPhone,
+        options.phoneVerified ?? false,
+        options.emailVerified ?? false,
+        options.authProvider ?? (normalizedEmail ? "LOCAL" : "PHONE"),
         options.accountStatus ?? "ACTIVE",
         options.credentialVerified ?? false,
       ],
@@ -131,7 +150,18 @@ export async function insertUser(
     return AuthenticatedUserSchema.parse(res.rows[0]);
   } catch (err) {
     if (isUniqueViolation(err)) {
-      throw new DuplicateConflictError("Email is already registered.");
+      const constraintName =
+        typeof err === "object" &&
+        err !== null &&
+        "constraint" in err &&
+        typeof (err as { constraint?: unknown }).constraint === "string"
+          ? (err as { constraint: string }).constraint
+          : "";
+      throw new DuplicateConflictError(
+        constraintName.includes("phone")
+          ? "Phone number is already registered."
+          : "Email is already registered.",
+      );
     }
     throw err;
   }
@@ -146,29 +176,34 @@ export async function recordUserLoginTimestamp(
     .catch(() => undefined);
 }
 
+const STORED_USER_SELECT = `
+  id,
+  email,
+  password_hash AS "passwordHash",
+  full_name AS "fullName",
+  role,
+  country_code AS "countryCode",
+  facility_id AS "facilityId",
+  avatar_object_key AS "avatarObjectKey",
+  email_verified AS "emailVerified",
+  phone,
+  phone_verified AS "phoneVerified",
+  auth_provider AS "authProvider",
+  google_sub AS "googleSub",
+  account_status AS "accountStatus",
+  credential_verified AS "credentialVerified",
+  token_version AS "tokenVersion",
+  CASE WHEN last_login_at IS NULL THEN NULL ELSE to_char(last_login_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "lastLoginAtIso",
+  to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"
+`;
+
 export async function findUserByEmail(
   pool: Pool,
   email: string,
   s3Config?: S3PresignConfig,
 ): Promise<StoredUserRecord | null> {
   const res = await pool.query(
-    `SELECT
-       id,
-       email,
-       password_hash AS "passwordHash",
-       full_name AS "fullName",
-       role,
-       country_code AS "countryCode",
-       facility_id AS "facilityId",
-       avatar_object_key AS "avatarObjectKey",
-       email_verified AS "emailVerified",
-       phone,
-       phone_verified AS "phoneVerified",
-       account_status AS "accountStatus",
-       credential_verified AS "credentialVerified",
-       token_version AS "tokenVersion",
-       CASE WHEN last_login_at IS NULL THEN NULL ELSE to_char(last_login_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "lastLoginAtIso",
-       to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"
+    `SELECT ${STORED_USER_SELECT}
      FROM users
      WHERE email = $1
      LIMIT 1`,
@@ -178,6 +213,255 @@ export async function findUserByEmail(
   return UserRowSchema.parse(
     hydrateUserAvatar(res.rows[0] as Record<string, unknown>, s3Config),
   );
+}
+
+export async function findUserByIdentifier(
+  pool: Pool,
+  identifier: string,
+  s3Config?: S3PresignConfig,
+): Promise<StoredUserRecord | null> {
+  const trimmed = identifier.trim();
+  if (trimmed.includes("@")) {
+    return findUserByEmail(pool, trimmed, s3Config);
+  }
+  const normalizedPhone = normalizePhoneIdentifier(trimmed);
+  if (!normalizedPhone) return null;
+
+  const res = await pool.query(
+    `SELECT ${STORED_USER_SELECT}
+     FROM users
+     WHERE phone = $1
+     LIMIT 1`,
+    [normalizedPhone],
+  );
+  if (res.rowCount === 0) return null;
+  return UserRowSchema.parse(
+    hydrateUserAvatar(res.rows[0] as Record<string, unknown>, s3Config),
+  );
+}
+
+export class StaffPortalRequiredError extends Error {
+  constructor(message = "Staff and Admin accounts must sign in through the Healthcare Staff portal.") {
+    super(message);
+    this.name = "StaffPortalRequiredError";
+  }
+}
+
+export async function upsertPatientFromPhoneOtp(
+  pool: Pool,
+  input: {
+    phone: string;
+    fullName?: string | undefined;
+    countryCode: string;
+    role: PatientEasyRole;
+  },
+  s3Config?: S3PresignConfig,
+): Promise<{ user: AuthenticatedUser; tokenVersion: number; created: boolean }> {
+  const normalizedPhone = normalizePhoneIdentifier(input.phone);
+  const existing = await findUserByIdentifier(pool, normalizedPhone, s3Config);
+
+  if (existing) {
+    if (existing.role !== "PATIENT" && existing.role !== "CAREGIVER") {
+      throw new StaffPortalRequiredError();
+    }
+    const upd = await pool.query(
+      `UPDATE users
+       SET phone_verified = TRUE,
+           last_login_at = NOW()
+       WHERE id = $1
+       RETURNING
+         id,
+         email,
+         full_name AS "fullName",
+         role,
+         country_code AS "countryCode",
+         facility_id AS "facilityId",
+         avatar_object_key AS "avatarObjectKey",
+         email_verified AS "emailVerified",
+         phone,
+         phone_verified AS "phoneVerified",
+         auth_provider AS "authProvider",
+         account_status AS "accountStatus",
+         credential_verified AS "credentialVerified",
+         token_version AS "tokenVersion",
+         CASE WHEN last_login_at IS NULL THEN NULL ELSE to_char(last_login_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "lastLoginAtIso",
+         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"`,
+      [existing.id],
+    );
+    const row = upd.rows[0] as Record<string, unknown>;
+    return {
+      user: AuthenticatedUserSchema.parse(hydrateUserAvatar(row, s3Config)),
+      tokenVersion: Number(row.tokenVersion ?? 1),
+      created: false,
+    };
+  }
+
+  const displayName =
+    input.fullName?.trim() ||
+    `Patient ${normalizedPhone.slice(-4).padStart(4, "0")}`;
+
+  const res = await pool.query(
+    `INSERT INTO users (
+       email,
+       password_hash,
+       full_name,
+       role,
+       country_code,
+       facility_id,
+       phone,
+       phone_verified,
+       email_verified,
+       auth_provider,
+       account_status,
+       credential_verified,
+       last_login_at
+     )
+     VALUES (NULL, NULL, $1, $2, $3, NULL, $4, TRUE, FALSE, 'PHONE', 'ACTIVE', FALSE, NOW())
+     RETURNING
+       id,
+       email,
+       full_name AS "fullName",
+       role,
+       country_code AS "countryCode",
+       facility_id AS "facilityId",
+       email_verified AS "emailVerified",
+       phone,
+       phone_verified AS "phoneVerified",
+       auth_provider AS "authProvider",
+       account_status AS "accountStatus",
+       credential_verified AS "credentialVerified",
+       CASE WHEN last_login_at IS NULL THEN NULL ELSE to_char(last_login_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "lastLoginAtIso",
+       to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"`,
+    [displayName, input.role, input.countryCode.trim().toUpperCase(), normalizedPhone],
+  );
+
+  return {
+    user: AuthenticatedUserSchema.parse(res.rows[0]),
+    tokenVersion: 1,
+    created: true,
+  };
+}
+
+export async function upsertPatientFromGoogle(
+  pool: Pool,
+  input: {
+    googleSub: string;
+    email: string | null;
+    emailVerified: boolean;
+    fullName: string | null;
+    countryCode: string;
+    role: PatientEasyRole;
+  },
+  s3Config?: S3PresignConfig,
+): Promise<{ user: AuthenticatedUser; tokenVersion: number; created: boolean }> {
+  const normalizedEmail = input.email ? input.email.trim().toLowerCase() : null;
+
+  const bySubRes = await pool.query(
+    `SELECT ${STORED_USER_SELECT}
+     FROM users
+     WHERE google_sub = $1
+     LIMIT 1`,
+    [input.googleSub],
+  );
+
+  let existing: StoredUserRecord | null =
+    bySubRes.rowCount && bySubRes.rows[0]
+      ? UserRowSchema.parse(
+          hydrateUserAvatar(bySubRes.rows[0] as Record<string, unknown>, s3Config),
+        )
+      : null;
+
+  if (!existing && normalizedEmail && input.emailVerified) {
+    existing = await findUserByEmail(pool, normalizedEmail, s3Config);
+  }
+
+  if (existing) {
+    if (existing.role !== "PATIENT" && existing.role !== "CAREGIVER") {
+      throw new StaffPortalRequiredError();
+    }
+    const upd = await pool.query(
+      `UPDATE users
+       SET google_sub = COALESCE(google_sub, $2),
+           email_verified = CASE WHEN $3 THEN TRUE ELSE email_verified END,
+           last_login_at = NOW()
+       WHERE id = $1
+       RETURNING
+         id,
+         email,
+         full_name AS "fullName",
+         role,
+         country_code AS "countryCode",
+         facility_id AS "facilityId",
+         avatar_object_key AS "avatarObjectKey",
+         email_verified AS "emailVerified",
+         phone,
+         phone_verified AS "phoneVerified",
+         auth_provider AS "authProvider",
+         account_status AS "accountStatus",
+         credential_verified AS "credentialVerified",
+         token_version AS "tokenVersion",
+         CASE WHEN last_login_at IS NULL THEN NULL ELSE to_char(last_login_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "lastLoginAtIso",
+         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"`,
+      [existing.id, input.googleSub, input.emailVerified],
+    );
+    const row = upd.rows[0] as Record<string, unknown>;
+    return {
+      user: AuthenticatedUserSchema.parse(hydrateUserAvatar(row, s3Config)),
+      tokenVersion: Number(row.tokenVersion ?? 1),
+      created: false,
+    };
+  }
+
+  const displayName =
+    input.fullName?.trim() ||
+    (normalizedEmail ? normalizedEmail.split("@")[0] ?? "MediSync Patient" : "MediSync Patient");
+
+  const res = await pool.query(
+    `INSERT INTO users (
+       email,
+       password_hash,
+       full_name,
+       role,
+       country_code,
+       facility_id,
+       email_verified,
+       auth_provider,
+       google_sub,
+       account_status,
+       credential_verified,
+       last_login_at
+     )
+     VALUES ($1, NULL, $2, $3, $4, NULL, $5, 'GOOGLE', $6, 'ACTIVE', FALSE, NOW())
+     RETURNING
+       id,
+       email,
+       full_name AS "fullName",
+       role,
+       country_code AS "countryCode",
+       facility_id AS "facilityId",
+       email_verified AS "emailVerified",
+       phone,
+       phone_verified AS "phoneVerified",
+       auth_provider AS "authProvider",
+       account_status AS "accountStatus",
+       credential_verified AS "credentialVerified",
+       CASE WHEN last_login_at IS NULL THEN NULL ELSE to_char(last_login_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "lastLoginAtIso",
+       to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"`,
+    [
+      normalizedEmail,
+      displayName,
+      input.role,
+      input.countryCode.trim().toUpperCase(),
+      input.emailVerified,
+      input.googleSub,
+    ],
+  );
+
+  return {
+    user: AuthenticatedUserSchema.parse(res.rows[0]),
+    tokenVersion: 1,
+    created: true,
+  };
 }
 
 export async function findUserById(
@@ -197,6 +481,7 @@ export async function findUserById(
        email_verified AS "emailVerified",
        phone,
        phone_verified AS "phoneVerified",
+       auth_provider AS "authProvider",
        account_status AS "accountStatus",
        credential_verified AS "credentialVerified",
        CASE WHEN last_login_at IS NULL THEN NULL ELSE to_char(last_login_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "lastLoginAtIso",
@@ -378,6 +663,20 @@ export async function appendAuditLog(
   );
 }
 
+export async function bumpUserTokenVersion(
+  pool: Pool,
+  userId: string,
+): Promise<number | null> {
+  const res = await pool.query<{ tokenVersion: number }>(
+    `UPDATE users
+     SET token_version = token_version + 1
+     WHERE id = $1
+     RETURNING token_version AS "tokenVersion"`,
+    [userId],
+  );
+  return res.rows[0]?.tokenVersion ?? null;
+}
+
 export async function listAuditLogs(
   pool: Pool,
   options: { countryCode?: string | undefined; limit: number },
@@ -391,6 +690,7 @@ export async function listAuditLogs(
        action,
        resource_type AS "resourceType",
        resource_id AS "resourceId",
+       metadata,
        to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "occurredAtIso"
      FROM audit_logs
      WHERE ($1::text IS NULL OR country_code = $1)

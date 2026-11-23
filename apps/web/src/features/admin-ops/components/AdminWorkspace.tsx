@@ -1,5 +1,10 @@
 "use client";
 
+import Link from "next/link";
+import dynamic from "next/dynamic";
+import { isStaffWorkerRole, type AccountStatus } from "@medisync/contracts";
+import { updateAdminUserStatus } from "../api-client";
+
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   DispatchStatusSchema,
@@ -7,6 +12,8 @@ import {
   LoginSchema,
   UserRoleSchema,
   type AdminOverviewMetrics,
+  type AdminUserMediaItem,
+  type AppointmentSummary,
   type AuditEvent,
   type AuthenticatedUser,
   type CountryPack,
@@ -16,6 +23,9 @@ import {
   type DisputeSummary,
   type FacilityMediaDocument,
   type FacilitySummary,
+  type LabOrderSummary,
+  type PharmacyOrderSummary,
+  type PrescriptionSummary,
   type UserMediaDocument,
   type UserRole,
 } from "@medisync/contracts";
@@ -24,20 +34,43 @@ import {
   loginUser,
   verifyFacilityStatus,
 } from "@/features/auth-portal";
+import { fetchAppointments } from "@/features/booking";
+import {
+  fetchLabOrders,
+  fetchPrescriptions,
+} from "@/features/clinical-workspace";
 import { listDispatchRequests } from "@/features/maps-dispatch";
-import { formatRoleLabel } from "@/shared/i18n/human-labels";
+import { listPharmacyOrders } from "@/features/pharmacy-commerce";
+import {
+  formatCountryDisplayName,
+  formatDispatchStatus,
+  formatFacilityKind,
+  formatRoleLabel,
+  formatUrgencyLabel,
+} from "@/shared/i18n/human-labels";
 import { useLocale } from "@/shared/i18n/locale-store";
+import { ADMIN_COPY } from "../admin-i18n";
 import {
   ACTIVE_COUNTRY_CODE,
   resolveActivePack,
 } from "@/shared/config/deployment";
 import { EntityAvatar } from "@/shared/ui/EntityAvatar";
 import { useImageLightbox } from "@/shared/ui/ImageLightboxProvider";
-import { ActiveRegionPill } from "@/shared/ui/primitives";
+import {
+  StatStrip,
+  UiTabBar,
+  WorkspaceHeader,
+  useToastSetter,
+} from "@/shared/ui/primitives";
+import {
+  MoroccanComplianceBadge,
+  TactilePillGroup,
+} from "@/shared/ui/TactileControls";
 import {
   formatByteSize,
   listAdminFacilityMedia,
   listAdminUserMedia,
+  listAllAdminUserMedia,
   reviewFacilityMediaDocument,
   reviewUserMediaDocument,
 } from "@/features/media-certifications";
@@ -46,24 +79,69 @@ import { EntityPicker } from "@/shared/ui/EntityPicker";
 import {
   clearStoredSession,
   readStoredSession,
+  revokeClientSession,
   writeStoredSession,
 } from "@/shared/auth/session-storage";
+import {
+  canManageAdminOps,
+  syncPendingSessionStatus,
+} from "@/shared/auth/role-capabilities";
+import { WorkspaceRoleGuard } from "@/shared/auth/WorkspaceRoleGuard";
+import {
+  isPendingStaffVerification,
+  VerificationGateNotice,
+} from "@/shared/ui/VerificationGateNotice";
 import {
   Activity,
   AlertTriangle,
   Building2,
-  CheckCircle2,
+  Download,
   Eye,
   FileCheck2,
   FileText,
   KeyRound,
-  LogOut,
   Navigation,
+  Plus,
   RefreshCw,
-  ShieldAlert,
+  Search,
   ShieldCheck,
+  SlidersHorizontal,
+  UserPlus,
   Users,
+  X,
 } from "lucide-react";
+const AdminDocumentsValidationPanel = dynamic(
+  () =>
+    import("./AdminDocumentsValidationPanel").then(
+      (m) => m.AdminDocumentsValidationPanel,
+    ),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-64 w-full animate-pulse rounded-2xl border border-[#D7E4F2] bg-white" />
+    ),
+  },
+);
+const AdminProvisionUserModal = dynamic(
+  () =>
+    import("./AdminProvisionUserModal").then(
+      (m) => m.AdminProvisionUserModal,
+    ),
+  { ssr: false },
+);
+
+const DynamicAdminOperationsTrackerPanel = dynamic(
+  () =>
+    import("./AdminOperationsTrackerPanel").then(
+      (m) => m.AdminOperationsTrackerPanel,
+    ),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-64 w-full animate-pulse rounded-2xl border border-[#D7E4F2] bg-white" />
+    ),
+  },
+);
 import {
   fetchAdminAuditEvents,
   fetchAdminOverview,
@@ -77,9 +155,11 @@ import {
 
 type AdminTab =
   | "overview"
+  | "documents"
   | "facilities"
   | "users"
   | "dispatches"
+  | "operations"
   | "disputes"
   | "audit";
 
@@ -96,6 +176,7 @@ const ROLE_BADGE_COLORS: Record<UserRole, string> = {
   OPS_ADMIN: "border-teal-300 bg-teal-50 text-teal-900",
   HOSPITAL_ADMIN: "border-sky-300 bg-sky-50 text-sky-900",
   DOCTOR: "border-emerald-300 bg-emerald-50 text-emerald-900",
+  NURSE: "border-rose-300 bg-rose-50 text-rose-900",
   PHARMACIST: "border-indigo-300 bg-indigo-50 text-indigo-900",
   LAB_TECH: "border-cyan-300 bg-cyan-50 text-cyan-900",
   CLINIC_STAFF: "border-slate-300 bg-slate-100 text-slate-800",
@@ -105,7 +186,9 @@ const ROLE_BADGE_COLORS: Record<UserRole, string> = {
 };
 
 export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
-  const { t } = useLocale();
+  const { locale, t, isRtl } = useLocale();
+  const a = ADMIN_COPY[locale];
+  const m = a.messages;
   const { openImage } = useImageLightbox();
   const defaultCode = resolveActivePack(packs)?.code ?? ACTIVE_COUNTRY_CODE;
   const [selectedScope, setSelectedScope] = useState<string>(defaultCode);
@@ -115,6 +198,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
   const [currentUser, setCurrentUser] = useState<AuthenticatedUser | null>(
     null,
   );
+  const [sessionHydrated, setSessionHydrated] = useState(false);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
 
@@ -127,15 +211,44 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
   const [facilityMedia, setFacilityMedia] = useState<FacilityMediaDocument[]>(
     [],
   );
+  const [adminUserMedia, setAdminUserMedia] = useState<AdminUserMediaItem[]>(
+    [],
+  );
+  const [pharmacyOrders, setPharmacyOrders] = useState<PharmacyOrderSummary[]>(
+    [],
+  );
+  const [appointments, setAppointments] = useState<AppointmentSummary[]>([]);
+  const [prescriptions, setPrescriptions] = useState<PrescriptionSummary[]>([]);
+  const [labOrders, setLabOrders] = useState<LabOrderSummary[]>([]);
   const [userMediaByUser, setUserMediaByUser] = useState<
     Record<string, UserMediaDocument[]>
   >({});
   const [apiOnline, setApiOnline] = useState(false);
 
-  // User Role Governance Editor State
+  // User Role Governance Editor & Filter State
   const [roleDrafts, setRoleDrafts] = useState<Record<string, UserRole>>({});
-  const [countryDrafts, setCountryDrafts] = useState<Record<string, string>>({});
-  const [roleReason, setRoleReason] = useState("Standard permission review");
+  const [countryDrafts] = useState<Record<string, string>>({});
+  const [facilityDrafts, setFacilityDrafts] = useState<Record<string, string>>(
+    {},
+  );
+  const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [editingDispatchId, setEditingDispatchId] = useState<string | null>(null);
+  const [disputeComposerOpen, setDisputeComposerOpen] = useState(false);
+  const [roleReason, setRoleReason] = useState("");
+  const [userSearchQuery, setUserSearchQuery] = useState("");
+  const [userStatusFilter, setUserStatusFilter] = useState<
+    "ALL" | AccountStatus
+  >("ALL");
+  const [userRoleFilter, setUserRoleFilter] = useState<"ALL" | UserRole>("ALL");
+  const [provisionModalOpen, setProvisionModalOpen] = useState(false);
+
+  // Facility & Dispute Filtering State
+  const [facilitySearchQuery, setFacilitySearchQuery] = useState("");
+  const [facilityStatusFilter, setFacilityStatusFilter] = useState<
+    "ALL" | "PENDING_REVIEW" | "VERIFIED" | "SUSPENDED"
+  >("ALL");
+  const [facilityKindFilter, setFacilityKindFilter] = useState<string>("ALL");
+  const [disputeStatusFilter, setDisputeStatusFilter] = useState<string>("ALL");
 
   // Dispatch Override State
   const [overrideStatusDrafts, setOverrideStatusDrafts] = useState<
@@ -159,17 +272,14 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
   // Audit Filters
   const [auditActionFilter, setAuditActionFilter] = useState("");
   const [auditResourceFilter, setAuditResourceFilter] = useState("");
+  const [signInModalOpen, setSignInModalOpen] = useState(false);
 
   const [busy, setBusy] = useState(false);
-  const [banner, setBanner] = useState<{
-    tone: "info" | "success" | "error";
-    text: string;
-  } | null>(null);
+  const setBanner = useToastSetter();
 
-  const isOpsAdmin = currentUser?.role === "OPS_ADMIN";
-  const isAdminViewer =
-    currentUser?.role === "OPS_ADMIN" ||
-    currentUser?.role === "HOSPITAL_ADMIN";
+  const isPendingStaff = isPendingStaffVerification(currentUser);
+  const isOpsAdmin = currentUser?.role === "OPS_ADMIN" && !isPendingStaff;
+  const isAdminViewer = canManageAdminOps(currentUser);
 
   const effectiveCountryQuery =
     currentUser && !isOpsAdmin
@@ -183,6 +293,17 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
     resolveActivePack(packs);
 
   useEffect(() => {
+    if (!signInModalOpen) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setSignInModalOpen(false);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [signInModalOpen]);
+
+  useEffect(() => {
     const stored = readStoredSession();
     if (stored) {
       setSessionToken(stored.token);
@@ -191,15 +312,33 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
         stored.user.role === "OPS_ADMIN" ? defaultCode : stored.user.countryCode,
       );
     }
+    setSessionHydrated(true);
 
     let cancelled = false;
     checkBackendOnline().then((online) => {
-      if (!cancelled) setApiOnline(online);
+      if (cancelled) return;
+      setApiOnline(online);
+      if (online && stored && isPendingStaffVerification(stored.user)) {
+        void syncPendingSessionStatus(apiBaseUrl, stored).then((syncRes) => {
+          if (cancelled) return;
+          if (syncRes.status === "expired") {
+            setSessionToken(null);
+            setCurrentUser(null);
+          } else if (syncRes.status === "updated" && syncRes.session) {
+            setCurrentUser(syncRes.session.user);
+            setSelectedScope(
+              syncRes.session.user.role === "OPS_ADMIN"
+                ? defaultCode
+                : syncRes.session.user.countryCode,
+            );
+          }
+        });
+      }
     });
     return () => {
       cancelled = true;
     };
-  }, [defaultCode]);
+  }, [apiBaseUrl, defaultCode]);
 
   useEffect(() => {
     if (!apiOnline || !sessionToken || !currentUser) return;
@@ -210,16 +349,16 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
     () => [
       ...facilities.map((f) => ({
         id: f.id,
-        label: `Facility: ${f.name}`,
-        sublabel: `${f.kind} · ${f.licenseNumber}`,
+        label: `${a.dispatches.facilityPrefix} ${f.name}`,
+        sublabel: `${formatFacilityKind(f.kind, locale)} · ${f.licenseNumber}`,
       })),
       ...dispatches.map((d) => ({
         id: d.id,
-        label: `Dispatch: ${d.pickupAddress}`,
-        sublabel: `${d.urgency} · ${d.status}`,
+        label: `${a.dispatches.dispatchPrefix} ${d.pickupAddress}`,
+        sublabel: `${formatUrgencyLabel(d.urgency, locale)} · ${formatDispatchStatus(d.status, locale)}`,
       })),
     ],
-    [facilities, dispatches],
+    [a.dispatches.dispatchPrefix, a.dispatches.facilityPrefix, dispatches, facilities, locale],
   );
 
   async function refreshGovernanceData(
@@ -234,18 +373,19 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
           : scopeCountry
         : user.countryCode;
 
-    const adminCapable =
-      user.role === "OPS_ADMIN" || user.role === "HOSPITAL_ADMIN";
-
-    const disputesPromise = fetchDisputesList(apiBaseUrl, token, {
-      countryCode: countryParam,
-    });
-
-    if (!adminCapable) {
-      const dispRes = await disputesPromise;
-      if (dispRes.ok) {
-        setDisputes(dispRes.data.disputes);
-      }
+    if (isPendingStaffVerification(user) || !canManageAdminOps(user)) {
+      setOverview(null);
+      setFacilities([]);
+      setUsers([]);
+      setDispatches([]);
+      setDisputes([]);
+      setAuditLogs([]);
+      setFacilityMedia([]);
+      setAdminUserMedia([]);
+      setPharmacyOrders([]);
+      setAppointments([]);
+      setPrescriptions([]);
+      setLabOrders([]);
       return;
     }
 
@@ -257,12 +397,19 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
       disputesRes,
       auditRes,
       facMediaRes,
+      userMediaRes,
     ] = await Promise.all([
       fetchAdminOverview(apiBaseUrl, token, countryParam),
       listFacilities(apiBaseUrl, token, countryParam),
       fetchAdminUsers(apiBaseUrl, token, { countryCode: countryParam }),
-      listDispatchRequests(apiBaseUrl, token, countryParam ?? user.countryCode),
-      disputesPromise,
+      listDispatchRequests(
+        apiBaseUrl,
+        token,
+        user.role === "OPS_ADMIN" ? countryParam : user.countryCode,
+      ),
+      fetchDisputesList(apiBaseUrl, token, {
+        countryCode: countryParam,
+      }),
       fetchAdminAuditEvents(apiBaseUrl, token, {
         countryCode: countryParam,
         limit: 50,
@@ -271,7 +418,29 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
         ...(countryParam ? { countryCode: countryParam } : {}),
         limit: 80,
       }),
+      listAllAdminUserMedia(apiBaseUrl, token, {
+        ...(countryParam ? { countryCode: countryParam } : {}),
+        limit: 80,
+      }),
     ]);
+
+    const hasUnauthorized = [
+      overviewRes,
+      facilitiesRes,
+      usersRes,
+      dispatchesRes,
+      disputesRes,
+      auditRes,
+      facMediaRes,
+      userMediaRes,
+    ].some((res) => !res.ok && res.status === 401);
+
+    if (hasUnauthorized) {
+      clearStoredSession();
+      setSessionToken(null);
+      setCurrentUser(null);
+      return;
+    }
 
     if (overviewRes.ok) {
       setOverview(overviewRes.data.overview);
@@ -294,11 +463,51 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
     if (facMediaRes.ok) {
       setFacilityMedia(facMediaRes.data.documents);
     }
+    if (userMediaRes.ok) {
+      setAdminUserMedia(userMediaRes.data.documents);
+    }
   }
+
+  // Lazy-load the 4 heavy cross-platform operations feeds only when the Operations Tracker tab is opened
+  useEffect(() => {
+    if (
+      activeTab !== "operations" ||
+      !apiOnline ||
+      !sessionToken ||
+      !currentUser ||
+      !canManageAdminOps(currentUser)
+    ) {
+      return;
+    }
+    let active = true;
+    const countryParam =
+      currentUser.role === "OPS_ADMIN"
+        ? selectedScope === "ALL"
+          ? undefined
+          : selectedScope
+        : currentUser.countryCode;
+
+    void Promise.all([
+      listPharmacyOrders(apiBaseUrl, sessionToken, countryParam),
+      fetchAppointments(apiBaseUrl, sessionToken, countryParam),
+      fetchPrescriptions(apiBaseUrl, sessionToken, countryParam),
+      fetchLabOrders(apiBaseUrl, sessionToken, countryParam),
+    ]).then(([pharmacyOrdersRes, appointmentsRes, prescriptionsRes, labOrdersRes]) => {
+      if (!active) return;
+      if (pharmacyOrdersRes.ok) setPharmacyOrders(pharmacyOrdersRes.data.orders);
+      if (appointmentsRes.ok) setAppointments(appointmentsRes.data.appointments);
+      if (prescriptionsRes.ok) setPrescriptions(prescriptionsRes.data.prescriptions);
+      if (labOrdersRes.ok) setLabOrders(labOrdersRes.data.labOrders);
+    });
+    return () => {
+      active = false;
+    };
+  }, [activeTab, apiBaseUrl, apiOnline, currentUser, selectedScope, sessionToken]);
 
   async function handleReviewFacilityDoc(
     mediaId: string,
     reviewStatus: "APPROVED" | "REJECTED",
+    customNote?: string,
   ) {
     if (!sessionToken || !isOpsAdmin) return;
     setBusy(true);
@@ -309,9 +518,10 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
       {
         reviewStatus,
         reviewerNote:
-          reviewStatus === "APPROVED"
+          customNote ||
+          (reviewStatus === "APPROVED"
             ? "Certificate verified by Operations Compliance Desk."
-            : "Certificate rejected during compliance inspection.",
+            : "Certificate rejected during compliance inspection."),
       },
     );
     setBusy(false);
@@ -319,7 +529,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
     if (!res.ok) {
       setBanner({
         tone: "error",
-        text: `Document review failed: ${res.error}`,
+        text: m.docReviewFailed(res.error),
       });
       return;
     }
@@ -327,9 +537,16 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
     setFacilityMedia((prev) =>
       prev.map((doc) => (doc.id === mediaId ? res.data.document : doc)),
     );
+    if (currentUser) {
+      void refreshGovernanceData(sessionToken, currentUser, selectedScope);
+    }
     setBanner({
       tone: "success",
-      text: `${res.data.document.fileName} marked ${res.data.document.reviewStatus}.`,
+      text: m.docMarked(
+        res.data.document.fileName,
+        a.enums.reviewStatus[res.data.document.reviewStatus] ??
+          res.data.document.reviewStatus,
+      ),
     });
   }
 
@@ -348,6 +565,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
     userId: string,
     mediaId: string,
     reviewStatus: "APPROVED" | "REJECTED",
+    customNote?: string,
   ) {
     if (!sessionToken || !isOpsAdmin) return;
     setBusy(true);
@@ -358,16 +576,17 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
       {
         reviewStatus,
         reviewerNote:
-          reviewStatus === "APPROVED"
+          customNote ||
+          (reviewStatus === "APPROVED"
             ? "Practitioner license validated by Ops Admin."
-            : "Credential rejected by Ops Admin.",
+            : "Credential rejected by Ops Admin."),
       },
     );
     setBusy(false);
     if (!res.ok) {
       setBanner({
         tone: "error",
-        text: `Credential review failed: ${res.error}`,
+        text: m.credReviewFailed(res.error),
       });
       return;
     }
@@ -378,9 +597,29 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
         doc.id === mediaId ? res.data.document : doc,
       ),
     }));
+    setAdminUserMedia((prev) =>
+      prev.map((doc) =>
+        doc.id === mediaId
+          ? {
+              ...doc,
+              ...res.data.document,
+              ...(reviewStatus === "APPROVED"
+                ? { accountStatus: "ACTIVE", credentialVerified: true }
+                : {}),
+            }
+          : doc,
+      ),
+    );
+    if (currentUser) {
+      void refreshGovernanceData(sessionToken, currentUser, selectedScope);
+    }
     setBanner({
       tone: "success",
-      text: `${res.data.document.fileName} marked ${res.data.document.reviewStatus}.`,
+      text: m.docMarked(
+        res.data.document.fileName,
+        a.enums.reviewStatus[res.data.document.reviewStatus] ??
+          res.data.document.reviewStatus,
+      ),
     });
   }
 
@@ -389,11 +628,12 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
     const parsed = LoginSchema.safeParse({
       email: loginEmail,
       password: loginPassword,
+      portalTrack: "STAFF",
     });
     if (!parsed.success) {
       setBanner({
         tone: "error",
-        text: "Enter a valid operator email address and password.",
+        text: m.invalidLoginInput,
       });
       return;
     }
@@ -406,8 +646,8 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
         tone: "error",
         text:
           res.error === "API_UNREACHABLE"
-            ? `API unreachable at ${apiBaseUrl}. Ensure PostgreSQL, Redis & API are running.`
-            : `Authentication failed (${res.error}).`,
+            ? m.authUnreachable
+            : m.authFailed(res.error),
       });
       return;
     }
@@ -422,15 +662,20 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
 
     await refreshGovernanceData(res.data.token, res.data.user, nextScope);
     setBusy(false);
+    setSignInModalOpen(false);
 
     setBanner({
       tone: "success",
-      text: `Signed in as ${res.data.user.fullName} (${res.data.user.role} · ${res.data.user.countryCode}).`,
+      text: m.signedInMsg(
+        res.data.user.fullName,
+        formatRoleLabel(res.data.user.role, locale),
+        res.data.user.countryCode,
+      ),
     });
   }
 
   function handleSignOut() {
-    clearStoredSession();
+    revokeClientSession(apiBaseUrl);
     setSessionToken(null);
     setCurrentUser(null);
     setOverview(null);
@@ -439,9 +684,15 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
     setDispatches([]);
     setDisputes([]);
     setAuditLogs([]);
+    setFacilityMedia([]);
+    setAdminUserMedia([]);
+    setPharmacyOrders([]);
+    setAppointments([]);
+    setPrescriptions([]);
+    setLabOrders([]);
     setBanner({
       tone: "info",
-      text: "Signed out across all MediSync Global portals.",
+      text: m.signedOutRevoked,
     });
   }
 
@@ -461,7 +712,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
       setBusy(false);
       setBanner({
         tone: "error",
-        text: `Facility status change rejected (${res.error}).`,
+        text: m.facilityStatusRejected(res.error),
       });
       return;
     }
@@ -472,30 +723,170 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
     setBusy(false);
     setBanner({
       tone: "success",
-      text: `Updated "${res.data.facility.name}" status to ${res.data.facility.verificationStatus}.`,
+      text: m.facilityStatusUpdated(
+        res.data.facility.name,
+        a.enums.facilityVerification[res.data.facility.verificationStatus] ??
+          res.data.facility.verificationStatus,
+      ),
     });
   }
 
-  async function handleUpdateUserRole(targetUser: AuthenticatedUser) {
-    if (!sessionToken || !currentUser || !isOpsAdmin) return;
+  async function handleUpdateUserRole(targetUser: AuthenticatedUser): Promise<boolean> {
+    if (!sessionToken || !currentUser || !isOpsAdmin) return false;
     const nextRole = roleDrafts[targetUser.id] ?? targetUser.role;
-    const nextCountry = (
-      countryDrafts[targetUser.id] ?? targetUser.countryCode
-    )
-      .trim()
-      .toUpperCase();
+    const nextCountry =
+      countryDrafts[targetUser.id] ?? targetUser.countryCode;
 
     setBusy(true);
     const res = await updateAdminUserRole(apiBaseUrl, sessionToken, targetUser.id, {
       role: nextRole,
       countryCode: nextCountry,
-      reason: roleReason.trim() || undefined,
+      reason: roleReason.trim() || a.users.defaultRoleReason,
     });
     if (!res.ok) {
       setBusy(false);
       setBanner({
         tone: "error",
-        text: `Role update rejected (${res.error}).`,
+        text: m.roleUpdateRejected(res.error),
+      });
+      return false;
+    }
+
+    await refreshGovernanceData(sessionToken, currentUser, selectedScope);
+    setBusy(false);
+    setBanner({
+      tone: "success",
+      text: m.roleReassigned(
+        res.data.user.fullName,
+        formatRoleLabel(res.data.user.role, locale),
+        res.data.user.countryCode,
+      ),
+    });
+    return true;
+  }
+
+  async function handleSaveUserRoleAndWorkplace(
+    targetUser: AuthenticatedUser,
+  ): Promise<boolean> {
+    if (!sessionToken || !currentUser || !isOpsAdmin) return false;
+    const nextRole = roleDrafts[targetUser.id] ?? targetUser.role;
+    const nextCountry =
+      countryDrafts[targetUser.id] ?? targetUser.countryCode;
+    const draftFac = facilityDrafts[targetUser.id] ?? targetUser.facilityId ?? "";
+    const currentFac = targetUser.facilityId ?? "";
+    const supportsFacility =
+      isStaffWorkerRole(nextRole) && nextRole !== "DRIVER";
+    const desiredFacilityId = supportsFacility ? draftFac || null : null;
+    const roleChanged =
+      nextRole !== targetUser.role || nextCountry !== targetUser.countryCode;
+    const workplaceChanged =
+      supportsFacility
+        ? draftFac !== currentFac
+        : Boolean(currentFac) && roleChanged;
+
+    if (!roleChanged && !workplaceChanged) {
+      return handleUpdateUserRole(targetUser);
+    }
+
+    setBusy(true);
+    let latestUser = targetUser;
+
+    if (roleChanged) {
+      const roleRes = await updateAdminUserRole(
+        apiBaseUrl,
+        sessionToken,
+        targetUser.id,
+        {
+          role: nextRole,
+          countryCode: nextCountry,
+          reason: roleReason.trim() || a.users.defaultRoleReason,
+        },
+      );
+      if (!roleRes.ok) {
+        setBusy(false);
+        setBanner({
+          tone: "error",
+          text: m.roleUpdateRejected(roleRes.error),
+        });
+        return false;
+      }
+      latestUser = roleRes.data.user;
+    }
+
+    if (workplaceChanged) {
+      const statusRes = await updateAdminUserStatus(
+        apiBaseUrl,
+        sessionToken,
+        targetUser.id,
+        {
+          accountStatus: latestUser.accountStatus,
+          credentialVerified: latestUser.credentialVerified,
+          facilityId: desiredFacilityId,
+          reason:
+            roleReason.trim() ||
+            `Admin workplace assignment: ${desiredFacilityId ?? "unlinked"}`,
+        },
+      );
+      if (!statusRes.ok) {
+        await refreshGovernanceData(sessionToken, currentUser, selectedScope);
+        setBusy(false);
+        setBanner({
+          tone: "error",
+          text: m.staffVerifyFailed(statusRes.error),
+        });
+        return false;
+      }
+      latestUser = statusRes.data.user;
+    }
+
+    await refreshGovernanceData(sessionToken, currentUser, selectedScope);
+    setBusy(false);
+    setBanner({
+      tone: "success",
+      text: m.roleReassigned(
+        latestUser.fullName,
+        formatRoleLabel(latestUser.role, locale),
+        latestUser.countryCode,
+      ),
+    });
+    return true;
+  }
+
+  async function handleUpdateUserStatus(
+    targetUser: AuthenticatedUser,
+    nextStatus: AccountStatus,
+    credentialVerified: boolean,
+    explicitFacilityId?: string | null,
+  ) {
+    if (!sessionToken || !currentUser || !isOpsAdmin) return;
+    setBusy(true);
+    const draftFac = facilityDrafts[targetUser.id];
+    const resolvedFacilityPatch =
+      explicitFacilityId !== undefined
+        ? explicitFacilityId
+        : draftFac !== undefined
+          ? draftFac || null
+          : undefined;
+    const res = await updateAdminUserStatus(
+      apiBaseUrl,
+      sessionToken,
+      targetUser.id,
+      {
+        accountStatus: nextStatus,
+        credentialVerified,
+        ...(resolvedFacilityPatch !== undefined
+          ? { facilityId: resolvedFacilityPatch }
+          : {}),
+        reason:
+          roleReason.trim() ||
+          `Admin verification action: ${nextStatus} (verified=${String(credentialVerified)})`,
+      },
+    );
+    if (!res.ok) {
+      setBusy(false);
+      setBanner({
+        tone: "error",
+        text: m.staffVerifyFailed(res.error),
       });
       return;
     }
@@ -504,12 +895,20 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
     setBusy(false);
     setBanner({
       tone: "success",
-      text: `Reassigned ${res.data.user.fullName} to ${res.data.user.role} (${res.data.user.countryCode}).`,
+      text: m.staffVerifyUpdated(
+        res.data.user.fullName,
+        formatRoleLabel(res.data.user.role, locale),
+        a.enums.accountStatus[res.data.user.accountStatus] ??
+          res.data.user.accountStatus,
+        res.data.user.credentialVerified,
+      ),
     });
   }
 
-  async function handleOverrideDispatch(dispatch: DispatchRequestSummary) {
-    if (!sessionToken || !currentUser || !isAdminViewer) return;
+  async function handleOverrideDispatch(
+    dispatch: DispatchRequestSummary,
+  ): Promise<boolean> {
+    if (!sessionToken || !currentUser || !isAdminViewer) return false;
     const nextStatus = overrideStatusDrafts[dispatch.id] ?? dispatch.status;
     const selectedDriver = overrideDriverDrafts[dispatch.id]?.trim();
     const note =
@@ -530,22 +929,28 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
       setBusy(false);
       setBanner({
         tone: "error",
-        text: `Dispatch override failed (${res.error}).`,
+        text: m.dispatchOverrideFailed(res.error),
       });
-      return;
+      return false;
     }
 
     await refreshGovernanceData(sessionToken, currentUser, selectedScope);
     setBusy(false);
     setBanner({
       tone: "success",
-      text: `Dispatch ${res.data.dispatch.id.slice(0, 8)} status updated to ${res.data.dispatch.status} on live boards.`,
+      text: m.dispatchOverridden(
+        res.data.dispatch.id.slice(0, 8),
+        formatDispatchStatus(res.data.dispatch.status, locale),
+      ),
     });
+    return true;
   }
 
-  async function handleSubmitDispute(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmitDispute(
+    event: FormEvent<HTMLFormElement>,
+  ): Promise<boolean> {
     event.preventDefault();
-    if (!sessionToken || !currentUser) return;
+    if (!sessionToken || !currentUser) return false;
 
     setBusy(true);
     const res = await submitDisputeTicket(apiBaseUrl, sessionToken, {
@@ -561,9 +966,9 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
       setBusy(false);
       setBanner({
         tone: "error",
-        text: `Dispute filing failed (${res.error}).`,
+        text: m.disputeFilingFailed(res.error),
       });
-      return;
+      return false;
     }
 
     setDisputeSubject("");
@@ -573,8 +978,13 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
     setBusy(false);
     setBanner({
       tone: "success",
-      text: `Dispute "${res.data.dispute.subject}" logged (${res.data.dispute.status}).`,
+      text: m.disputeLogged(
+        res.data.dispute.subject,
+        a.enums.disputeStatus[res.data.dispute.status] ??
+          res.data.dispute.status,
+      ),
     });
+    return true;
   }
 
   async function handleResolveDispute(
@@ -595,7 +1005,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
       setBusy(false);
       setBanner({
         tone: "error",
-        text: `Dispute resolution failed (${res.error}).`,
+        text: m.disputeResolveFailed(res.error),
       });
       return;
     }
@@ -604,7 +1014,11 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
     setBusy(false);
     setBanner({
       tone: "success",
-      text: `Dispute ${res.data.dispute.id.slice(0, 8)} transitioned to ${res.data.dispute.status}.`,
+      text: m.disputeTransitioned(
+        res.data.dispute.id.slice(0, 8),
+        a.enums.disputeStatus[res.data.dispute.status] ??
+          res.data.dispute.status,
+      ),
     });
   }
 
@@ -622,7 +1036,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
     if (!res.ok) {
       setBanner({
         tone: "error",
-        text: `Audit query failed (${res.error}).`,
+        text: m.auditQueryFailed(res.error),
       });
       return;
     }
@@ -630,360 +1044,622 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
   }
 
   const countryDrivers = users.filter((u) => u.role === "DRIVER");
+  const pendingStaffUsers = users.filter(
+    (u) =>
+      isStaffWorkerRole(u.role) &&
+      (u.accountStatus === "PENDING_APPROVAL" || !u.credentialVerified),
+  );
+
+  const facilityNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const fac of facilities) {
+      map.set(fac.id, fac.name);
+    }
+    return map;
+  }, [facilities]);
+
+  const filteredFacilities = useMemo(() => {
+    const q = facilitySearchQuery.trim().toLowerCase();
+    return facilities.filter((fac) => {
+      if (
+        facilityStatusFilter !== "ALL" &&
+        fac.verificationStatus !== facilityStatusFilter
+      ) {
+        return false;
+      }
+      if (facilityKindFilter !== "ALL" && fac.kind !== facilityKindFilter) {
+        return false;
+      }
+      if (!q) return true;
+      return (
+        fac.name.toLowerCase().includes(q) ||
+        fac.licenseNumber.toLowerCase().includes(q) ||
+        fac.address.toLowerCase().includes(q)
+      );
+    });
+  }, [facilities, facilityKindFilter, facilitySearchQuery, facilityStatusFilter]);
+
+  const filteredUsers = useMemo(() => {
+    const q = userSearchQuery.trim().toLowerCase();
+    return users.filter((u) => {
+      if (userStatusFilter !== "ALL" && u.accountStatus !== userStatusFilter) {
+        return false;
+      }
+      if (userRoleFilter !== "ALL" && u.role !== userRoleFilter) {
+        return false;
+      }
+      if (!q) return true;
+      return (
+        u.fullName.toLowerCase().includes(q) ||
+        (u.email?.toLowerCase().includes(q) ?? false) ||
+        (u.phone?.toLowerCase().includes(q) ?? false) ||
+        u.id.toLowerCase().includes(q)
+      );
+    });
+  }, [userRoleFilter, userSearchQuery, userStatusFilter, users]);
+
+  const filteredDisputes = useMemo(() => {
+    if (disputeStatusFilter === "ALL") return disputes;
+    return disputes.filter((d) => d.status === disputeStatusFilter);
+  }, [disputeStatusFilter, disputes]);
+
+  function handleExportAuditCsv() {
+    if (auditLogs.length === 0) return;
+    const esc = (v: unknown) =>
+      `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const header = [
+      "eventId",
+      "occurredAtIso",
+      "countryCode",
+      "actorRole",
+      "actorId",
+      "action",
+      "resourceType",
+      "resourceId",
+      "metadata",
+    ].join(",");
+    const rows = auditLogs.map((log) =>
+      [
+        esc(log.eventId),
+        esc(log.occurredAtIso),
+        esc(log.countryCode),
+        esc(log.actorRole),
+        esc(log.actorId),
+        esc(log.action),
+        esc(log.resourceType),
+        esc(log.resourceId),
+        esc(log.metadata ? JSON.stringify(log.metadata) : "{}"),
+      ].join(","),
+    );
+    const csv = [header, ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `medisync-audit-${selectedScope.toLowerCase()}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const totalUploadedDocsCount =
+    adminUserMedia.length + facilityMedia.length;
+  const pendingDocsCount =
+    overview?.pendingReviewDocuments ??
+    adminUserMedia.filter(
+      (d) => d.uploadStatus === "UPLOADED" && d.reviewStatus === "PENDING_REVIEW",
+    ).length +
+      facilityMedia.filter(
+        (d) =>
+          d.uploadStatus === "UPLOADED" && d.reviewStatus === "PENDING_REVIEW",
+      ).length;
+
+  const docsTabLabel =
+    locale === "fr"
+      ? `Pièces & Agréments (${totalUploadedDocsCount})`
+      : locale === "ar"
+        ? `التحقق من الملفات (${totalUploadedDocsCount})`
+        : `Files & Licenses (${totalUploadedDocsCount})`;
+  const opsTrackerTabLabel =
+    locale === "fr"
+      ? "Suivi Global & Ventes"
+      : locale === "ar"
+        ? "تتبع العمليات والمبيعات"
+        : "Live Tracker";
+  const pendingPapersKpiLabel =
+    locale === "fr"
+      ? "Pièces à valider"
+      : locale === "ar"
+        ? "ملفات قيد المراجعة"
+        : "Files to Validate";
+  const pharmacySalesKpiLabel =
+    locale === "fr"
+      ? "Ventes Pharmacie"
+      : locale === "ar"
+        ? "مبيعات الصيدليات"
+        : "Pharmacy Sales";
 
   const kpiCards = [
     {
-      label: "Registered Users",
-      value: overview ? String(overview.totalUsers) : "-",
-      detail: overview?.countryCode ?? "Global Scope",
+      label: a.kpis.pendingStaffVerify,
+      value: overview ? String(pendingStaffUsers.length) : "-",
+      detail: `${a.kpis.totalUsersDetail(users.length)}${overview ? ` · ${overview.totalNurses} ${formatRoleLabel("NURSE", locale)}` : ""}`,
     },
     {
-      label: "Pending Licenses",
+      label: pendingPapersKpiLabel,
+      value: overview ? String(pendingDocsCount) : "-",
+      detail: `${totalUploadedDocsCount} ${locale === "fr" ? "fichiers" : locale === "ar" ? "ملفات" : "total files"}`,
+    },
+    {
+      label: a.kpis.pendingLicenses,
       value: overview ? String(overview.pendingVerificationFacilities) : "-",
-      detail: overview ? `${overview.totalFacilities} total facilities` : "Sync required",
+      detail: overview
+        ? a.kpis.totalFacilitiesDetail(overview.totalFacilities)
+        : a.kpis.syncRequired,
     },
     {
-      label: "Active Dispatches",
+      label: a.kpis.activeDispatches,
       value: overview ? String(overview.activeDispatches) : "-",
-      detail: "Live EMS pipeline",
+      detail: overview
+        ? `${overview.completedDispatches} ${locale === "fr" ? "terminées" : locale === "ar" ? "مكتملة" : "completed"}`
+        : a.kpis.liveEmsDetail,
     },
     {
-      label: "Booked Visits",
+      label: pharmacySalesKpiLabel,
+      value: overview ? String(overview.totalPharmacyOrders) : "-",
+      detail: overview
+        ? `${(overview.pharmacyRevenueMinor / 100).toFixed(2)} ${activePack?.currencyCode ?? "MAD"}`
+        : a.kpis.syncRequired,
+    },
+    {
+      label: a.kpis.bookedVisits,
       value: overview ? String(overview.activeAppointments) : "-",
-      detail: "Confirmed & checked-in",
+      detail: a.kpis.confirmedCheckedInDetail,
     },
     {
-      label: "Issued Rx QR",
+      label: a.kpis.issuedRxQr,
       value: overview ? String(overview.openPrescriptions) : "-",
-      detail: "Awaiting pharmacy scan",
+      detail: a.kpis.awaitingPharmacyDetail,
     },
     {
-      label: "Open Lab Orders",
-      value: overview ? String(overview.pendingLabOrders) : "-",
-      detail: "Ordered or sampled",
-    },
-    {
-      label: "Open Disputes",
+      label: a.kpis.openDisputes,
       value: overview ? String(overview.openDisputes) : "-",
-      detail: "Safety & service quality queue",
+      detail: `${a.kpis.openLabOrders}: ${overview ? overview.pendingLabOrders : "-"}`,
     },
   ];
 
   const tabs: readonly { id: AdminTab; label: string }[] = [
-    { id: "overview", label: "Overview" },
-    { id: "facilities", label: `Facilities (${facilities.length})` },
-    { id: "users", label: `Staff & Users (${users.length})` },
-    { id: "dispatches", label: `Dispatches (${dispatches.length})` },
-    { id: "disputes", label: `Disputes (${disputes.length})` },
-    { id: "audit", label: `Activity Log (${auditLogs.length})` },
+    { id: "overview", label: a.tabs.overview },
+    { id: "documents", label: docsTabLabel },
+    { id: "facilities", label: a.tabs.facilities(facilities.length) },
+    { id: "users", label: a.tabs.users(users.length) },
+    { id: "dispatches", label: a.tabs.dispatches(dispatches.length) },
+    { id: "operations", label: opsTrackerTabLabel },
+    { id: "disputes", label: a.tabs.disputes(disputes.length) },
+    { id: "audit", label: a.tabs.audit(auditLogs.length) },
   ];
 
   return (
-    <div className="space-y-6">
-      {/* Header & Region Selector */}
-      <section
-        aria-label="Master Administration Command Bar"
-        className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs"
-      >
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <p className="font-mono-tabular text-xs font-semibold uppercase tracking-wider text-teal-800">
-              {t("admin.eyebrow")}
-            </p>
-            <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">
-              {t("admin.heading")}
-            </h1>
-            {activePack ? (
-              <p className="mt-1 text-sm text-slate-600">
-                Region Focus:{" "}
-                <strong className="text-slate-900">
-                  {selectedScope === "ALL" && isOpsAdmin
-                    ? "Global All-Countries View"
-                    : activePack.name}
-                </strong>{" "}
-                · Ambulance{" "}
-                <span className="font-mono-tabular font-semibold text-red-700">
-                  {activePack.emergencyHotlines.ambulance}
-                </span>{" "}
-                · Currency{" "}
-                <span className="font-mono-tabular">
-                  {activePack.currencyCode}
-                </span>
-              </p>
-            ) : null}
+    <div dir={isRtl ? "rtl" : "ltr"} className="space-y-4">
+      <WorkspaceHeader
+        title={t("admin.heading")}
+        countryCode={activePack?.code ?? defaultCode}
+        countryName={formatCountryDisplayName(
+          activePack?.code ?? defaultCode,
+          activePack?.name ?? defaultCode,
+          locale,
+        )}
+        currencyCode={activePack?.currencyCode ?? defaultCode}
+        emergencyHotline={activePack?.emergencyHotlines.ambulance ?? ""}
+        user={currentUser}
+        guestLabel={a.header.guestLabel}
+        hideGuestSignIn
+        onSignOut={handleSignOut}
+        actions={
+          <div className="flex flex-wrap items-center gap-1.5">
+            {currentUser && sessionToken ? (
+              <>
+                {isOpsAdmin ? (
+                  <div
+                    role="radiogroup"
+                    aria-label={a.header.jurisdictionAria}
+                    className="inline-flex items-center gap-1 rounded-xl border border-[#D7E4F2] bg-[#F3F8FD] p-1"
+                  >
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={selectedScope === defaultCode}
+                      onClick={() => setSelectedScope(defaultCode)}
+                      className={`h-8 rounded-lg px-2.5 text-xs font-semibold transition ${
+                        selectedScope === defaultCode
+                          ? "bg-[#0066CC] text-white shadow-2xs"
+                          : "text-[#4A627D] hover:bg-white hover:text-[#0F243E]"
+                      }`}
+                    >
+                      {formatCountryDisplayName(
+                        defaultCode,
+                        activePack?.name ?? defaultCode,
+                        locale,
+                      )}{" "}
+                      ({defaultCode})
+                    </button>
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={selectedScope === "ALL"}
+                      onClick={() => setSelectedScope("ALL")}
+                      className={`h-8 rounded-lg px-2.5 text-xs font-semibold transition ${
+                        selectedScope === "ALL"
+                          ? "bg-[#0066CC] text-white shadow-2xs"
+                          : "text-[#4A627D] hover:bg-white hover:text-[#0F243E]"
+                      }`}
+                    >
+                      {a.header.allRegionsOption}
+                    </button>
+                  </div>
+                ) : currentUser.role === "HOSPITAL_ADMIN" ? (
+                  <Link
+                    href="/hospital"
+                    className="inline-flex h-10 items-center rounded-full bg-emerald-50 px-4 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-100"
+                  >
+                    {a.header.hospitalReceptionLink}
+                  </Link>
+                ) : null}
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() =>
+                    void refreshGovernanceData(
+                      sessionToken,
+                      currentUser,
+                      selectedScope,
+                    )
+                  }
+                  className="inline-flex h-10 items-center gap-1.5 rounded-xl bg-[#F3F8FD] border border-[#D7E4F2] px-4 text-xs font-semibold text-slate-700 transition hover:bg-[#E1EBF2] hover:text-[#0066CC] disabled:opacity-50"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span className="hidden sm:inline">{a.header.refreshBtn}</span>
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setSignInModalOpen(true)}
+                className="inline-flex h-10 items-center gap-1.5 rounded-xl bg-[#0066CC] px-4 text-xs font-semibold text-white shadow-2xs transition hover:bg-[#0052A3]"
+              >
+                <KeyRound className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>{a.header.signInBtn}</span>
+              </button>
+            )}
           </div>
+        }
+      />
 
-          <ActiveRegionPill
-            code={activePack?.code ?? defaultCode}
-            name={activePack?.name ?? "Morocco"}
-            currencyCode={activePack?.currencyCode}
-            emergencyHotline={activePack?.emergencyHotlines.ambulance}
-          />
-        </div>
-      </section>
+      <VerificationGateNotice user={currentUser} compact />
 
-      {/* Regional Overview Metrics */}
-      <section aria-label="Operational overview metrics">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
-          {kpiCards.map((kpi) => (
-            <article
-              key={kpi.label}
-              className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs"
-            >
-              <p className="text-xs font-medium text-slate-500">{kpi.label}</p>
-              <p className="mt-1 font-mono-tabular text-2xl font-bold text-slate-900">
-                {kpi.value}
-              </p>
-              <p className="mt-0.5 font-mono-tabular text-[11px] text-slate-500">
-                {kpi.detail}
-              </p>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      {banner ? (
-        <div
-          role={banner.tone === "error" ? "alert" : "status"}
-          className={`flex items-start gap-2.5 rounded-xl border px-4 py-3 text-sm ${
-            banner.tone === "error"
-              ? "border-red-200 bg-red-50 text-red-900"
-              : banner.tone === "success"
-                ? "border-teal-200 bg-teal-50 text-teal-900"
-                : "border-slate-200 bg-white text-slate-800"
-          }`}
-        >
-          {banner.tone === "error" ? (
-            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
-          ) : (
-            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-          )}
-          <span className="break-words">{banner.text}</span>
-        </div>
+      <WorkspaceRoleGuard
+        user={currentUser}
+        hydrated={sessionHydrated}
+        allowedRoles={["OPS_ADMIN"]}
+        workspaceTitle={a.header.guardTitle}
+        requiredRoleDescription={a.header.guardRoles}
+        hideRecruitment
+        primaryActionLabel={a.header.guardPrimaryBtn}
+        onPrimaryAction={() => setSignInModalOpen(true)}
+      >
+      {overview ? (
+        <StatStrip
+          ariaLabel={a.header.overviewMetricsAria}
+          columns={4}
+          items={kpiCards.map((kpi, idx) => ({
+            label: kpi.label,
+            value: kpi.value,
+            detail: kpi.detail,
+            tone:
+              idx === 0 || idx === 1 || idx === 2
+                ? "amber"
+                : idx === 3
+                  ? "crimson"
+                  : idx === 4 || idx === 5
+                    ? "emerald"
+                    : "neutral",
+          }))}
+        />
       ) : null}
 
-      {/* Staff Session + Regional Oversight Workspace */}
-      <div className="grid gap-6 lg:grid-cols-12">
-        <aside className="min-w-0 space-y-4 lg:col-span-4">
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
-            {currentUser ? (
-              <div className="space-y-4">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <EntityAvatar
-                      name={currentUser.fullName}
-                      role={currentUser.role}
-                      avatarUrl={currentUser.avatarUrl}
-                      size="md"
-                    />
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-teal-800">
-                        Signed-in Account
-                      </p>
-                      <h2 className="truncate text-lg font-semibold text-slate-900">
-                        {currentUser.fullName}
-                      </h2>
-                      <p className="truncate text-xs text-slate-500">
-                        {currentUser.email}
-                      </p>
-                    </div>
+      <section className="min-w-0 space-y-4">
+        <UiTabBar
+          tabs={tabs}
+          activeTab={activeTab}
+          onSelect={setActiveTab}
+          ariaLabel={a.header.tabsAria}
+        />
+
+          {activeTab === "overview" ? (
+            <div className="space-y-4">
+              {pendingDocsCount > 0 ? (
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#D7E4F2] bg-white px-4 py-3 text-xs">
+                  <div className="flex items-center gap-2.5">
+                    <FileCheck2 className="h-4 w-4 text-[#0066CC]" aria-hidden="true" />
+                    <p className="font-semibold text-[#0F243E]">
+                      {locale === "fr"
+                        ? `${pendingDocsCount} pièce(s) en attente de validation`
+                        : locale === "ar"
+                          ? `${pendingDocsCount} وثيقة في انتظار المصادقة`
+                          : `${pendingDocsCount} file(s) awaiting validation`}
+                    </p>
                   </div>
                   <button
                     type="button"
-                    onClick={handleSignOut}
-                    className="inline-flex min-h-[36px] shrink-0 items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                    onClick={() => setActiveTab("documents")}
+                    className="inline-flex h-8 items-center rounded-lg bg-[#0066CC] px-3.5 text-xs font-semibold text-white hover:bg-[#0052A3]"
                   >
-                    <LogOut className="h-3.5 w-3.5" />
-                    Sign out
+                    {docsTabLabel}
                   </button>
                 </div>
+              ) : null}
 
-                <dl className="grid grid-cols-2 gap-2 rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs">
-                  <div>
-                    <dt className="text-slate-500">Access Level</dt>
-                    <dd className="font-semibold text-slate-900">
-                      {formatRoleLabel(currentUser.role)}
-                    </dd>
+              {pendingStaffUsers.length > 0 ? (
+                <div className="space-y-3 rounded-2xl border border-amber-300 bg-amber-50/60 p-5 shadow-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2.5">
+                      <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-amber-200 bg-white text-amber-800">
+                        <ShieldCheck className="h-5 w-5" aria-hidden="true" />
+                      </span>
+                      <div>
+                        <h2 className="text-base font-semibold text-amber-950">
+                          {a.overview.pendingQueueTitle(pendingStaffUsers.length)}
+                        </h2>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("users")}
+                      className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-950 hover:bg-amber-100"
+                    >
+                      {a.overview.openStaffQueueBtn}
+                    </button>
                   </div>
-                  <div>
-                    <dt className="text-slate-500">Care Region</dt>
-                    <dd className="font-mono-tabular font-semibold text-slate-900">
-                      {currentUser.countryCode}
-                    </dd>
+
+                  <div className="space-y-2">
+                    {pendingStaffUsers.map((pendingUser) => (
+                      <div
+                        key={pendingUser.id}
+                        className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-white p-3"
+                      >
+                        <div className="flex min-w-0 items-center gap-2.5">
+                          <EntityAvatar
+                            name={pendingUser.fullName}
+                            role={pendingUser.role}
+                            avatarUrl={pendingUser.avatarUrl}
+                            size="sm"
+                          />
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-slate-900">
+                              <bdi dir="auto">{pendingUser.fullName}</bdi> ·{" "}
+                              {formatRoleLabel(pendingUser.role, locale)}
+                            </p>
+                            <p className="truncate text-xs text-slate-600">
+                              <span dir="ltr">
+                                {pendingUser.email ??
+                                  pendingUser.phone ??
+                                  pendingUser.id}
+                              </span>{" "}
+                              · {pendingUser.countryCode} ·{" "}
+                              {a.overview.statusPrefix}{" "}
+                              {a.enums.accountStatus[pendingUser.accountStatus] ??
+                                pendingUser.accountStatus}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveTab("users");
+                              void handleLoadUserCredentials(pendingUser.id);
+                            }}
+                            className="min-h-[38px] rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-teal-700"
+                          >
+                            {a.overview.inspectCredentialsBtn}
+                          </button>
+                          {isOpsAdmin ? (
+                            <>
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() =>
+                                  void handleUpdateUserStatus(
+                                    pendingUser,
+                                    "SUSPENDED",
+                                    false,
+                                  )
+                                }
+                                className="min-h-[38px] rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-800 hover:bg-red-100 disabled:opacity-50"
+                              >
+                                {a.overview.rejectSuspendBtn}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() =>
+                                  void handleUpdateUserStatus(
+                                    pendingUser,
+                                    "ACTIVE",
+                                    true,
+                                  )
+                                }
+                                className="min-h-[38px] rounded-lg bg-[#0066CC] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#0052A3] disabled:opacity-50"
+                              >
+                                {a.overview.verifyActivateBtn}
+                              </button>
+                            </>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                </dl>
-
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => {
-                    if (sessionToken && currentUser) {
-                      void refreshGovernanceData(
-                        sessionToken,
-                        currentUser,
-                        selectedScope,
-                      );
-                    }
-                  }}
-                  className="inline-flex min-h-[40px] w-full items-center justify-center gap-2 rounded-lg bg-teal-800 px-3 py-2 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-60"
-                >
-                  <RefreshCw className="h-3.5 w-3.5" />
-                  Refresh Live Status
-                </button>
-
-                {!isAdminViewer ? (
-                  <p className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-900">
-                    Signed in as {formatRoleLabel(currentUser.role)}. Network
-                    oversight tabs require Platform or Hospital Admin access; you
-                    may still submit and track service issue reports.
-                  </p>
-                ) : null}
-              </div>
-            ) : (
-              <form onSubmit={handleLogin} className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <KeyRound className="h-4 w-4 text-teal-800" />
-                  <h2 className="text-base font-semibold text-slate-900">
-                    Sign In for Operations
-                  </h2>
                 </div>
-                <p className="text-xs leading-relaxed text-slate-600">
-                  Sign in with a Platform Admin, Hospital Admin, or member account
-                  to view live facility activity or report a care issue.
-                </p>
-                <label className="block space-y-1 text-xs font-medium text-slate-700">
-                  <span>Email Address</span>
-                  <input
-                    type="email"
-                    required
-                    value={loginEmail}
-                    onChange={(e) => setLoginEmail(e.target.value)}
-                    placeholder="ops@medisync.global"
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-                  />
-                </label>
-                <label className="block space-y-1 text-xs font-medium text-slate-700">
-                  <span>Password</span>
-                  <input
-                    type="password"
-                    required
-                    value={loginPassword}
-                    onChange={(e) => setLoginPassword(e.target.value)}
-                    placeholder="Minimum 10 characters"
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-                  />
-                </label>
-                <button
-                  type="submit"
-                  disabled={busy}
-                  className="min-h-[42px] w-full rounded-lg bg-teal-800 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-900 disabled:opacity-60"
-                >
-                  {busy ? "Verifying Credentials..." : "Sign In to Admin Desk"}
-                </button>
-              </form>
-            )}
-          </div>
-        </aside>
+              ) : null}
 
-        {/* Main Operational Tabs */}
-        <section className="min-w-0 space-y-4 lg:col-span-8">
-          <div
-            className="flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-xs"
-            role="tablist"
-            aria-label="Admin workspace views"
-          >
-            {tabs.map((tab) => {
-              const selected = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  role="tab"
-                  aria-selected={selected}
-                  type="button"
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`min-h-[40px] rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors ${
-                    selected
-                      ? "bg-teal-800 text-white"
-                      : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              );
-            })}
-          </div>
-
-          {activeTab === "overview" ? (
-            <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <Activity className="h-4 w-4 text-teal-800" />
-                  <h2 className="text-base font-semibold text-slate-900">
-                    Recent Activity & Compliance Log
-                  </h2>
+              <div className="space-y-4 rounded-2xl border border-[#D7E4F2] bg-white p-5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Activity className="h-4 w-4 text-[#0066CC]" />
+                    <h2 className="text-base font-semibold text-slate-950">
+                      {a.overview.recentActivityTitle}
+                    </h2>
+                  </div>
+                  <span className="text-xs font-medium text-slate-500">
+                    {a.overview.tamperEvidentBadge}
+                  </span>
                 </div>
-                <span className="text-xs font-medium text-slate-500">
-                  Tamper-evident record
-                </span>
-              </div>
 
               {overview?.recentAuditLogs && overview.recentAuditLogs.length > 0 ? (
                 <div className="space-y-2">
                   {overview.recentAuditLogs.map((log) => (
                     <article
                       key={log.eventId}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50 px-3.5 py-2.5 text-xs"
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#D7E4F2] bg-[#F3F8FD] px-4 py-3 text-xs "
                     >
                       <div className="space-y-0.5">
                         <p className="font-mono-tabular font-semibold text-slate-900">
-                          {log.action}{" "}
+                          <span dir="ltr">{log.action}</span>{" "}
                           <span className="font-normal text-slate-500">
-                            on {log.resourceType}:{log.resourceId.slice(0, 8)}
+                            {a.overview.auditOnPrefix}{" "}
+                            <span dir="ltr">
+                              {log.resourceType}:{log.resourceId.slice(0, 8)}
+                            </span>
                           </span>
                         </p>
                         <p className="text-slate-600">
-                          Actor {log.actorRole} ({log.actorId.slice(0, 8)}) ·{" "}
+                          {a.overview.auditActorPrefix}{" "}
+                          {formatRoleLabel(log.actorRole, locale)} (
+                          <span dir="ltr">{log.actorId.slice(0, 8)}</span>) ·{" "}
                           {log.countryCode}
                         </p>
                       </div>
-                      <time className="font-mono-tabular text-[11px] text-slate-500">
+                      <time dir="ltr" className="font-mono-tabular text-[11px] text-slate-500">
                         {log.occurredAtIso}
                       </time>
                     </article>
                   ))}
                 </div>
               ) : (
-                <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
-                  Sign in as a Platform Admin or Hospital Admin and click
-                  Refresh to inspect live network activity and metrics.
+                <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
+                  {a.overview.emptyOverviewHint}
                 </p>
               )}
             </div>
+          </div>
+          ) : null}
+
+          {activeTab === "documents" ? (
+            <AdminDocumentsValidationPanel
+              userDocuments={adminUserMedia}
+              facilityDocuments={facilityMedia}
+              isOpsAdmin={isOpsAdmin}
+              busy={busy}
+              onReviewUserDocument={handleReviewUserCredential}
+              onReviewFacilityDocument={handleReviewFacilityDoc}
+            />
+          ) : null}
+
+          {activeTab === "operations" ? (
+            <DynamicAdminOperationsTrackerPanel
+              pharmacyOrders={pharmacyOrders}
+              appointments={appointments}
+              prescriptions={prescriptions}
+              labOrders={labOrders}
+              currencyCode={activePack?.currencyCode ?? "MAD"}
+            />
           ) : null}
 
           {activeTab === "facilities" ? (
-            <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
-              <div className="flex items-center gap-2">
-                <Building2 className="h-4 w-4 text-teal-800" />
-                <h2 className="text-base font-semibold text-slate-900">
-                  License Verification & Suspension
-                </h2>
+            <div className="space-y-4 rounded-2xl border border-[#D7E4F2] bg-white p-5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-2">
+                    <Building2 className="h-4 w-4 text-[#0066CC]" />
+                    <h2 className="text-base font-semibold text-slate-950">
+                      {a.facilities.heading}
+                    </h2>
+                  </div>
+                  <MoroccanComplianceBadge domain="admin" locale={locale} />
+                </div>
+                <span className="font-mono-tabular text-xs text-slate-500">
+                  {a.facilities.showingCount(filteredFacilities.length, facilities.length)}
+                </span>
               </div>
 
-              {facilities.length === 0 ? (
-                <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
-                  No facilities loaded in this scope yet.
+              <div className="space-y-2.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex h-9 min-w-[200px] flex-1 items-center gap-1.5 rounded-xl border border-[#D7E4F2] bg-[#F8FBFE] px-3.5 focus-within:border-[#0066CC] focus-within:bg-white">
+                    <Search className="h-3.5 w-3.5 shrink-0 text-slate-500" aria-hidden="true" />
+                    <input
+                      type="search"
+                      value={facilitySearchQuery}
+                      onChange={(e) => setFacilitySearchQuery(e.target.value)}
+                      placeholder={a.facilities.searchPlaceholder}
+                      aria-label={a.facilities.searchAria}
+                      className="min-w-0 flex-1 bg-transparent text-xs text-slate-900 focus:outline-none"
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {(["ALL", "PENDING_REVIEW", "VERIFIED", "SUSPENDED"] as const).map(
+                      (st) => (
+                        <button
+                          key={st}
+                          type="button"
+                          onClick={() => setFacilityStatusFilter(st)}
+                          className={`h-8 rounded-full border px-3 text-[11px] font-semibold transition ${
+                            facilityStatusFilter === st
+                              ? "border-[#0066CC] bg-[#0066CC] text-white"
+                              : "border-[#D7E4F2] bg-white text-slate-700 hover:border-[#0066CC] hover:text-[#0066CC]"
+                          }`}
+                        >
+                          {st === "ALL"
+                            ? a.facilities.filterAll
+                            : st === "PENDING_REVIEW"
+                              ? a.facilities.filterPending
+                              : st === "VERIFIED"
+                                ? a.facilities.filterVerified
+                                : a.facilities.filterSuspended}
+                        </button>
+                      ),
+                    )}
+                  </div>
+                </div>
+                <TactilePillGroup
+                  ariaLabel={a.facilities.kindAria}
+                  size="xs"
+                  layout="segmented"
+                  value={facilityKindFilter}
+                  onChange={setFacilityKindFilter}
+                  options={[
+                    { value: "ALL", label: a.facilities.allTypesOption },
+                    { value: "HOSPITAL", label: a.facilities.hospitalsOption },
+                    { value: "CLINIC", label: a.facilities.clinicsOption },
+                    { value: "PHARMACY", label: a.facilities.pharmaciesOption },
+                    { value: "DIAGNOSTIC_LAB", label: a.facilities.labsOption },
+                  ]}
+                />
+              </div>
+
+              {filteredFacilities.length === 0 ? (
+                <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
+                  {a.facilities.emptyFilter}
                 </p>
               ) : (
                 <div className="space-y-3">
-                  {facilities.map((fac) => {
+                  {filteredFacilities.map((fac) => {
                     const attachedDocs = facilityMedia.filter(
                       (doc) => doc.facilityId === fac.id,
                     );
                     return (
                       <article
                         key={fac.id}
-                        className="space-y-3 rounded-xl border border-slate-200 p-4"
+                        className="space-y-3 rounded-2xl border border-[#D7E4F2] bg-[#F3F8FD] p-4 "
                       >
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                           <div className="space-y-1">
@@ -992,7 +1668,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                                 {fac.name}
                               </h3>
                               <span className="rounded bg-slate-100 px-2 py-0.5 font-mono-tabular text-[11px] font-semibold text-slate-700">
-                                {fac.kind}
+                                {formatFacilityKind(fac.kind, locale)}
                               </span>
                               <span
                                 className={`rounded border px-2 py-0.5 font-mono-tabular text-[11px] font-semibold ${
@@ -1003,11 +1679,13 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                                       : "border-amber-200 bg-amber-50 text-amber-800"
                                 }`}
                               >
-                                {fac.verificationStatus}
+                                {a.enums.facilityVerification[fac.verificationStatus] ??
+                                  fac.verificationStatus}
                               </span>
                             </div>
                             <p className="font-mono-tabular text-xs text-slate-600">
-                              {fac.countryCode} · License {fac.licenseNumber}
+                              {fac.countryCode} · {a.facilities.licensePrefix}{" "}
+                              <span dir="ltr">{fac.licenseNumber}</span>
                             </p>
                             <p className="text-xs text-slate-500">
                               {fac.address}
@@ -1024,9 +1702,9 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                                 onClick={() =>
                                   void handleFacilityStatus(fac.id, "VERIFIED")
                                 }
-                                className="min-h-[36px] rounded-lg bg-teal-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-45"
+                                className="min-h-[36px] rounded-xl bg-[#0066CC] px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-[#0052A3] disabled:opacity-45"
                               >
-                                Verify
+                                {a.facilities.verifyBtn}
                               </button>
                               <button
                                 type="button"
@@ -1038,7 +1716,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                                 }
                                 className="min-h-[36px] rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-800 hover:bg-red-100 disabled:opacity-45"
                               >
-                                Suspend
+                                {a.facilities.suspendBtn}
                               </button>
                             </div>
                           ) : null}
@@ -1047,9 +1725,13 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                         {attachedDocs.length > 0 ? (
                           <div className="space-y-1.5 border-t border-slate-100 pt-2.5">
                             <p className="font-mono-tabular text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                              Submitted Certifications & Photos ({attachedDocs.length})
+                              {a.facilities.submittedDocsTitle(attachedDocs.length)}
                             </p>
-                            {attachedDocs.map((doc) => (
+                            {attachedDocs.map((doc) => {
+                              const docStatusLabel =
+                                a.enums.reviewStatus[doc.reviewStatus] ??
+                                doc.reviewStatus;
+                              return (
                               <div
                                 key={doc.id}
                                 className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs"
@@ -1065,7 +1747,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                                   <span className="font-mono-tabular text-[11px] text-slate-500">
                                     {doc.category} ·{" "}
                                     {formatByteSize(doc.sizeBytes)} ·{" "}
-                                    {doc.reviewStatus}
+                                    {docStatusLabel}
                                   </span>
                                 </div>
                                 <div className="flex shrink-0 flex-wrap items-center gap-1.5">
@@ -1079,8 +1761,8 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                                           mimeType: doc.mimeType,
                                           alt: doc.fileName,
                                           title: doc.fileName,
-                                          subtitle: `${fac.name} · ${doc.category} · ${doc.reviewStatus}`,
-                                          badge: doc.reviewStatus,
+                                          subtitle: `${fac.name} · ${doc.category} · ${docStatusLabel}`,
+                                          badge: docStatusLabel,
                                         })
                                       }
                                       className="inline-flex min-h-[30px] items-center gap-1 rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:border-teal-700"
@@ -1089,7 +1771,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                                         className="h-3 w-3"
                                         aria-hidden="true"
                                       />
-                                      <span>Inspect</span>
+                                      <span>{a.facilities.inspectBtn}</span>
                                     </button>
                                   ) : null}
                                   {isOpsAdmin &&
@@ -1107,9 +1789,9 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                                             "APPROVED",
                                           )
                                         }
-                                        className="min-h-[30px] rounded bg-emerald-700 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-800 disabled:opacity-45"
+                                        className="min-h-[30px] rounded bg-[#0066CC] px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-[#0052A3] disabled:opacity-45"
                                       >
-                                        Approve
+                                        {a.facilities.approveBtn}
                                       </button>
                                       <button
                                         type="button"
@@ -1125,13 +1807,14 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                                         }
                                         className="min-h-[30px] rounded border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-semibold text-red-800 hover:bg-red-100 disabled:opacity-45"
                                       >
-                                        Reject
+                                        {a.facilities.rejectBtn}
                                       </button>
                                     </>
                                   ) : null}
                                 </div>
                               </div>
-                            ))}
+                            );
+                            })}
                           </div>
                         ) : null}
                       </article>
@@ -1143,62 +1826,151 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
           ) : null}
 
           {activeTab === "users" ? (
-            <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
+            <div className="space-y-4 rounded-2xl border border-[#D7E4F2] bg-white p-5">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-2">
-                  <Users className="h-4 w-4 text-teal-800" />
-                  <h2 className="text-base font-semibold text-slate-900">
-                    Team Roles & Regional Access
+                  <Users className="h-4 w-4 text-[#0066CC]" />
+                  <h2 className="text-base font-semibold text-slate-950">
+                    {a.users.heading(filteredUsers.length)}
                   </h2>
                 </div>
                 {isOpsAdmin ? (
-                  <input
-                    type="text"
-                    value={roleReason}
-                    onChange={(e) => setRoleReason(e.target.value)}
-                    aria-label="Audit reason for role changes"
-                    placeholder="Reason recorded in audit log"
-                    className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-800"
-                  />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="text"
+                      value={roleReason}
+                      onChange={(e) => setRoleReason(e.target.value)}
+                      aria-label={a.users.roleReasonAria}
+                      placeholder={a.users.roleReasonPlaceholder}
+                      className="h-9 rounded-xl border border-transparent bg-white px-3.5 py-1.5 text-xs text-slate-800 shadow-2xs"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setProvisionModalOpen(true)}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-[#0066CC] px-4 text-xs font-semibold text-white transition hover:bg-[#0052A3] active:scale-[0.98]"
+                    >
+                      <UserPlus className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>{a.users.provisionBtn}</span>
+                    </button>
+                  </div>
                 ) : null}
               </div>
 
-              {users.length === 0 ? (
-                <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
-                  No user directory rows loaded. Sign in as admin to inspect accounts.
+              <div className="space-y-2.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex h-9 min-w-[200px] flex-1 items-center gap-1.5 rounded-xl border border-[#D7E4F2] bg-[#F8FBFE] px-3.5 focus-within:border-[#0066CC] focus-within:bg-white">
+                    <Search className="h-3.5 w-3.5 shrink-0 text-slate-500" aria-hidden="true" />
+                    <input
+                      type="search"
+                      value={userSearchQuery}
+                      onChange={(e) => setUserSearchQuery(e.target.value)}
+                      placeholder={a.users.searchPlaceholder}
+                      aria-label={a.users.searchAria}
+                      className="min-w-0 flex-1 bg-transparent text-xs text-slate-900 focus:outline-none"
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {(["ALL", "PENDING_APPROVAL", "ACTIVE", "SUSPENDED"] as const).map(
+                      (st) => (
+                        <button
+                          key={st}
+                          type="button"
+                          onClick={() => setUserStatusFilter(st)}
+                          className={`h-8 rounded-full border px-3 text-[11px] font-semibold transition ${
+                            userStatusFilter === st
+                              ? "border-[#0066CC] bg-[#0066CC] text-white"
+                              : "border-[#D7E4F2] bg-white text-slate-700 hover:border-[#0066CC] hover:text-[#0066CC]"
+                          }`}
+                        >
+                          {st === "ALL"
+                            ? a.users.filterAllStatuses
+                            : st === "PENDING_APPROVAL"
+                              ? a.users.filterPending
+                              : st === "ACTIVE"
+                                ? a.users.filterActive
+                                : a.users.filterSuspended}
+                        </button>
+                      ),
+                    )}
+                  </div>
+                </div>
+                <TactilePillGroup
+                  ariaLabel={a.users.roleFilterAria}
+                  size="xs"
+                  value={userRoleFilter}
+                  onChange={(next) => setUserRoleFilter(next)}
+                  options={[
+                    { value: "ALL" as const, label: a.users.allRolesOption },
+                    ...ALL_ROLES.map((r) => ({
+                      value: r,
+                      label: formatRoleLabel(r, locale),
+                    })),
+                  ]}
+                />
+              </div>
+
+              {filteredUsers.length === 0 ? (
+                <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
+                  {a.users.emptyFilter}
                 </p>
               ) : (
                 <div className="space-y-2.5">
-                  {users.map((user) => {
+                  {filteredUsers.map((user) => {
                     const draftRole = roleDrafts[user.id] ?? user.role;
-                    const draftCountry =
-                      countryDrafts[user.id] ?? user.countryCode;
+                    const draftFacilityId =
+                      facilityDrafts[user.id] ?? user.facilityId ?? "";
+                    const isEditingThisUser = editingUserId === user.id;
+                    const assignedFacilityName = user.facilityId
+                      ? facilityNameById.get(user.facilityId) ?? user.facilityId.slice(0, 8)
+                      : null;
                     const isSelfOpsGuard =
                       currentUser?.id === user.id && draftRole !== "OPS_ADMIN";
 
                     return (
                       <article
                         key={user.id}
-                        className="flex flex-col gap-3 rounded-xl border border-slate-200 p-4"
+                        className="flex flex-col gap-3 rounded-2xl border border-[#D7E4F2] bg-[#F3F8FD] p-4 "
                       >
                         <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="flex items-center gap-2.5">
+                          <div className="flex min-w-0 flex-1 items-center gap-2.5">
                             <EntityAvatar
                               name={user.fullName}
                               role={user.role}
                               avatarUrl={user.avatarUrl}
                               size="sm"
                             />
-                            <div>
-                              <h3 className="text-sm font-semibold text-slate-900">
-                                {user.fullName}
+                            <div className="min-w-0 flex-1">
+                              <h3 className="truncate text-sm font-semibold text-slate-900">
+                                <bdi dir="auto">{user.fullName}</bdi>
                               </h3>
-                              <p className="text-xs text-slate-500">
-                                {user.email}
+                              <p className="truncate text-xs text-slate-500">
+                                <span dir="ltr">
+                                  {user.email ?? user.phone ?? a.users.noEmail}
+                                </span>
+                                {assignedFacilityName ? (
+                                  <span> · {assignedFacilityName}</span>
+                                ) : null}
                               </p>
                             </div>
                           </div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span
+                              className={`rounded border px-2 py-0.5 text-[11px] font-semibold ${
+                                user.accountStatus === "PENDING_APPROVAL"
+                                  ? "border-amber-300 bg-amber-50 text-amber-950"
+                                  : user.accountStatus === "SUSPENDED"
+                                    ? "border-red-300 bg-red-50 text-red-900"
+                                    : "border-emerald-300 bg-emerald-50 text-emerald-900"
+                              }`}
+                            >
+                              {user.accountStatus === "PENDING_APPROVAL"
+                                ? a.users.statusPendingApproval
+                                : user.accountStatus === "SUSPENDED"
+                                  ? a.users.statusSuspended
+                                  : user.credentialVerified
+                                    ? a.users.statusVerifiedActive
+                                    : a.users.statusActive}
+                            </span>
                             <button
                               type="button"
                               onClick={() =>
@@ -1206,12 +1978,12 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                               }
                               className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 hover:border-teal-700"
                             >
-                              Credentials
+                              {a.users.credentialsBtn}
                             </button>
                             <span
                               className={`rounded border px-2 py-0.5 text-[11px] font-semibold ${ROLE_BADGE_COLORS[user.role]}`}
                             >
-                              {formatRoleLabel(user.role)} · {user.countryCode}
+                              {formatRoleLabel(user.role, locale)} · {user.countryCode}
                             </span>
                           </div>
                         </div>
@@ -1219,14 +1991,18 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                         {userMediaByUser[user.id] &&
                         userMediaByUser[user.id]!.length > 0 ? (
                           <div className="space-y-1 border-t border-slate-100 pt-2">
-                            {userMediaByUser[user.id]!.map((doc) => (
+                            {userMediaByUser[user.id]!.map((doc) => {
+                              const docStatusLabel =
+                                a.enums.reviewStatus[doc.reviewStatus] ??
+                                doc.reviewStatus;
+                              return (
                               <div
                                 key={doc.id}
                                 className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs"
                               >
                                 <span className="truncate font-medium text-slate-800">
                                   {doc.fileName} ({doc.category} ·{" "}
-                                  {doc.reviewStatus})
+                                  {docStatusLabel})
                                 </span>
                                 <div className="flex items-center gap-1.5">
                                   {doc.uploadStatus === "UPLOADED" ? (
@@ -1240,12 +2016,12 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                                           alt: doc.fileName,
                                           title: doc.fileName,
                                           subtitle: `${user.fullName} · ${doc.category}`,
-                                          badge: doc.reviewStatus,
+                                          badge: docStatusLabel,
                                         })
                                       }
                                       className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700"
                                     >
-                                      Inspect
+                                      {a.users.inspectBtn}
                                     </button>
                                   ) : null}
                                   {isOpsAdmin &&
@@ -1264,9 +2040,9 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                                             "APPROVED",
                                           )
                                         }
-                                        className="rounded bg-emerald-700 px-2 py-0.5 text-[11px] font-semibold text-white disabled:opacity-45"
+                                        className="rounded bg-[#0066CC] px-2 py-0.5 text-[11px] font-semibold text-white disabled:opacity-45"
                                       >
-                                        Approve
+                                        {a.users.approveBtn}
                                       </button>
                                       <button
                                         type="button"
@@ -1283,58 +2059,147 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                                         }
                                         className="rounded border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-red-800 disabled:opacity-45"
                                       >
-                                        Reject
+                                        {a.users.rejectBtn}
                                       </button>
                                     </>
                                   ) : null}
                                 </div>
                               </div>
-                            ))}
+                            );
+                            })}
                           </div>
                         ) : null}
 
                         {isOpsAdmin ? (
-                          <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
-                            <select
-                              aria-label={`Role for ${user.fullName}`}
-                              value={draftRole}
-                              onChange={(e) =>
-                                setRoleDrafts((prev) => ({
-                                  ...prev,
-                                  [user.id]: UserRoleSchema.parse(e.target.value),
-                                }))
-                              }
-                              className="min-h-[36px] rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-900"
-                            >
-                              {ALL_ROLES.map((roleOpt) => (
-                                <option key={roleOpt} value={roleOpt}>
-                                  {roleOpt}
-                                </option>
-                              ))}
-                            </select>
+                          <div className="space-y-3 border-t border-slate-100 pt-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setEditingUserId(isEditingThisUser ? null : user.id)
+                                }
+                                className={`inline-flex min-h-[34px] items-center gap-1.5 rounded-xl border px-3 py-1 text-xs font-semibold transition ${
+                                  isEditingThisUser
+                                    ? "border-[#0066CC] bg-[#EBF4FF] text-[#0052A3]"
+                                    : "border-[#D7E4F2] bg-white text-[#2F4661] hover:border-[#0066CC]"
+                                }`}
+                              >
+                                <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
+                                <span>
+                                  {isEditingThisUser
+                                    ? locale === "fr"
+                                      ? "Fermer l'éditeur"
+                                      : locale === "ar"
+                                        ? "إغلاق التعديل"
+                                        : "Close Editor"
+                                    : locale === "fr"
+                                      ? "Modifier Rôle / Établissement"
+                                      : locale === "ar"
+                                        ? "تعديل الدور / المؤسسة"
+                                        : "Edit Role & Workplace"}
+                                </span>
+                              </button>
 
-                            <input
-                              type="text"
-                              aria-label={`CountryCode for ${user.fullName}`}
-                              value={draftCountry}
-                              maxLength={4}
-                              onChange={(e) =>
-                                setCountryDrafts((prev) => ({
-                                  ...prev,
-                                  [user.id]: e.target.value.toUpperCase(),
-                                }))
-                              }
-                              className="min-h-[36px] w-20 rounded-lg border border-slate-300 bg-white px-2.5 py-1 font-mono-tabular text-xs font-semibold text-slate-900"
-                            />
+                              <div className="flex flex-wrap items-center gap-2">
+                                {isStaffWorkerRole(user.role) &&
+                                (user.accountStatus === "PENDING_APPROVAL" ||
+                                  !user.credentialVerified) ? (
+                                  <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() =>
+                                      void handleUpdateUserStatus(user, "ACTIVE", true)
+                                    }
+                                    className="min-h-[34px] rounded-xl bg-[#0066CC] px-3.5 py-1 text-xs font-semibold text-white hover:bg-[#0052A3] disabled:opacity-45"
+                                  >
+                                    {a.users.verifyActivateBtn}
+                                  </button>
+                                ) : user.id !== currentUser?.id ? (
+                                  <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() =>
+                                      void handleUpdateUserStatus(
+                                        user,
+                                        user.accountStatus === "SUSPENDED"
+                                          ? "ACTIVE"
+                                          : "SUSPENDED",
+                                        user.credentialVerified,
+                                      )
+                                    }
+                                    className="min-h-[34px] rounded-xl border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:border-red-600 hover:text-red-700 disabled:opacity-45"
+                                  >
+                                    {user.accountStatus === "SUSPENDED"
+                                      ? a.users.reactivateBtn
+                                      : a.users.suspendBtn}
+                                  </button>
+                                ) : null}
+                              </div>
+                            </div>
 
-                            <button
-                              type="button"
-                              disabled={busy || isSelfOpsGuard}
-                              onClick={() => void handleUpdateUserRole(user)}
-                              className="min-h-[36px] rounded-lg bg-teal-800 px-3 py-1 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-45"
-                            >
-                              {isSelfOpsGuard ? "Self-Demotion Blocked" : "Apply Role"}
-                            </button>
+                            {isEditingThisUser ? (
+                              <div className="space-y-3 rounded-xl border border-[#BFDBFE] bg-white p-3.5">
+                                <div className="space-y-1.5">
+                                  <p className="text-[11px] font-semibold text-[#556E89]">
+                                    {a.users.roleSelectAria(user.fullName)}
+                                  </p>
+                                  <TactilePillGroup
+                                    ariaLabel={a.users.roleSelectAria(user.fullName)}
+                                    size="xs"
+                                    value={draftRole}
+                                    onChange={(next) =>
+                                      setRoleDrafts((prev) => ({
+                                        ...prev,
+                                        [user.id]: next,
+                                      }))
+                                    }
+                                    options={ALL_ROLES.map((roleOpt) => ({
+                                      value: roleOpt,
+                                      label: formatRoleLabel(roleOpt, locale),
+                                    }))}
+                                  />
+                                </div>
+
+                                {isStaffWorkerRole(draftRole) && draftRole !== "DRIVER" ? (
+                                  <EntityPicker
+                                    id={`admin-user-fac-${user.id}`}
+                                    label={a.users.facilitySelectAria(user.fullName)}
+                                    placeholder={a.users.facilitySelectAria(user.fullName)}
+                                    emptyLabel={a.users.noFacilityLinkedOption}
+                                    value={draftFacilityId}
+                                    onChange={(nextFac) =>
+                                      setFacilityDrafts((prev) => ({
+                                        ...prev,
+                                        [user.id]: nextFac,
+                                      }))
+                                    }
+                                    options={facilities
+                                      .filter((f) => f.countryCode === user.countryCode)
+                                      .map((fac) => ({
+                                        id: fac.id,
+                                        label: fac.name,
+                                        sublabel: formatFacilityKind(fac.kind, locale),
+                                      }))}
+                                  />
+                                ) : null}
+
+                                <div className="flex flex-wrap items-center justify-end gap-2">
+                                  <button
+                                    type="button"
+                                    disabled={busy || isSelfOpsGuard}
+                                    onClick={async () => {
+                                      const saved = await handleSaveUserRoleAndWorkplace(user);
+                                      if (saved) setEditingUserId(null);
+                                    }}
+                                    className="min-h-[36px] rounded-xl bg-[#0066CC] px-4 py-1 text-xs font-semibold text-white hover:bg-[#0052A3] disabled:opacity-45"
+                                  >
+                                    {isSelfOpsGuard
+                                      ? a.users.selfDemotionBlocked
+                                      : a.users.applyRoleBtn}
+                                  </button>
+                                </div>
+                              </div>
+                            ) : null}
                           </div>
                         ) : null}
                       </article>
@@ -1346,17 +2211,17 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
           ) : null}
 
           {activeTab === "dispatches" ? (
-            <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
+            <div className="space-y-4 rounded-2xl border border-[#D7E4F2] bg-white p-5">
               <div className="flex items-center gap-2">
-                <Navigation className="h-4 w-4 text-teal-800" />
-                <h2 className="text-base font-semibold text-slate-900">
-                  Live Dispatch Manual Overrides
+                <Navigation className="h-4 w-4 text-[#0066CC]" />
+                <h2 className="text-base font-semibold text-slate-950">
+                  {a.dispatches.heading}
                 </h2>
               </div>
 
               {dispatches.length === 0 ? (
-                <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
-                  No active medical transport requests in this region.
+                <p className="rounded-2xl border border-[#D7E4F2] bg-[#F3F8FD] p-6 text-center text-sm text-slate-500 ">
+                  {a.dispatches.empty}
                 </p>
               ) : (
                 <div className="space-y-3">
@@ -1369,13 +2234,14 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                     return (
                       <article
                         key={disp.id}
-                        className="space-y-3 rounded-xl border border-slate-200 p-4"
+                        className="space-y-3 rounded-2xl border border-[#D7E4F2] bg-[#F3F8FD] p-4 "
                       >
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div>
                             <p className="font-mono-tabular text-xs font-semibold text-slate-900">
-                              {disp.urgency} · {disp.countryCode} ·{" "}
-                              {disp.id.slice(0, 8)}
+                              {formatUrgencyLabel(disp.urgency, locale)} ·{" "}
+                              {disp.countryCode} ·{" "}
+                              <span dir="ltr">{disp.id.slice(0, 8)}</span>
                             </p>
                             <p className="text-sm font-medium text-slate-800">
                               {disp.pickupAddress}
@@ -1387,74 +2253,128 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                             ) : null}
                           </div>
                           <span className="rounded border border-teal-200 bg-teal-50 px-2 py-0.5 font-mono-tabular text-xs font-semibold text-teal-900">
-                            {disp.status}
+                            {formatDispatchStatus(disp.status, locale)}
                           </span>
                         </div>
 
                         {isAdminViewer ? (
-                          <div className="grid gap-2 border-t border-slate-100 pt-3 sm:grid-cols-4">
-                            <select
-                              aria-label={`Override status for ${disp.id}`}
-                              value={draftStatus}
-                              onChange={(e) =>
-                                setOverrideStatusDrafts((prev) => ({
-                                  ...prev,
-                                  [disp.id]: DispatchStatusSchema.parse(
-                                    e.target.value,
-                                  ),
-                                }))
-                              }
-                              className="min-h-[36px] rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-900"
-                            >
-                              {ALL_DISPATCH_STATUSES.map((st) => (
-                                <option key={st} value={st}>
-                                  {st}
-                                </option>
-                              ))}
-                            </select>
+                          <div className="space-y-2.5 border-t border-slate-100 pt-3">
+                            <div className="flex justify-end">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setEditingDispatchId(
+                                    editingDispatchId === disp.id ? null : disp.id,
+                                  )
+                                }
+                                className={`inline-flex min-h-[32px] items-center gap-1.5 rounded-xl border px-3 text-xs font-semibold transition ${
+                                  editingDispatchId === disp.id
+                                    ? "border-[#0066CC] bg-[#EBF4FF] text-[#0052A3]"
+                                    : "border-[#D7E4F2] bg-white text-[#2F4661] hover:border-[#0066CC]"
+                                }`}
+                              >
+                                <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
+                                <span>
+                                  {editingDispatchId === disp.id
+                                    ? locale === "fr"
+                                      ? "Fermer"
+                                      : locale === "ar"
+                                        ? "إغلاق"
+                                        : "Close"
+                                    : a.dispatches.commitBtn}
+                                </span>
+                              </button>
+                            </div>
 
-                            <select
-                              aria-label={`Assign driver for ${disp.id}`}
-                              value={draftDriver}
-                              onChange={(e) =>
-                                setOverrideDriverDrafts((prev) => ({
-                                  ...prev,
-                                  [disp.id]: e.target.value,
-                                }))
-                              }
-                              className="min-h-[36px] rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs text-slate-900"
-                            >
-                              <option value="">Keep / Unassigned</option>
-                              {countryDrivers
-                                .filter((d) => d.countryCode === disp.countryCode)
-                                .map((drv) => (
-                                  <option key={drv.id} value={drv.id}>
-                                    {drv.fullName} ({drv.countryCode})
-                                  </option>
-                                ))}
-                            </select>
+                            {editingDispatchId === disp.id ? (
+                              <div className="space-y-3 rounded-xl border border-[#BFDBFE] bg-white p-3.5">
+                                <TactilePillGroup
+                                  ariaLabel={a.dispatches.statusSelectAria(disp.id)}
+                                  size="xs"
+                                  value={draftStatus}
+                                  onChange={(next) =>
+                                    setOverrideStatusDrafts((prev) => ({
+                                      ...prev,
+                                      [disp.id]: next,
+                                    }))
+                                  }
+                                  options={ALL_DISPATCH_STATUSES.map((st) => ({
+                                    value: st,
+                                    label: formatDispatchStatus(st, locale),
+                                  }))}
+                                />
 
-                            <input
-                              type="text"
-                              value={overrideNotes[disp.id] ?? ""}
-                              onChange={(e) =>
-                                setOverrideNotes((prev) => ({
-                                  ...prev,
-                                  [disp.id]: e.target.value,
-                                }))
-                              }
-                              placeholder="Override note (min 3 chars)"
-                              className="min-h-[36px] rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs text-slate-900"
-                            />
+                                <EntityPicker
+                                  id={`admin-disp-driver-${disp.id}`}
+                                  label={a.dispatches.driverSelectAria(disp.id)}
+                                  placeholder={a.dispatches.driverSelectAria(disp.id)}
+                                  emptyLabel={a.dispatches.keepUnassignedOption}
+                                  value={draftDriver}
+                                  onChange={(nextDrv) =>
+                                    setOverrideDriverDrafts((prev) => ({
+                                      ...prev,
+                                      [disp.id]: nextDrv,
+                                    }))
+                                  }
+                                  options={countryDrivers
+                                    .filter((d) => d.countryCode === disp.countryCode)
+                                    .map((drv) => ({
+                                      id: drv.id,
+                                      label: drv.fullName,
+                                      sublabel: drv.countryCode,
+                                    }))}
+                                />
 
-                            <button
-                              type="button"
-                              disabled={busy}
-                              onClick={() => void handleOverrideDispatch(disp)}
-                              className="min-h-[36px] rounded-lg bg-teal-800 px-3 py-1 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-50"
-                            >
-                              Commit Override
-                            </button>
+                                <div className="flex flex-wrap gap-1">
+                                  {(locale === "fr"
+                                    ? ["Réaffecté unité proche", "Orientation SAMU 141", "Annulé par l'appelant"]
+                                    : locale === "ar"
+                                      ? ["إعادة تعيين أقرب سيارة", "توجيه SAMU 141", "ملغى من المتصل"]
+                                      : ["Reassigned nearest unit", "SAMU 141 bay diversion", "Cancelled by caller"]
+                                  ).map((chip) => (
+                                    <button
+                                      key={chip}
+                                      type="button"
+                                      onClick={() =>
+                                        setOverrideNotes((prev) => ({
+                                          ...prev,
+                                          [disp.id]: chip,
+                                        }))
+                                      }
+                                      className="rounded-full border border-[#D7E4F2] bg-[#F3F8FD] px-2.5 py-0.5 text-[10.5px] font-semibold text-[#0052A3] hover:border-[#0066CC]"
+                                    >
+                                      {chip}
+                                    </button>
+                                  ))}
+                                </div>
+
+                                <div className="flex flex-wrap gap-2">
+                                  <input
+                                    type="text"
+                                    value={overrideNotes[disp.id] ?? ""}
+                                    onChange={(e) =>
+                                      setOverrideNotes((prev) => ({
+                                        ...prev,
+                                        [disp.id]: e.target.value,
+                                      }))
+                                    }
+                                    placeholder={a.dispatches.overridePlaceholder}
+                                    className="min-h-[36px] min-w-[180px] flex-1 rounded-xl border border-[#CBDDF0] bg-white px-3 py-1 text-xs text-slate-900"
+                                  />
+                                  <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={async () => {
+                                      const saved = await handleOverrideDispatch(disp);
+                                      if (saved) setEditingDispatchId(null);
+                                    }}
+                                    className="min-h-[36px] rounded-xl bg-[#0066CC] px-4 py-1 text-xs font-semibold text-white hover:bg-[#0052A3] disabled:opacity-50"
+                                  >
+                                    {a.dispatches.commitBtn}
+                                  </button>
+                                </div>
+                              </div>
+                            ) : null}
                           </div>
                         ) : null}
                       </article>
@@ -1467,106 +2387,158 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
 
           {activeTab === "disputes" ? (
             <div className="space-y-4">
+              {disputeComposerOpen ? (
               <form
-                onSubmit={handleSubmitDispute}
-                className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs"
+                onSubmit={async (e) => {
+                  const ok = await handleSubmitDispute(e);
+                  if (ok) setDisputeComposerOpen(false);
+                }}
+                className="space-y-3 rounded-2xl border border-[#BFDBFE] bg-[#F8FBFE] p-5"
               >
-                <div className="flex items-center gap-2">
-                  <AlertTriangle className="h-4 w-4 text-teal-800" />
-                  <h2 className="text-base font-semibold text-slate-900">
-                    Report Care Issue or Service Dispute
-                  </h2>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="h-4 w-4 text-[#0066CC]" />
+                    <h2 className="text-base font-semibold text-slate-900">
+                      {a.disputes.formHeading}
+                    </h2>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setDisputeComposerOpen(false)}
+                    aria-label={
+                      locale === "fr"
+                        ? "Fermer le formulaire de litige"
+                        : locale === "ar"
+                          ? "إغلاق نموذج النزاع"
+                          : "Close dispute form"
+                    }
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-[#D7E4F2] bg-white text-slate-500 hover:text-slate-900"
+                  >
+                    <X className="h-4 w-4" aria-hidden="true" />
+                  </button>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="block space-y-1 text-xs font-medium text-slate-700">
-                    <span>Category</span>
-                    <select
-                      value={disputeCategory}
-                      onChange={(e) =>
-                        setDisputeCategory(
-                          DisputeCategorySchema.parse(e.target.value),
-                        )
-                      }
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-                    >
-                      {ALL_DISPUTE_CATEGORIES.map((cat) => (
-                        <option key={cat} value={cat}>
-                          {cat}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
 
-                  <EntityPicker
-                    id="admin-dispute-target"
-                    label="Affected Facility or Dispatch (Optional)"
-                    placeholder="Filter by facility or dispatch..."
-                    emptyLabel="General platform incident"
-                    options={disputeResourceOptions}
-                    value={disputeTargetId}
-                    onChange={setDisputeTargetId}
+                <div className="space-y-2">
+                  <span className="block text-xs font-semibold text-slate-700">
+                    {a.disputes.categoryLabel}
+                  </span>
+                  <TactilePillGroup
+                    ariaLabel={a.disputes.categoryLabel}
+                    size="xs"
+                    value={disputeCategory}
+                    onChange={(next) => setDisputeCategory(next)}
+                    options={ALL_DISPUTE_CATEGORIES.map((cat) => ({
+                      value: cat,
+                      label: a.enums.disputeCategory[cat] ?? cat,
+                    }))}
                   />
                 </div>
 
+                <EntityPicker
+                  id="admin-dispute-target"
+                  label={a.disputes.targetLabel}
+                  placeholder={a.disputes.targetPlaceholder}
+                  emptyLabel={a.disputes.targetEmpty}
+                  options={disputeResourceOptions}
+                  value={disputeTargetId}
+                  onChange={setDisputeTargetId}
+                />
+
                 <label className="block space-y-1 text-xs font-medium text-slate-700">
-                  <span>Subject</span>
+                  <span>{a.disputes.subjectLabel}</span>
                   <input
                     type="text"
                     required
                     minLength={3}
                     value={disputeSubject}
                     onChange={(e) => setDisputeSubject(e.target.value)}
-                    placeholder="Summary of clinical, dispatch, or compliance issue"
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                    placeholder={a.disputes.subjectPlaceholder}
+                    className="w-full rounded-xl border border-[#CBDDF0] bg-white px-3 py-2 text-sm text-slate-900"
                   />
                 </label>
 
                 <label className="block space-y-1 text-xs font-medium text-slate-700">
-                  <span>Detailed Incident Description</span>
+                  <span>{a.disputes.descriptionLabel}</span>
                   <textarea
                     required
                     minLength={5}
                     rows={3}
                     value={disputeDescription}
                     onChange={(e) => setDisputeDescription(e.target.value)}
-                    placeholder="Provide timeline, facility, or incident details..."
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                    placeholder={a.disputes.descriptionPlaceholder}
+                    className="w-full rounded-xl border border-[#CBDDF0] bg-white px-3 py-2 text-sm text-slate-900"
                   />
                 </label>
 
                 <button
                   type="submit"
                   disabled={busy || !sessionToken}
-                  className="min-h-[40px] rounded-lg bg-teal-800 px-4 py-2 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-50"
+                  className="min-h-[40px] rounded-xl bg-[#0066CC] px-5 py-2 text-xs font-semibold text-white hover:bg-[#0052A3] disabled:opacity-50"
                 >
-                  Submit Dispute Ticket
+                  {a.disputes.submitBtn}
                 </button>
               </form>
+              ) : null}
 
-              <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
-                <div className="flex items-center gap-2">
-                  <ShieldCheck className="h-4 w-4 text-teal-800" />
-                  <h2 className="text-base font-semibold text-slate-900">
-                    Active Disputes Queue
-                  </h2>
+              <div className="space-y-3 rounded-2xl border border-[#D7E4F2] bg-white p-5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="h-4 w-4 text-[#0066CC]" />
+                    <h2 className="text-base font-semibold text-slate-950">
+                      {a.disputes.queueHeading(filteredDisputes.length)}
+                    </h2>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setDisputeComposerOpen((prev) => !prev)}
+                      className="inline-flex h-8 items-center gap-1 rounded-xl bg-[#0066CC] px-3 text-xs font-semibold text-white transition hover:bg-[#0052A3]"
+                    >
+                      <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>{a.disputes.formHeading}</span>
+                    </button>
+                    {(["ALL", "OPEN", "UNDER_REVIEW", "RESOLVED", "DISMISSED"] as const).map(
+                      (st) => (
+                        <button
+                          key={st}
+                          type="button"
+                          onClick={() => setDisputeStatusFilter(st)}
+                          className={`h-8 rounded-full px-3 text-[11px] font-semibold transition ${
+                            disputeStatusFilter === st
+                              ? "bg-[#0066CC] text-white"
+                              : "bg-white text-slate-700 shadow-2xs hover:text-[#0066CC]"
+                          }`}
+                        >
+                          {st === "ALL"
+                            ? a.disputes.filterAll
+                            : locale === "en"
+                              ? st.replace("_", " ")
+                              : a.enums.disputeStatus[st] ?? st}
+                        </button>
+                      ),
+                    )}
+                  </div>
                 </div>
 
-                {disputes.length === 0 ? (
-                  <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
-                    No disputes recorded in this scope.
+                {filteredDisputes.length === 0 ? (
+                  <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
+                    {a.disputes.empty}
                   </p>
                 ) : (
                   <div className="space-y-3">
-                    {disputes.map((ticket) => (
+                    {filteredDisputes.map((ticket) => (
                       <article
                         key={ticket.id}
-                        className="space-y-2.5 rounded-xl border border-slate-200 p-4"
+                        className="space-y-2.5 rounded-2xl border border-slate-200 p-4"
                       >
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div>
                             <p className="font-mono-tabular text-xs text-slate-500">
-                              {ticket.countryCode} · {ticket.category} · Reporter{" "}
-                              {ticket.reporterName} ({ticket.reporterRole})
+                              {ticket.countryCode} ·{" "}
+                              {a.enums.disputeCategory[ticket.category] ??
+                                ticket.category}{" "}
+                              · {a.disputes.reporterPrefix} {ticket.reporterName} (
+                              {formatRoleLabel(ticket.reporterRole, locale)})
                             </p>
                             <h3 className="text-sm font-semibold text-slate-900">
                               {ticket.subject}
@@ -1581,7 +2553,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                                   : "border-amber-200 bg-amber-50 text-amber-900"
                             }`}
                           >
-                            {ticket.status}
+                            {a.enums.disputeStatus[ticket.status] ?? ticket.status}
                           </span>
                         </div>
                         <p className="text-xs leading-relaxed text-slate-700">
@@ -1589,7 +2561,8 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                         </p>
                         {ticket.resolutionNote ? (
                           <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-700">
-                            <strong>Resolution Note:</strong> {ticket.resolutionNote}
+                            <strong>{a.disputes.resolutionNotePrefix}</strong>{" "}
+                            {ticket.resolutionNote}
                           </p>
                         ) : null}
 
@@ -1604,18 +2577,28 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                                   [ticket.id]: e.target.value,
                                 }))
                               }
-                              placeholder="Resolution decision note..."
+                              placeholder={a.disputes.resolutionPlaceholder}
                               className="min-h-[36px] flex-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs text-slate-900"
                             />
+                            <button
+                              type="button"
+                              disabled={busy || ticket.status === "UNDER_REVIEW"}
+                              onClick={() =>
+                                void handleResolveDispute(ticket.id, "UNDER_REVIEW")
+                              }
+                              className="min-h-[36px] rounded-lg border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-950 hover:bg-amber-100 disabled:opacity-50"
+                            >
+                              {a.disputes.markUnderReviewBtn}
+                            </button>
                             <button
                               type="button"
                               disabled={busy}
                               onClick={() =>
                                 void handleResolveDispute(ticket.id, "RESOLVED")
                               }
-                              className="min-h-[36px] rounded-lg bg-teal-800 px-3 py-1 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-50"
+                              className="min-h-[36px] rounded-xl bg-[#0066CC] px-4 py-1 text-xs font-semibold text-white hover:bg-[#0052A3] disabled:opacity-50"
                             >
-                              Resolve
+                              {a.disputes.resolveBtn}
                             </button>
                             <button
                               type="button"
@@ -1625,7 +2608,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                               }
                               className="min-h-[36px] rounded-lg border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-50"
                             >
-                              Dismiss
+                              {a.disputes.dismissBtn}
                             </button>
                           </div>
                         ) : null}
@@ -1638,12 +2621,75 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
           ) : null}
 
           {activeTab === "audit" ? (
-            <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
-              <div className="flex items-center gap-2">
-                <FileCheck2 className="h-4 w-4 text-teal-800" />
-                <h2 className="text-base font-semibold text-slate-900">
-                  Searchable Activity Log
-                </h2>
+            <div className="space-y-4 rounded-2xl border border-[#D7E4F2] bg-white p-5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <FileCheck2 className="h-4 w-4 text-[#0066CC]" />
+                  <h2 className="text-base font-semibold text-slate-950">
+                    {a.audit.heading(auditLogs.length)}
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  disabled={auditLogs.length === 0}
+                  onClick={handleExportAuditCsv}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-white px-3.5 text-xs font-semibold text-slate-700 shadow-2xs transition hover:text-[#0066CC] disabled:opacity-50"
+                >
+                  <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>{a.audit.exportCsvBtn}</span>
+                </button>
+              </div>
+
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  "",
+                  "USER_LOGIN",
+                  "USER_ROLE_UPDATED",
+                  "USER_STATUS_UPDATED",
+                  "USER_PROVISIONED_BY_ADMIN",
+                  "USER_PASSWORD_CHANGED",
+                  "USER_SESSIONS_REVOKED",
+                  "FACILITY_VERIFICATION_UPDATED",
+                  "ADMIN_DISPATCH_OVERRIDE",
+                ].map((act) => (
+                  <button
+                    key={act || "ALL"}
+                    type="button"
+                    onClick={() => setAuditActionFilter(act)}
+                    className={`h-7 rounded-full px-3 font-mono-tabular text-[11px] font-semibold transition ${
+                      auditActionFilter === act
+                        ? "bg-[#0066CC] text-white"
+                        : "bg-white text-slate-700 shadow-2xs hover:text-[#0066CC]"
+                    }`}
+                  >
+                    {act || a.audit.allActionsBtn}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  "",
+                  "USER",
+                  "FACILITY",
+                  "DISPATCH",
+                  "PRESCRIPTION",
+                  "PHARMACY_ORDER",
+                  "APPOINTMENT",
+                ].map((resType) => (
+                  <button
+                    key={resType || "ALL_RES"}
+                    type="button"
+                    onClick={() => setAuditResourceFilter(resType)}
+                    className={`h-7 rounded-full border px-3 font-mono-tabular text-[11px] font-semibold transition ${
+                      auditResourceFilter === resType
+                        ? "border-[#0F9D88] bg-[#0F9D88] text-white"
+                        : "border-[#D7E4F2] bg-[#F3F8FD] text-[#2F4661] hover:border-[#0066CC] hover:bg-white"
+                    }`}
+                  >
+                    {resType || (locale === "fr" ? "Toutes ressources" : locale === "ar" ? "كل الموارد" : "All Resources")}
+                  </button>
+                ))}
               </div>
 
               <form
@@ -1652,30 +2698,32 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
               >
                 <input
                   type="text"
+                  dir="ltr"
                   value={auditActionFilter}
                   onChange={(e) => setAuditActionFilter(e.target.value)}
-                  placeholder="Filter action (e.g. USER_ROLE_UPDATED)"
+                  placeholder={a.audit.actionInputPlaceholder}
                   className="min-h-[38px] rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-mono-tabular text-xs text-slate-900"
                 />
                 <input
                   type="text"
+                  dir="ltr"
                   value={auditResourceFilter}
                   onChange={(e) => setAuditResourceFilter(e.target.value)}
-                  placeholder="Resource type (e.g. dispatch_request)"
+                  placeholder={a.audit.resourceInputPlaceholder}
                   className="min-h-[38px] rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-mono-tabular text-xs text-slate-900"
                 />
                 <button
                   type="submit"
                   disabled={busy || !isAdminViewer}
-                  className="min-h-[38px] rounded-lg bg-teal-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-50"
+                  className="min-h-[38px] rounded-xl bg-[#0066CC] px-4 py-1.5 text-xs font-semibold text-white hover:bg-[#0052A3] disabled:opacity-50"
                 >
-                  Apply Audit Filter
+                  {a.audit.applyFilterBtn}
                 </button>
               </form>
 
               {auditLogs.length === 0 ? (
-                <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
-                  No audit events match the active filter.
+                <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
+                  {a.audit.empty}
                 </p>
               ) : (
                 <div className="space-y-2">
@@ -1684,17 +2732,42 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                       key={log.eventId}
                       className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50 px-3.5 py-2.5 text-xs"
                     >
-                      <div>
-                        <p className="font-mono-tabular font-semibold text-slate-900">
+                      <div className="min-w-0 space-y-0.5">
+                        <p dir="ltr" className="font-mono-tabular font-semibold text-slate-900">
                           {log.action}
                         </p>
                         <p className="text-slate-600">
-                          {log.countryCode} · {log.resourceType}:
-                          {log.resourceId.slice(0, 8)} · Actor {log.actorRole} (
-                          {log.actorId.slice(0, 8)})
+                          {log.countryCode} ·{" "}
+                          <span dir="ltr">
+                            {log.resourceType}:{log.resourceId.slice(0, 8)}
+                          </span>{" "}
+                          · {a.audit.actorPrefix}{" "}
+                          {formatRoleLabel(log.actorRole, locale)} (
+                          <span dir="ltr">{log.actorId.slice(0, 8)}</span>)
                         </p>
+                        {log.metadata && Object.keys(log.metadata).length > 0 ? (
+                          <p dir="ltr" className="truncate font-mono-tabular text-[11px] text-slate-500">
+                            {Object.entries(log.metadata)
+                              .filter(([, v]) => v !== null && v !== undefined)
+                              .map(([k, v]) => {
+                                if (k.endsWith("Minor")) {
+                                  const numeric =
+                                    typeof v === "number"
+                                      ? v
+                                      : typeof v === "string" && /^-?\d+$/.test(v)
+                                        ? Number(v)
+                                        : Number.NaN;
+                                  if (Number.isFinite(numeric)) {
+                                    return `${k.slice(0, -5)}=${(numeric / 100).toFixed(2)}`;
+                                  }
+                                }
+                                return `${k}=${String(v)}`;
+                              })
+                              .join(" · ")}
+                          </p>
+                        ) : null}
                       </div>
-                      <time className="font-mono-tabular text-[11px] text-slate-500">
+                      <time dir="ltr" className="font-mono-tabular text-[11px] text-slate-500">
                         {log.occurredAtIso}
                       </time>
                     </article>
@@ -1704,7 +2777,95 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
             </div>
           ) : null}
         </section>
-      </div>
+      </WorkspaceRoleGuard>
+
+      {signInModalOpen && !currentUser ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={a.signInModal.ariaLabel}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-xs"
+          onClick={() => setSignInModalOpen(false)}
+        >
+          <form
+            onSubmit={handleLogin}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <KeyRound className="h-4 w-4 text-[#0066CC]" aria-hidden="true" />
+                <h2 className="text-base font-bold text-slate-950">
+                  {a.signInModal.title}
+                </h2>
+              </div>
+              <button
+                type="button"
+                aria-label={a.signInModal.closeAria}
+                onClick={() => setSignInModalOpen(false)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100"
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </div>
+            <label className="block space-y-1 text-xs font-semibold text-slate-700">
+              <span>{a.signInModal.emailLabel}</span>
+              <input
+                type="email"
+                dir="ltr"
+                required
+                value={loginEmail}
+                onChange={(e) => setLoginEmail(e.target.value)}
+                placeholder="ops@medisync.global"
+                className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-sm text-slate-900"
+              />
+            </label>
+            <label className="block space-y-1 text-xs font-semibold text-slate-700">
+              <span>{a.signInModal.passwordLabel}</span>
+              <input
+                type="password"
+                required
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                placeholder={a.signInModal.passwordPlaceholder}
+                className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-sm text-slate-900"
+              />
+            </label>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setSignInModalOpen(false)}
+                className="h-10 rounded-xl border border-slate-200 px-4 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                {a.signInModal.cancelBtn}
+              </button>
+              <button
+                type="submit"
+                disabled={busy}
+                className="h-10 rounded-xl bg-[#0066CC] px-5 text-xs font-semibold text-white hover:bg-[#0052A3] disabled:opacity-60"
+              >
+                {busy ? a.signInModal.verifyingBtn : a.signInModal.submitBtn}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
+      {provisionModalOpen && sessionToken && currentUser && isOpsAdmin ? (
+        <AdminProvisionUserModal
+          apiBaseUrl={apiBaseUrl}
+          token={sessionToken}
+          packs={packs}
+          facilities={facilities}
+          defaultCountryCode={
+            selectedScope === "ALL" ? defaultCode : selectedScope
+          }
+          onClose={() => setProvisionModalOpen(false)}
+          onCreated={() => {
+            void refreshGovernanceData(sessionToken, currentUser, selectedScope);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

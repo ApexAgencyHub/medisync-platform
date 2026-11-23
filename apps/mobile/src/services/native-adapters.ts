@@ -18,6 +18,14 @@ export interface MobileAdapterResult<T> {
   error?: string;
 }
 
+async function parseJsonSafe<T>(res: Response): Promise<T | null> {
+  try {
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
 export function resolveMobileApiBaseUrl(): string {
   const maybeGlobal = globalThis as {
     process?: { env?: Record<string, string | undefined> };
@@ -25,7 +33,7 @@ export function resolveMobileApiBaseUrl(): string {
   const envUrl = maybeGlobal.process?.env?.EXPO_PUBLIC_API_URL;
   return envUrl && envUrl.trim().length > 0
     ? envUrl.trim().replace(/\/$/, "")
-    : "http://127.0.0.1:4200";
+    : "http://127.0.0.1:4000";
 }
 
 export async function verifyScannedQrPrescription(
@@ -38,27 +46,32 @@ export async function verifyScannedQrPrescription(
     return { ok: false, status: 400, error: "Invalid scanned QR payload." };
   }
 
-  const res = await fetch(
-    `${apiBaseUrl}/v1/clinical/prescriptions/verify-qr`,
-    {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${token}`,
+  let res: Response;
+  try {
+    res = await fetch(
+      `${apiBaseUrl}/v1/clinical/prescriptions/verify-qr`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(parsed.data),
       },
-      body: JSON.stringify(parsed.data),
-    },
-  );
-  const json = (await res.json()) as {
+    );
+  } catch {
+    return { ok: false, status: 0, error: "Network unreachable while verifying QR." };
+  }
+  const json = await parseJsonSafe<{
     valid?: boolean;
     prescription?: { id: string };
     error?: string;
-  };
-  if (!res.ok) {
+  }>(res);
+  if (!res.ok || !json) {
     return {
       ok: false,
       status: res.status,
-      error: json.error ?? "QR verification failed",
+      error: json?.error ?? `QR verification failed (${res.status})`,
     };
   }
   return {
@@ -95,36 +108,46 @@ export async function uploadPickedBinaryMedia(
     };
   }
 
-  const presignRes = await fetch(`${apiBaseUrl}/v1/users/me/media/presign-upload`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(parsed.data),
-  });
-  const presignJson = (await presignRes.json()) as {
+  let presignRes: Response;
+  try {
+    presignRes = await fetch(`${apiBaseUrl}/v1/users/me/media/presign-upload`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(parsed.data),
+    });
+  } catch {
+    return { ok: false, status: 0, error: "Network unreachable while presigning upload." };
+  }
+  const presignJson = await parseJsonSafe<{
     document?: { id: string };
     uploadUrl?: string;
     error?: string;
-  };
-  if (!presignRes.ok || !presignJson.uploadUrl || !presignJson.document?.id) {
+  }>(presignRes);
+  if (!presignRes.ok || !presignJson?.uploadUrl || !presignJson.document?.id) {
     return {
       ok: false,
       status: presignRes.status,
-      error: presignJson.error ?? "Could not presign mobile upload.",
+      error: presignJson?.error ?? "Could not presign mobile upload.",
     };
   }
 
   const binaryCopy = new Uint8Array(input.bytes.byteLength);
   binaryCopy.set(input.bytes);
-  const putRes = await fetch(presignJson.uploadUrl, {
-    method: "PUT",
-    headers: {
-      "content-type": input.mimeType,
-    },
-    body: new Blob([binaryCopy], { type: input.mimeType }),
-  });
+  let putRes: Response;
+  try {
+    putRes = await fetch(presignJson.uploadUrl, {
+      method: "PUT",
+      headers: {
+        "content-type": input.mimeType,
+      },
+      body: new Blob([binaryCopy], { type: input.mimeType }),
+    });
+  } catch {
+    return { ok: false, status: 0, error: "Network unreachable during object storage PUT." };
+  }
   if (!putRes.ok) {
     return {
       ok: false,
@@ -133,24 +156,29 @@ export async function uploadPickedBinaryMedia(
     };
   }
 
-  const confirmRes = await fetch(
-    `${apiBaseUrl}/v1/users/me/media/${encodeURIComponent(presignJson.document.id)}/confirm`,
-    {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${token}`,
+  let confirmRes: Response;
+  try {
+    confirmRes = await fetch(
+      `${apiBaseUrl}/v1/users/me/media/${encodeURIComponent(presignJson.document.id)}/confirm`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+        },
       },
-    },
-  );
-  const confirmJson = (await confirmRes.json()) as {
+    );
+  } catch {
+    return { ok: false, status: 0, error: "Network unreachable while confirming upload." };
+  }
+  const confirmJson = await parseJsonSafe<{
     document?: { id: string; downloadUrl?: string | null };
     error?: string;
-  };
-  if (!confirmRes.ok || !confirmJson.document) {
+  }>(confirmRes);
+  if (!confirmRes.ok || !confirmJson?.document) {
     return {
       ok: false,
       status: confirmRes.status,
-      error: confirmJson.error ?? "Binary upload confirmation failed.",
+      error: confirmJson?.error ?? "Binary upload confirmation failed.",
     };
   }
 
@@ -174,20 +202,25 @@ export async function transmitDriverGpsPing(
     return { ok: false, status: 400, error: "Invalid GPS coordinates." };
   }
 
-  const res = await fetch(`${apiBaseUrl}/v1/dispatch/drivers/ping`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(parsed.data),
-  });
-  const json = (await res.json()) as { driver?: LiveDriverMarker; error?: string };
-  if (!res.ok || !json.driver) {
+  let res: Response;
+  try {
+    res = await fetch(`${apiBaseUrl}/v1/dispatch/drivers/ping`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(parsed.data),
+    });
+  } catch {
+    return { ok: false, status: 0, error: "Network unreachable while transmitting GPS ping." };
+  }
+  const json = await parseJsonSafe<{ driver?: LiveDriverMarker; error?: string }>(res);
+  if (!res.ok || !json?.driver) {
     return {
       ok: false,
       status: res.status,
-      error: json.error ?? "Driver GPS ping rejected.",
+      error: json?.error ?? "Driver GPS ping rejected.",
     };
   }
   return { ok: true, status: res.status, data: json.driver };
@@ -202,8 +235,13 @@ export async function fetchMobilePharmacyCatalog(
     inStockOnly: "true",
     limit: "25",
   });
-  const res = await fetch(`${apiBaseUrl}/v1/pharmacy/products?${qs.toString()}`);
-  const raw = await res.json();
+  let res: Response;
+  try {
+    res = await fetch(`${apiBaseUrl}/v1/pharmacy/products?${qs.toString()}`);
+  } catch {
+    return { ok: false, status: 0, error: "Network unreachable while loading pharmacy catalog." };
+  }
+  const raw = await parseJsonSafe<unknown>(res);
   if (!res.ok) {
     return { ok: false, status: res.status, error: "Could not load pharmacy catalog." };
   }
@@ -222,21 +260,26 @@ export async function sendMobileTelemetryHeartbeat(
   if (!parsed.success) {
     return { ok: false, status: 400, error: "Invalid heartbeat payload." };
   }
-  const res = await fetch(`${apiBaseUrl}/v1/telemetry/mobile`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(parsed.data),
-  });
-  const json = (await res.json()) as {
+  let res: Response;
+  try {
+    res = await fetch(`${apiBaseUrl}/v1/telemetry/mobile`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(parsed.data),
+    });
+  } catch {
+    return { ok: false, status: 0, error: "Network unreachable while posting heartbeat." };
+  }
+  const json = await parseJsonSafe<{
     accepted?: boolean;
     receivedAt?: string;
     error?: string;
-  };
-  if (!res.ok || !json.accepted) {
+  }>(res);
+  if (!res.ok || !json?.accepted) {
     return {
       ok: false,
       status: res.status,
-      error: json.error ?? "Heartbeat rejected.",
+      error: json?.error ?? "Heartbeat rejected.",
     };
   }
   return {

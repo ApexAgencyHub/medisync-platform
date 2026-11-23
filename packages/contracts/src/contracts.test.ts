@@ -9,6 +9,7 @@ import {
   CreatePharmacyOrderSchema,
   CreatePharmacyProductSchema,
   CreateScheduleSchema,
+  DispatchListResponseSchema,
   DriverPingSchema,
   FacilityListQuerySchema,
   FacilityViewportQuerySchema,
@@ -26,8 +27,9 @@ import {
 } from "./index.js";
 
 describe("@medisync/contracts", () => {
-  it("supports all 9 ecosystem roles", () => {
-    expect(UserRoleSchema.options).toHaveLength(9);
+  it("supports all 10 ecosystem roles including NURSE", () => {
+    expect(UserRoleSchema.options).toHaveLength(10);
+    expect(UserRoleSchema.parse("NURSE")).toBe("NURSE");
     expect(UserRoleSchema.parse("PHARMACIST")).toBe("PHARMACIST");
     expect(UserRoleSchema.parse("OPS_ADMIN")).toBe("OPS_ADMIN");
   });
@@ -148,6 +150,20 @@ describe("@medisync/contracts", () => {
       urgency: "EMERGENCY",
     });
     expect(dispatch.urgency).toBe("EMERGENCY");
+
+    expect(DispatchListResponseSchema.parse({ dispatches: [] }).driverDutyStatus).toBeUndefined();
+    expect(
+      DispatchListResponseSchema.parse({
+        dispatches: [],
+        driverDutyStatus: "OFF_DUTY",
+      }).driverDutyStatus,
+    ).toBe("OFF_DUTY");
+    expect(
+      DispatchListResponseSchema.safeParse({
+        dispatches: [],
+        driverDutyStatus: "INVALID_STATE",
+      }).success,
+    ).toBe(false);
   });
 
   it("validates scheduling windows, includeBooked boolean transform, and booking requests", () => {
@@ -160,6 +176,16 @@ describe("@medisync/contracts", () => {
       visitMode: "IN_PERSON",
     });
     expect(validSchedule.slotDurationMinutes).toBe(30);
+
+    const homeVisitSched = CreateScheduleSchema.parse({
+      facilityId: "11111111-1111-4111-8111-111111111111",
+      dayOfWeek: 2,
+      startTimeUtc: "09:00",
+      endTimeUtc: "12:00",
+      slotDurationMinutes: 30,
+      visitMode: "HOME_VISIT",
+    });
+    expect(homeVisitSched.visitMode).toBe("HOME_VISIT");
 
     const invertedWindow = CreateScheduleSchema.safeParse({
       facilityId: "11111111-1111-4111-8111-111111111111",

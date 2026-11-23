@@ -6,41 +6,163 @@ export interface ViewportBox {
   maxLat: number;
 }
 
-const COUNTRY_VIEWPORT_PRESETS: Record<string, ViewportBox> = {
-  INTL: {
-    districtLabel: "Geneva Medical District",
-    minLng: 6.115,
-    minLat: 46.180,
-    maxLng: 6.178,
-    maxLat: 46.220,
-  },
-  MA: {
+export interface MapCityPreset extends ViewportBox {
+  id: string;
+  city: string;
+  countryCode: string;
+  group: "Morocco" | "International Hubs";
+}
+
+export const MAP_CITY_PRESETS: readonly MapCityPreset[] = [
+  {
+    id: "casablanca",
+    city: "Casablanca",
+    countryCode: "MA",
+    group: "Morocco",
     districtLabel: "Casablanca Central Metro",
-    minLng: -7.662,
+    minLng: -7.694,
     minLat: 33.562,
-    maxLng: -7.592,
-    maxLat: 33.604,
+    maxLng: -7.596,
+    maxLat: 33.606,
   },
-  FR: {
+  {
+    id: "rabat",
+    city: "Rabat",
+    countryCode: "MA",
+    group: "Morocco",
+    districtLabel: "Rabat Agdal & Hassan",
+    minLng: -6.885,
+    minLat: 33.972,
+    maxLng: -6.795,
+    maxLat: 34.036,
+  },
+  {
+    id: "marrakech",
+    city: "Marrakech",
+    countryCode: "MA",
+    group: "Morocco",
+    districtLabel: "Marrakech Guéliz & Médina",
+    minLng: -8.048,
+    minLat: 31.602,
+    maxLng: -7.958,
+    maxLat: 31.662,
+  },
+  {
+    id: "tangier",
+    city: "Tangier",
+    countryCode: "MA",
+    group: "Morocco",
+    districtLabel: "Tangier Bay & Centre",
+    minLng: -5.858,
+    minLat: 35.742,
+    maxLng: -5.768,
+    maxLat: 35.798,
+  },
+  {
+    id: "fes",
+    city: "Fès",
+    countryCode: "MA",
+    group: "Morocco",
+    districtLabel: "Fès Ville Nouvelle",
+    minLng: -5.048,
+    minLat: 34.006,
+    maxLng: -4.958,
+    maxLat: 34.062,
+  },
+  {
+    id: "agadir",
+    city: "Agadir",
+    countryCode: "MA",
+    group: "Morocco",
+    districtLabel: "Agadir Centre & Bay",
+    minLng: -9.642,
+    minLat: 30.392,
+    maxLng: -9.552,
+    maxLat: 30.448,
+  },
+  {
+    id: "paris",
+    city: "Paris",
+    countryCode: "FR",
+    group: "International Hubs",
     districtLabel: "Paris AP-HP Core",
     minLng: 2.310,
     minLat: 48.828,
     maxLng: 2.382,
     maxLat: 48.872,
   },
-  US: {
+  {
+    id: "geneva",
+    city: "Geneva",
+    countryCode: "INTL",
+    group: "International Hubs",
+    districtLabel: "Geneva Medical District",
+    minLng: 6.115,
+    minLat: 46.180,
+    maxLng: 6.178,
+    maxLat: 46.220,
+  },
+  {
+    id: "new-york",
+    city: "New York",
+    countryCode: "US",
+    group: "International Hubs",
     districtLabel: "Manhattan Clinical Corridor",
     minLng: -74.022,
     minLat: 40.712,
     maxLng: -73.938,
     maxLat: 40.776,
   },
+];
+
+const CITY_PRESET_BY_ID = new Map(
+  MAP_CITY_PRESETS.map((preset) => [preset.id, preset]),
+);
+
+const DEFAULT_CITY_BY_COUNTRY: Record<string, string> = {
+  MA: "casablanca",
+  FR: "paris",
+  US: "new-york",
+  INTL: "geneva",
 };
 
+export function getDefaultCityIdForCountry(code: string): string {
+  return DEFAULT_CITY_BY_COUNTRY[code.trim().toUpperCase()] ?? "casablanca";
+}
+
+export function getCityPresetById(cityId: string): MapCityPreset | undefined {
+  return CITY_PRESET_BY_ID.get(cityId);
+}
+
+export function toViewportBox(preset: ViewportBox): ViewportBox {
+  return {
+    districtLabel: preset.districtLabel,
+    minLng: preset.minLng,
+    minLat: preset.minLat,
+    maxLng: preset.maxLng,
+    maxLat: preset.maxLat,
+  };
+}
+
 export function getPresetForCountry(code: string): ViewportBox {
+  const defaultId = getDefaultCityIdForCountry(code);
+  const preset =
+    CITY_PRESET_BY_ID.get(defaultId) ?? CITY_PRESET_BY_ID.get("casablanca")!;
+  return toViewportBox(preset);
+}
+
+export function isCoordinateNearViewport(
+  lat: number,
+  lng: number,
+  box: ViewportBox,
+  marginDegLat = 0.12,
+  marginDegLng = 0.15,
+): boolean {
   return (
-    COUNTRY_VIEWPORT_PRESETS[code.trim().toUpperCase()] ??
-    COUNTRY_VIEWPORT_PRESETS.INTL!
+    lat >= box.minLat - marginDegLat &&
+    lat <= box.maxLat + marginDegLat &&
+    lng >= box.minLng - marginDegLng &&
+    lng <= box.maxLng + marginDegLng
   );
 }
 
@@ -53,8 +175,8 @@ export function getViewportCenter(box: ViewportBox): { lat: number; lng: number 
 
 export function zoomViewport(box: ViewportBox, factor: number): ViewportBox {
   const center = getViewportCenter(box);
-  const halfLng = Math.min(Math.max(((box.maxLng - box.minLng) / 2) * factor, 0.015), 2.5);
-  const halfLat = Math.min(Math.max(((box.maxLat - box.minLat) / 2) * factor, 0.015), 2.5);
+  const halfLng = Math.min(Math.max(((box.maxLng - box.minLng) / 2) * factor, 0.005), 8.0);
+  const halfLat = Math.min(Math.max(((box.maxLat - box.minLat) / 2) * factor, 0.005), 6.0);
   return {
     districtLabel: box.districtLabel,
     minLng: Number((center.lng - halfLng).toFixed(4)),
@@ -130,7 +252,7 @@ export function estimateZoomForViewport(
   const width = Math.max(256, containerWidthPx);
   const spanLng = Math.max(0.004, box.maxLng - box.minLng);
   const rawZoom = Math.log2((width / MAP_TILE_SIZE) * (360 / spanLng));
-  return Math.max(9, Math.min(17, Math.round(rawZoom)));
+  return Math.max(5, Math.min(18, Math.round(rawZoom)));
 }
 
 export function panViewportByPixels(

@@ -70,6 +70,7 @@ describe("api slice 8 user-recovery: email/SMS OTP verification, password reset 
       `medisync:otp:rl:VERIFY_EMAIL:${email}`,
       `medisync:otp:rl:VERIFY_PHONE:${email}`,
       `medisync:otp:rl:RESET_PASSWORD:${email}`,
+      `medisync:auth:login_fail:${email}`,
     );
 
     const regRes = await app.inject({
@@ -184,11 +185,67 @@ describe("api slice 8 user-recovery: email/SMS OTP verification, password reset 
     expect(newLogin.statusCode).toBe(200);
     const newToken = newLogin.json<AuthResponse>().token;
 
-    // 4. Profile update resets phoneVerified when phone changes
+    // 4. Authenticated password change rotates token version & issues fresh working JWT
+    const badChangePw = await app.inject({
+      method: "POST",
+      url: "/v1/auth/change-password",
+      headers: { authorization: `Bearer ${newToken}` },
+      payload: {
+        currentPassword: "WrongCurrentPassword!",
+        newPassword: "RotatedAgainPassword!789",
+      },
+    });
+    expect(badChangePw.statusCode).toBe(401);
+
+    const changePwRes = await app.inject({
+      method: "POST",
+      url: "/v1/auth/change-password",
+      headers: { authorization: `Bearer ${newToken}` },
+      payload: {
+        currentPassword: "RotatedStrongPassword!456",
+        newPassword: "RotatedAgainPassword!789",
+      },
+    });
+    expect(changePwRes.statusCode).toBe(200);
+    const rotatedToken = changePwRes.json<AuthResponse>().token;
+
+    const staleTokenMe = await app.inject({
+      method: "GET",
+      url: "/v1/auth/me",
+      headers: { authorization: `Bearer ${newToken}` },
+    });
+    expect(staleTokenMe.statusCode).toBe(401);
+
+    const freshTokenMe = await app.inject({
+      method: "GET",
+      url: "/v1/auth/me",
+      headers: { authorization: `Bearer ${rotatedToken}` },
+    });
+    expect(freshTokenMe.statusCode).toBe(200);
+
+    // 4b. Revoke all other sessions rotates token version and keeps current device active
+    const revokeAllRes = await app.inject({
+      method: "POST",
+      url: "/v1/auth/revoke-sessions",
+      headers: { authorization: `Bearer ${rotatedToken}` },
+    });
+    expect(revokeAllRes.statusCode).toBe(200);
+    const activeTokenAfterRevoke = revokeAllRes.json<{
+      revoked: boolean;
+      token: string;
+    }>().token;
+    const oldAfterRevoke = await app.inject({
+      method: "GET",
+      url: "/v1/auth/me",
+      headers: { authorization: `Bearer ${rotatedToken}` },
+    });
+    expect(oldAfterRevoke.statusCode).toBe(401);
+
+    // 5. Profile update resets phoneVerified when phone changes
     const profilePatch = await app.inject({
       method: "PATCH",
       url: "/v1/auth/profile",
-      headers: { authorization: `Bearer ${newToken}` },
+      headers: { authorization: `Bearer ${activeTokenAfterRevoke}` },
       payload: { fullName: "Nadia El Amrani Updated", phone: "+212661998877" },
     });
     expect(profilePatch.statusCode).toBe(200);
@@ -196,7 +253,23 @@ describe("api slice 8 user-recovery: email/SMS OTP verification, password reset 
     expect(patchedUser.fullName).toBe("Nadia El Amrani Updated");
     expect(patchedUser.phoneVerified).toBe(false);
 
-    // 5. Redis sliding-window rate limit triggers 429 on excess OTP requests (>5)
+    // 6. Brute-force login protection locks account identifier after 6 bad attempts
+    for (let i = 0; i < 6; i++) {
+      const failAttempt = await app.inject({
+        method: "POST",
+        url: "/v1/auth/login",
+        payload: { email, password: "BadGuessPassword!" },
+      });
+      expect(failAttempt.statusCode).toBe(401);
+    }
+    const lockedAttempt = await app.inject({
+      method: "POST",
+      url: "/v1/auth/login",
+      payload: { email, password: "RotatedAgainPassword!789" },
+    });
+    expect(lockedAttempt.statusCode).toBe(429);
+
+    // 7. Redis sliding-window rate limit triggers 429 on excess OTP requests (>5)
     for (let i = 0; i < 4; i++) {
       const okAttempt = await app.inject({
         method: "POST",

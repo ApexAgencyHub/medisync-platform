@@ -1,8 +1,45 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { Redis } from "ioredis";
 import type { Pool } from "pg";
-import type { AccountStatus, UserRole } from "@medisync/contracts";
+import {
+  isStaffWorkerRole,
+  type AccountStatus,
+  type UserRole,
+} from "@medisync/contracts";
 import { verifyAuthToken, type AuthTokenClaims } from "./auth-crypto.js";
+import { readOptionalEnvBool } from "../../shared/env.js";
+
+export const SESSION_COOKIE_NAME = "medisync_session";
+const SESSION_COOKIE_MAX_AGE_SEC = 60 * 60 * 24 * 7;
+
+export function setSessionCookie(reply: FastifyReply, token: string): void {
+  const secure =
+    readOptionalEnvBool("COOKIE_SECURE") ??
+    process.env.NODE_ENV === "production";
+  if (typeof reply.setCookie === "function") {
+    reply.setCookie(SESSION_COOKIE_NAME, token, {
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+      secure,
+      maxAge: SESSION_COOKIE_MAX_AGE_SEC,
+    });
+  }
+}
+
+export function clearSessionCookie(reply: FastifyReply): void {
+  const secure =
+    readOptionalEnvBool("COOKIE_SECURE") ??
+    process.env.NODE_ENV === "production";
+  if (typeof reply.clearCookie === "function") {
+    reply.clearCookie(SESSION_COOKIE_NAME, {
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+      secure,
+    });
+  }
+}
 
 export interface AuthGuardDeps {
   authSecret: string;
@@ -56,8 +93,15 @@ async function resolveLiveUserAuthState(
   userId: string,
   pool: Pool | undefined,
   redis: Redis | undefined,
+  preFetchedRaw?: string | null,
 ): Promise<CachedUserAuthState | null> {
-  if (redis) {
+  if (preFetchedRaw) {
+    try {
+      return JSON.parse(preFetchedRaw) as CachedUserAuthState;
+    } catch {
+      // Fall through to Redis/DB read if cached JSON is malformed.
+    }
+  } else if (preFetchedRaw === undefined && redis) {
     try {
       const cachedRaw = await redis.get(authStateCacheKey(userId));
       if (cachedRaw) {
@@ -108,6 +152,94 @@ async function resolveLiveUserAuthState(
   return row;
 }
 
+export async function verifyLiveSessionToken(
+  token: string,
+  deps: AuthGuardDeps,
+  options?: AuthGuardOptions,
+): Promise<
+  | { ok: true; claims: AuthTokenClaims }
+  | { ok: false; status: 401 | 403; error: string; message?: string }
+> {
+  const claims = verifyAuthToken(token, deps.authSecret);
+  if (!claims) {
+    return { ok: false, status: 401, error: "INVALID_OR_EXPIRED_TOKEN" };
+  }
+
+  let prefetchedAuthStateRaw: string | null | undefined = undefined;
+  if (deps.redis && claims.jti && deps.pool) {
+    try {
+      const [revoked, cachedState] = await deps.redis.mget(
+        revokedJwtCacheKey(claims.jti),
+        authStateCacheKey(claims.sub),
+      );
+      if (revoked) {
+        return { ok: false, status: 401, error: "TOKEN_REVOKED" };
+      }
+      prefetchedAuthStateRaw = cachedState ?? null;
+    } catch {
+      // Fall through cleanly on transient Redis error.
+    }
+  } else if (deps.redis && claims.jti) {
+    try {
+      const revoked = await deps.redis.get(revokedJwtCacheKey(claims.jti));
+      if (revoked) {
+        return { ok: false, status: 401, error: "TOKEN_REVOKED" };
+      }
+    } catch {
+      // Fall through cleanly.
+    }
+  }
+
+  if (deps.pool) {
+    const liveState = await resolveLiveUserAuthState(
+      claims.sub,
+      deps.pool,
+      deps.redis,
+      prefetchedAuthStateRaw,
+    );
+    if (!liveState) {
+      return { ok: false, status: 401, error: "ACCOUNT_NOT_FOUND" };
+    }
+    if (liveState.accountStatus === "SUSPENDED") {
+      return {
+        ok: false,
+        status: 403,
+        error: "ACCOUNT_SUSPENDED",
+        message: "This account has been suspended by an administrator.",
+      };
+    }
+    if (liveState.tokenVersion !== claims.ver) {
+      return {
+        ok: false,
+        status: 401,
+        error: "SESSION_INVALIDATED",
+        message: "Session credentials changed. Please sign in again.",
+      };
+    }
+    claims.role = liveState.role;
+    claims.countryCode = liveState.countryCode;
+    claims.facilityId = liveState.facilityId;
+    claims.accountStatus = liveState.accountStatus;
+    claims.credentialVerified = liveState.credentialVerified;
+  }
+
+  if (
+    options?.requireVerifiedProvider &&
+    isStaffWorkerRole(claims.role) &&
+    (!claims.credentialVerified || claims.accountStatus === "PENDING_APPROVAL")
+  ) {
+    return {
+      ok: false,
+      status: 403,
+      error: "PROVIDER_VERIFICATION_REQUIRED",
+      message:
+        "Your professional account is pending OPS_ADMIN verification before accessing clinical or dispatch workflows.",
+    };
+  }
+
+  return { ok: true, claims };
+}
+
 export async function authenticateRequest(
   request: FastifyRequest,
   reply: FastifyReply,
@@ -121,19 +253,43 @@ export async function authenticateRequest(
       : depsOrSecret;
 
   const authHeader = request.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+  const cookieToken =
+    request.cookies && typeof request.cookies[SESSION_COOKIE_NAME] === "string"
+      ? request.cookies[SESSION_COOKIE_NAME]
+      : undefined;
+
+  let token = "";
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    token = authHeader.slice("Bearer ".length).trim();
+  } else if (cookieToken && cookieToken.trim().length > 0) {
+    token = cookieToken.trim();
+  } else {
     void reply.status(401).send({ error: "MISSING_OR_INVALID_TOKEN" });
     return null;
   }
 
-  const token = authHeader.slice("Bearer ".length).trim();
   const claims = verifyAuthToken(token, deps.authSecret);
   if (!claims) {
     void reply.status(401).send({ error: "INVALID_OR_EXPIRED_TOKEN" });
     return null;
   }
 
-  if (deps.redis && claims.jti) {
+  let prefetchedAuthStateRaw: string | null | undefined = undefined;
+  if (deps.redis && claims.jti && deps.pool) {
+    try {
+      const [revoked, cachedState] = await deps.redis.mget(
+        revokedJwtCacheKey(claims.jti),
+        authStateCacheKey(claims.sub),
+      );
+      if (revoked) {
+        void reply.status(401).send({ error: "TOKEN_REVOKED" });
+        return null;
+      }
+      prefetchedAuthStateRaw = cachedState ?? null;
+    } catch {
+      // Do not fail open/close arbitrarily on transient cache error.
+    }
+  } else if (deps.redis && claims.jti) {
     try {
       const revoked = await deps.redis.get(revokedJwtCacheKey(claims.jti));
       if (revoked) {
@@ -150,6 +306,7 @@ export async function authenticateRequest(
       claims.sub,
       deps.pool,
       deps.redis,
+      prefetchedAuthStateRaw,
     );
     if (!liveState) {
       void reply.status(401).send({ error: "ACCOUNT_NOT_FOUND" });
@@ -172,6 +329,7 @@ export async function authenticateRequest(
     claims.role = liveState.role;
     claims.countryCode = liveState.countryCode;
     claims.facilityId = liveState.facilityId;
+    claims.accountStatus = liveState.accountStatus;
     claims.credentialVerified = liveState.credentialVerified;
   }
 
@@ -182,13 +340,13 @@ export async function authenticateRequest(
 
   if (
     options?.requireVerifiedProvider &&
-    (claims.role === "DOCTOR" || claims.role === "DRIVER") &&
-    !claims.credentialVerified
+    isStaffWorkerRole(claims.role) &&
+    (!claims.credentialVerified || claims.accountStatus === "PENDING_APPROVAL")
   ) {
     void reply.status(403).send({
       error: "PROVIDER_VERIFICATION_REQUIRED",
       message:
-        "Practitioner or driver credentials must be reviewed and approved by OPS_ADMIN before performing clinical or dispatch operations.",
+        "Staff accounts require administrator credential verification before performing operational, clinical, pharmacy, lab, or dispatch actions.",
     });
     return null;
   }

@@ -2,6 +2,7 @@ import { Redis } from "ioredis";
 
 export function createRedisClient(redisUrl: string): Redis {
   const client = new Redis(redisUrl, {
+    family: 0,
     maxRetriesPerRequest: 3,
     connectTimeout: 5_000,
     commandTimeout: 3_000,

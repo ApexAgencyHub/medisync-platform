@@ -21,6 +21,45 @@ import {
   type S3PresignConfig,
 } from "../../shared/storage/s3-presign.js";
 
+const SQL_FOLD_FROM =
+  "àâäáãåçéèêëíìîïñóòôöõúùûüýÿÀÂÄÁÃÅÇÉÈÊËÍÌÎÏÑÓÒÔÖÕÚÙÛÜÝ";
+const SQL_FOLD_TO =
+  "aaaaaaceeeeiiiinooooouuuuyyAAAAAACEEEEIIIINOOOOOUUUUY";
+
+const MOROCCAN_CITY_ALIAS_GROUPS: readonly (readonly string[])[] = [
+  ["casablanca", "casa", "الدار البيضاء"],
+  ["rabat", "الرباط"],
+  ["marrakech", "marrakesh", "مراكش"],
+  ["tangier", "tanger", "طنجة"],
+  ["fes", "fez", "فاس"],
+  ["agadir", "أكادير"],
+];
+
+function foldAccentText(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function buildAccentAwarePatterns(raw: string | undefined): string[] | null {
+  if (!raw) return null;
+  const folded = foldAccentText(raw);
+  if (!folded) return null;
+  const group = MOROCCAN_CITY_ALIAS_GROUPS.find((aliases) =>
+    aliases.some((alias) => foldAccentText(alias) === folded),
+  );
+  const terms = group
+    ? Array.from(new Set([folded, ...group.map(foldAccentText)]))
+    : [folded];
+  return terms.map((term) => `%${term}%`);
+}
+
+function sqlFoldExpr(columnExpr: string): string {
+  return `translate(${columnExpr}, '${SQL_FOLD_FROM}', '${SQL_FOLD_TO}')`;
+}
+
 function withAvatarUrl(
   row: Record<string, unknown>,
   s3Config?: S3PresignConfig,
@@ -60,6 +99,7 @@ export async function listDirectoryPatientsScoped(
          id,
          full_name AS "fullName",
          email,
+         phone,
          role,
          country_code AS "countryCode",
          avatar_object_key AS "avatarObjectKey"
@@ -79,14 +119,21 @@ export async function listDirectoryPatientsScoped(
        id,
        full_name AS "fullName",
        email,
+       phone,
        role,
        country_code AS "countryCode",
        avatar_object_key AS "avatarObjectKey"
      FROM users
      WHERE role IN ('PATIENT', 'CAREGIVER')
        AND ($1::text IS NULL OR country_code = $1)
-       AND ($2::text IS NULL OR full_name ILIKE $2 OR email ILIKE $2)
-     ORDER BY full_name ASC
+       AND (
+         $2::text IS NOT NULL
+         OR (full_name <> 'Guest Care Pass' AND COALESCE(email, '') NOT LIKE 'guest-%')
+       )
+       AND ($2::text IS NULL OR full_name ILIKE $2 OR email ILIKE $2 OR COALESCE(phone, '') ILIKE $2)
+     ORDER BY
+       CASE WHEN full_name = 'Guest Care Pass' THEN 1 ELSE 0 END ASC,
+       full_name ASC
      LIMIT $3`,
     [countryCode, searchPattern, query.limit],
   );
@@ -101,7 +148,8 @@ export async function listDirectoryDoctorsScoped(
   query: DirectorySearchQuery,
   s3Config?: S3PresignConfig,
 ): Promise<DirectoryDoctorSummary[]> {
-  const searchPattern = query.q ? `%${query.q}%` : null;
+  const searchPatterns = buildAccentAwarePatterns(query.q);
+  const cityPatterns = buildAccentAwarePatterns(query.city);
   const specialtyPattern = query.specialty ? `%${query.specialty}%` : null;
 
   const res = await pool.query(
@@ -109,44 +157,52 @@ export async function listDirectoryDoctorsScoped(
        u.id,
        u.full_name AS "fullName",
        u.email,
+       CASE WHEN u.role = 'NURSE' THEN 'NURSE' ELSE 'DOCTOR' END AS role,
        u.country_code AS "countryCode",
-       COALESCE(dp.specialty, 'General Practice') AS specialty,
+       COALESCE(dp.specialty, CASE WHEN u.role = 'NURSE' THEN 'Home Nursing & Infirmiers' ELSE 'General Practice' END) AS specialty,
        u.facility_id AS "facilityId",
        f.name AS "facilityName",
+       f.city AS "facilityCity",
        COALESCE(dp.consultation_fee_minor, 0)::int AS "consultationFeeMinor",
-       COALESCE(dp.languages_spoken, ARRAY['ar', 'fr', 'en']::text[]) AS "languagesSpoken",
-       COALESCE(dp.accepted_insurances, ARRAY['AMO', 'CNOPS', 'CNSS']::text[]) AS "acceptedInsurances",
-       COALESCE(dp.telehealth_enabled, TRUE) AS "telehealthEnabled",
-       COALESCE(dp.home_visit_enabled, FALSE) AS "homeVisitEnabled",
+       COALESCE(dp.languages_spoken, f.languages_spoken, ARRAY[]::text[]) AS "languagesSpoken",
+       COALESCE(dp.accepted_insurances, f.accepted_insurances, ARRAY[]::text[]) AS "acceptedInsurances",
+       COALESCE(dp.telehealth_enabled, f.telehealth_enabled, FALSE) AS "telehealthEnabled",
+       COALESCE(dp.home_visit_enabled, f.home_visit_enabled, FALSE) AS "homeVisitEnabled",
        u.credential_verified AS "credentialVerified",
        u.avatar_object_key AS "avatarObjectKey"
      FROM users u
      LEFT JOIN doctor_profiles dp ON dp.doctor_user_id = u.id
      LEFT JOIN facilities f ON f.id = u.facility_id
-     WHERE u.role = 'DOCTOR'
+     WHERE u.role IN ('DOCTOR', 'NURSE')
        AND u.account_status = 'ACTIVE'
        AND ($1::text IS NULL OR u.country_code = $1)
        AND (
-         $2::text IS NULL
-         OR u.full_name ILIKE $2
-         OR COALESCE(dp.specialty, '') ILIKE $2
-         OR COALESCE(f.name, '') ILIKE $2
+         $2::text[] IS NULL
+         OR ${sqlFoldExpr("u.full_name")} ILIKE ANY($2::text[])
+         OR ${sqlFoldExpr("COALESCE(dp.specialty, CASE WHEN u.role = 'NURSE' THEN 'Home Nursing & Infirmiers' ELSE 'General Practice' END)")} ILIKE ANY($2::text[])
+         OR ${sqlFoldExpr("COALESCE(f.name, '')")} ILIKE ANY($2::text[])
+         OR ${sqlFoldExpr("COALESCE(f.city, '')")} ILIKE ANY($2::text[])
        )
-       AND ($3::text IS NULL OR COALESCE(dp.specialty, '') ILIKE $3)
-       AND ($4::text IS NULL OR $4 = ANY(COALESCE(dp.accepted_insurances, ARRAY[]::text[])))
-       AND ($5::text IS NULL OR $5 = ANY(COALESCE(dp.languages_spoken, ARRAY[]::text[])))
-       AND ($6::boolean IS NOT TRUE OR COALESCE(dp.telehealth_enabled, TRUE) = TRUE)
-       AND ($7::boolean IS NOT TRUE OR COALESCE(dp.home_visit_enabled, FALSE) = TRUE)
+       AND (
+         $3::text IS NULL
+         OR COALESCE(dp.specialty, CASE WHEN u.role = 'NURSE' THEN 'Home Nursing & Infirmiers' ELSE 'General Practice' END) ILIKE $3
+       )
+       AND ($4::text IS NULL OR $4 = ANY(COALESCE(dp.accepted_insurances, f.accepted_insurances, ARRAY[]::text[])))
+       AND ($5::text IS NULL OR $5 = ANY(COALESCE(dp.languages_spoken, f.languages_spoken, ARRAY[]::text[])))
+       AND ($6::boolean IS NOT TRUE OR COALESCE(dp.telehealth_enabled, f.telehealth_enabled, FALSE) = TRUE)
+       AND ($7::boolean IS NOT TRUE OR COALESCE(dp.home_visit_enabled, f.home_visit_enabled, FALSE) = TRUE)
+       AND ($8::text[] IS NULL OR ${sqlFoldExpr("COALESCE(f.city, '')")} ILIKE ANY($8::text[]))
      ORDER BY u.full_name ASC
-     LIMIT $8`,
+     LIMIT $9`,
     [
       query.countryCode ?? null,
-      searchPattern,
+      searchPatterns,
       specialtyPattern,
       query.insurance ?? null,
       query.language ?? null,
       query.telehealthOnly ?? false,
       query.homeVisitOnly ?? false,
+      cityPatterns,
       query.limit,
     ],
   );
@@ -160,7 +216,8 @@ export async function listDirectoryFacilitiesPublic(
   pool: Pool,
   query: DirectorySearchQuery,
 ): Promise<DirectoryFacilitySummary[]> {
-  const searchPattern = query.q ? `%${query.q}%` : null;
+  const searchPatterns = buildAccentAwarePatterns(query.q);
+  const cityPatterns = buildAccentAwarePatterns(query.city);
   const specialtyPattern = query.specialty ? `%${query.specialty}%` : null;
 
   const res = await pool.query(
@@ -172,6 +229,7 @@ export async function listDirectoryFacilitiesPublic(
        license_number AS "licenseNumber",
        verification_status AS "verificationStatus",
        open_status AS "openStatus",
+       city,
        address,
        accepted_insurances AS "acceptedInsurances",
        languages_spoken AS "languagesSpoken",
@@ -183,7 +241,12 @@ export async function listDirectoryFacilitiesPublic(
      WHERE verification_status = 'VERIFIED'
        AND ($1::text IS NULL OR country_code = $1)
        AND ($2::text IS NULL OR kind = $2)
-       AND ($3::text IS NULL OR name ILIKE $3 OR address ILIKE $3)
+       AND (
+         $3::text[] IS NULL
+         OR ${sqlFoldExpr("name")} ILIKE ANY($3::text[])
+         OR ${sqlFoldExpr("address")} ILIKE ANY($3::text[])
+         OR ${sqlFoldExpr("COALESCE(city, '')")} ILIKE ANY($3::text[])
+       )
        AND ($4::text IS NULL OR $4 = ANY(accepted_insurances))
        AND ($5::text IS NULL OR $5 = ANY(languages_spoken))
        AND ($6::boolean IS NOT TRUE OR telehealth_enabled = TRUE)
@@ -192,17 +255,19 @@ export async function listDirectoryFacilitiesPublic(
          $8::text IS NULL
          OR EXISTS (SELECT 1 FROM unnest(specialties) s WHERE s ILIKE $8)
        )
+       AND ($9::text[] IS NULL OR ${sqlFoldExpr("COALESCE(city, '')")} ILIKE ANY($9::text[]))
      ORDER BY name ASC
-     LIMIT $9`,
+     LIMIT $10`,
     [
       query.countryCode ?? null,
       query.kind ?? null,
-      searchPattern,
+      searchPatterns,
       query.insurance ?? null,
       query.language ?? null,
       query.telehealthOnly ?? false,
       query.homeVisitOnly ?? false,
       specialtyPattern,
+      cityPatterns,
       query.limit,
     ],
   );
@@ -225,6 +290,31 @@ const DRIVER_FLEET_METADATA: Readonly<
     vehicleType: "MEDICAL_SHUTTLE",
     vehicleLabel: "Patient Care Shuttle · Hybrid SUV",
     serviceZone: "Anfa & Maarif Patient Transfers",
+  },
+  "driver.rabat.ma@medisync.global": {
+    vehicleType: "AMBULANCE",
+    vehicleLabel: "Rabat EMS Rapid Sprinter · Unit 02",
+    serviceZone: "Rabat Agdal, Hassan & Souissi",
+  },
+  "driver.marrakech.ma@medisync.global": {
+    vehicleType: "AMBULANCE",
+    vehicleLabel: "Marrakech EMS Sprinter · Unit 03",
+    serviceZone: "Marrakech Guéliz, Médina & Amerchich",
+  },
+  "driver.tangier.ma@medisync.global": {
+    vehicleType: "AMBULANCE",
+    vehicleLabel: "Tangier EMS Rapid Unit · Unit 05",
+    serviceZone: "Tangier Bay, Tanger Centre & Route de Rabat",
+  },
+  "driver.fes.ma@medisync.global": {
+    vehicleType: "AMBULANCE",
+    vehicleLabel: "Fès EMS Rapid Sprinter · Unit 06",
+    serviceZone: "Fès Ville Nouvelle, Saïss & CHU Hassan II",
+  },
+  "driver.agadir.ma@medisync.global": {
+    vehicleType: "AMBULANCE",
+    vehicleLabel: "Agadir EMS Souss Unit · Unit 07",
+    serviceZone: "Agadir Centre, Baie d'Agadir & Souss",
   },
   "driver.intl@medisync.global": {
     vehicleType: "AMBULANCE",
@@ -256,7 +346,8 @@ export async function listDirectoryDriversPublic(
   query: DirectorySearchQuery,
   s3Config?: S3PresignConfig,
 ): Promise<DirectoryDriverSummary[]> {
-  const searchPattern = query.q ? `%${query.q}%` : null;
+  const searchPatterns = buildAccentAwarePatterns(query.q);
+  const cityPatterns = buildAccentAwarePatterns(query.city);
 
   const res = await pool.query<{
     id: string;
@@ -265,6 +356,7 @@ export async function listDirectoryDriversPublic(
     countryCode: string;
     facilityId: string | null;
     facilityName: string | null;
+    facilityCity: string | null;
     avatarObjectKey: string | null;
   }>(
     `SELECT
@@ -274,20 +366,25 @@ export async function listDirectoryDriversPublic(
        u.country_code AS "countryCode",
        u.facility_id AS "facilityId",
        f.name AS "facilityName",
+       f.city AS "facilityCity",
        u.avatar_object_key AS "avatarObjectKey"
      FROM users u
      LEFT JOIN facilities f ON f.id = u.facility_id
      WHERE u.role = 'DRIVER'
+       AND u.account_status = 'ACTIVE'
+       AND u.credential_verified = TRUE
        AND ($1::text IS NULL OR u.country_code = $1)
        AND (
-         $2::text IS NULL
-         OR u.full_name ILIKE $2
-         OR u.email ILIKE $2
-         OR COALESCE(f.name, '') ILIKE $2
+         $2::text[] IS NULL
+         OR ${sqlFoldExpr("u.full_name")} ILIKE ANY($2::text[])
+         OR ${sqlFoldExpr("u.email")} ILIKE ANY($2::text[])
+         OR ${sqlFoldExpr("COALESCE(f.name, '')")} ILIKE ANY($2::text[])
+         OR ${sqlFoldExpr("COALESCE(f.city, '')")} ILIKE ANY($2::text[])
        )
+       AND ($3::text[] IS NULL OR ${sqlFoldExpr("COALESCE(f.city, '')")} ILIKE ANY($3::text[]))
      ORDER BY u.country_code DESC, u.full_name ASC
-     LIMIT $3`,
-    [query.countryCode ?? null, searchPattern, query.limit],
+     LIMIT $4`,
+    [query.countryCode ?? null, searchPatterns, cityPatterns, query.limit],
   );
 
   const liveStatuses = redis
@@ -311,6 +408,7 @@ export async function listDirectoryDriversPublic(
       countryCode: row.countryCode,
       facilityId: row.facilityId,
       facilityName: row.facilityName,
+      facilityCity: row.facilityCity,
       vehicleType: fleet.vehicleType,
       vehicleLabel: fleet.vehicleLabel,
       serviceZone: fleet.serviceZone,
@@ -378,7 +476,7 @@ export async function listSeededDemoPersonas(
   const emails = Object.keys(SEEDED_DEMO_METADATA);
   const res = await pool.query<{
     id: string;
-    email: string;
+    email: string | null;
     fullName: string;
     role: string;
     countryCode: string;
@@ -398,12 +496,12 @@ export async function listSeededDemoPersonas(
   return res.rows.map((row) =>
     DemoPersonaSummarySchema.parse({
       id: row.id,
-      email: row.email,
+      email: row.email ?? "",
       demoPassword: SEEDED_DEMO_PASSWORD,
       fullName: row.fullName,
       role: row.role,
       countryCode: row.countryCode,
-      headline: SEEDED_DEMO_METADATA[row.email]?.headline ?? row.role,
+      headline: (row.email ? SEEDED_DEMO_METADATA[row.email]?.headline : undefined) ?? row.role,
     }),
   );
 }

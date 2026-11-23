@@ -1,29 +1,31 @@
 "use client";
 
 import type { LocaleCode } from "@medisync/contracts";
-import { Check, Globe } from "lucide-react";
 import { useLocale } from "./locale-store";
 
 const LOCALES: readonly {
   code: LocaleCode;
-  badge: string;
   label: string;
   directionHint: string;
 }[] = [
-  { code: "en", badge: "EN", label: "English", directionHint: "Left to right" },
-  { code: "fr", badge: "FR", label: "Français", directionHint: "Gauche à droite" },
-  { code: "ar", badge: "AR", label: "العربية", directionHint: "من اليمين إلى اليسار" },
+  { code: "en", label: "English", directionHint: "Left to right" },
+  { code: "fr", label: "Français", directionHint: "Gauche à droite" },
+  { code: "ar", label: "العربية", directionHint: "من اليمين إلى اليسار" },
 ];
 
-/** Sidebar language selector displaying full native language names and direction hints. */
-export function LocaleTogglePill() {
+export function LocaleTogglePill({
+  ariaLabel = "Interface language selector",
+}: {
+  variant?: "light" | "dark";
+  ariaLabel?: string;
+}) {
   const { locale, setLocale } = useLocale();
 
   return (
     <div
       role="group"
-      aria-label="Interface language selector"
-      className="space-y-1.5"
+      aria-label={ariaLabel}
+      className="grid grid-cols-3 gap-1 rounded-xl border border-[#D7E4F2] bg-[#F3F8FD] p-1"
     >
       {LOCALES.map((item) => {
         const active = item.code === locale;
@@ -33,34 +35,14 @@ export function LocaleTogglePill() {
             type="button"
             onClick={() => setLocale(item.code)}
             aria-pressed={active}
+            title={item.directionHint}
             className={
               active
-                ? "flex min-h-[44px] w-full items-center justify-between gap-3 rounded-xl border border-teal-700 bg-teal-50 px-3 py-2 text-start text-teal-950 shadow-xs"
-                : "flex min-h-[44px] w-full items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-start text-slate-700 transition-colors hover:border-teal-700/60 hover:bg-slate-50"
+                ? "flex min-h-[32px] items-center justify-center rounded-lg bg-[#0066CC] px-2.5 py-1 text-xs font-semibold text-white shadow-xs transition-all active:scale-[0.98]"
+                : "flex min-h-[32px] items-center justify-center rounded-lg px-2.5 py-1 text-xs font-medium text-[#4A627D] transition-colors hover:bg-white hover:text-[#0F243E]"
             }
           >
-            <div className="flex min-w-0 items-center gap-2.5">
-              <span
-                className={
-                  active
-                    ? "inline-flex h-7 w-8 shrink-0 items-center justify-center rounded-lg bg-teal-800 font-mono-tabular text-[11px] font-bold text-white"
-                    : "inline-flex h-7 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 font-mono-tabular text-[11px] font-bold text-slate-700"
-                }
-              >
-                {item.badge}
-              </span>
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold">{item.label}</p>
-                <p className="truncate text-[11px] text-slate-500">
-                  {item.directionHint}
-                </p>
-              </div>
-            </div>
-            {active ? (
-              <Check className="h-4 w-4 shrink-0 text-teal-800" aria-hidden="true" />
-            ) : (
-              <Globe className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
-            )}
+            <span className="truncate">{item.label}</span>
           </button>
         );
       })}

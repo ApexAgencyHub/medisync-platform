@@ -14,13 +14,15 @@ const LicenseCheckSchema = z.object({
 export async function registerCountryPackRoutes(
   app: FastifyInstance,
 ): Promise<void> {
-  app.get("/v1/country-packs", async () => {
+  app.get("/v1/country-packs", async (_request, reply) => {
+    reply.header("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
     return { packs: listCountryPacks() };
   });
 
   app.get<{ Params: { code: string } }>(
     "/v1/country-packs/:code",
-    async (request) => {
+    async (request, reply) => {
+      reply.header("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
       return { pack: resolveCountryPack(request.params.code) };
     },
   );

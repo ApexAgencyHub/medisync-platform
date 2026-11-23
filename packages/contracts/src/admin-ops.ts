@@ -69,6 +69,7 @@ export type AdminCreateUserInput = z.infer<typeof AdminCreateUserSchema>;
 export const AdminUpdateUserStatusSchema = z.object({
   accountStatus: AccountStatusSchema,
   credentialVerified: z.boolean().optional(),
+  facilityId: z.string().uuid().nullable().optional(),
   reason: z.string().trim().max(300).optional(),
 });
 export type AdminUpdateUserStatusInput = z.infer<
@@ -86,6 +87,8 @@ export const AdminUsersQuerySchema = z.object({
   countryCode: z.string().regex(/^[A-Z]{2,4}$/).optional(),
   role: UserRoleSchema.optional(),
   accountStatus: AccountStatusSchema.optional(),
+  facilityId: z.string().uuid().optional(),
+  pendingVerification: z.coerce.boolean().optional(),
   q: z.string().trim().max(120).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
@@ -116,12 +119,18 @@ export type AdminOverviewQuery = z.infer<typeof AdminOverviewQuerySchema>;
 export const AdminOverviewMetricsSchema = z.object({
   countryCode: z.string().nullable(),
   totalUsers: z.number().int().min(0),
+  pendingVerificationUsers: z.number().int().min(0).default(0),
+  totalNurses: z.number().int().min(0).default(0),
   totalFacilities: z.number().int().min(0),
   pendingVerificationFacilities: z.number().int().min(0),
+  pendingReviewDocuments: z.number().int().min(0).default(0),
   activeDispatches: z.number().int().min(0),
+  completedDispatches: z.number().int().min(0).default(0),
   activeAppointments: z.number().int().min(0),
   openPrescriptions: z.number().int().min(0),
   pendingLabOrders: z.number().int().min(0),
+  totalPharmacyOrders: z.number().int().min(0).default(0),
+  pharmacyRevenueMinor: z.number().int().min(0).default(0),
   openDisputes: z.number().int().min(0),
   recentAuditLogs: z.array(AuditEventSchema),
 });

@@ -1,20 +1,37 @@
 import {
   AuthenticatedUserSchema,
   AuthResponseSchema,
+  DeleteAccountResponseSchema,
   FacilitiesListResponseSchema,
   FacilityResponseSchema,
+  LegalConsentRecordSchema,
+  RequestPhoneOtpLoginResponseSchema,
   RequestVerificationCodeResponseSchema,
+  UserConsentsResponseSchema,
+  UserDataExportResponseSchema,
   type AuthenticatedUser,
   type AuthResponse,
+  type ChangePasswordInput,
   type CreateFacilityInput,
+  type DeleteAccountResponse,
   type FacilitySummary,
+  type GoogleAuthInput,
+  type LegalConsentRecord,
   type LoginInput,
+  type RecordConsentInput,
   type RegisterUserInput,
+  type RequestPhoneOtpLoginInput,
+  type RequestPhoneOtpLoginResponse,
   type RequestVerificationCodeInput,
   type RequestVerificationCodeResponse,
   type ResetPasswordWithCodeInput,
+  type RevokeSessionsResponse,
+  RevokeSessionsResponseSchema,
   type UpdateProfileInput,
+  type UserConsentsResponse,
+  type UserDataExportResponse,
   type VerifyAccountCodeInput,
+  type VerifyPhoneOtpLoginInput,
 } from "@medisync/contracts";
 import { requestTyped, type ApiResult } from "@/shared/api/http-client";
 
@@ -198,5 +215,179 @@ export async function updateUserProfile(
       body: JSON.stringify(input),
     },
     UserWrapperResponseSchema,
+  );
+}
+
+export async function requestPhoneOtpLogin(
+  apiBaseUrl: string,
+  input: RequestPhoneOtpLoginInput,
+): Promise<ApiResult<RequestPhoneOtpLoginResponse>> {
+  return requestTyped(
+    `${apiBaseUrl}/v1/auth/phone/request-otp`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+    RequestPhoneOtpLoginResponseSchema,
+  );
+}
+
+export async function verifyPhoneOtpLogin(
+  apiBaseUrl: string,
+  input: VerifyPhoneOtpLoginInput,
+): Promise<ApiResult<AuthResponse>> {
+  return requestTyped(
+    `${apiBaseUrl}/v1/auth/phone/verify-otp`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+    AuthResponseSchema,
+  );
+}
+
+export async function fetchMe(
+  apiBaseUrl: string,
+  token: string,
+): Promise<ApiResult<{ user: AuthenticatedUser }>> {
+  return requestTyped(
+    `${apiBaseUrl}/v1/auth/me`,
+    {
+      headers: { authorization: `Bearer ${token}` },
+    },
+    UserWrapperResponseSchema,
+  );
+}
+
+export async function authenticateWithGoogle(
+  apiBaseUrl: string,
+  input: GoogleAuthInput,
+): Promise<ApiResult<AuthResponse>> {
+  return requestTyped(
+    `${apiBaseUrl}/v1/auth/google`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+    AuthResponseSchema,
+  );
+}
+
+export async function changeUserPassword(
+  apiBaseUrl: string,
+  token: string,
+  input: ChangePasswordInput,
+): Promise<ApiResult<AuthResponse>> {
+  return requestTyped(
+    `${apiBaseUrl}/v1/auth/change-password`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(input),
+    },
+    AuthResponseSchema,
+  );
+}
+
+export async function revokeAllOtherSessions(
+  apiBaseUrl: string,
+  token: string,
+): Promise<ApiResult<RevokeSessionsResponse>> {
+  return requestTyped(
+    `${apiBaseUrl}/v1/auth/revoke-sessions`,
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    },
+    RevokeSessionsResponseSchema,
+  );
+}
+
+const ConsentResponseParser = {
+  safeParse(
+    data: unknown,
+  ): { success: true; data: { consent: LegalConsentRecord } } | { success: false } {
+    if (typeof data !== "object" || data === null || !("consent" in data)) {
+      return { success: false };
+    }
+    const parsed = LegalConsentRecordSchema.safeParse(
+      (data as { consent: unknown }).consent,
+    );
+    return parsed.success
+      ? { success: true, data: { consent: parsed.data } }
+      : { success: false };
+  },
+};
+
+export async function fetchMyConsents(
+  apiBaseUrl: string,
+  token: string,
+): Promise<ApiResult<UserConsentsResponse>> {
+  return requestTyped(
+    `${apiBaseUrl}/v1/users/me/consents`,
+    {
+      method: "GET",
+      headers: { authorization: `Bearer ${token}` },
+    },
+    UserConsentsResponseSchema,
+  );
+}
+
+export async function updateMyConsent(
+  apiBaseUrl: string,
+  token: string,
+  input: RecordConsentInput,
+): Promise<ApiResult<{ consent: LegalConsentRecord }>> {
+  return requestTyped(
+    `${apiBaseUrl}/v1/users/me/consents`,
+    {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(input),
+    },
+    ConsentResponseParser,
+  );
+}
+
+export async function exportMyPersonalData(
+  apiBaseUrl: string,
+  token: string,
+): Promise<ApiResult<UserDataExportResponse>> {
+  return requestTyped(
+    `${apiBaseUrl}/v1/users/me/data-export`,
+    {
+      method: "GET",
+      headers: { authorization: `Bearer ${token}` },
+    },
+    UserDataExportResponseSchema,
+  );
+}
+
+export async function deleteMyAccount(
+  apiBaseUrl: string,
+  token: string,
+): Promise<ApiResult<DeleteAccountResponse>> {
+  return requestTyped(
+    `${apiBaseUrl}/v1/users/me/account`,
+    {
+      method: "DELETE",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ confirmation: "DELETE_MY_ACCOUNT" }),
+    },
+    DeleteAccountResponseSchema,
   );
 }

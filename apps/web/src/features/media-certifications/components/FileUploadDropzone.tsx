@@ -2,6 +2,7 @@
 
 import { useId, useRef, useState, type DragEvent } from "react";
 import { FileText, ImageIcon, UploadCloud, X } from "lucide-react";
+import { useLocale } from "@/shared/i18n/locale-store";
 
 interface FileUploadDropzoneProps {
   id?: string;
@@ -32,7 +33,35 @@ export function FileUploadDropzone({
   disabled = false,
   onFileSelected,
 }: FileUploadDropzoneProps) {
+  const { locale } = useLocale();
   const generatedId = useId();
+  const dropCopy =
+    locale === "ar"
+      ? {
+          replace: "استبدال",
+          remove: "إزالة",
+          maxPrefix: "الحد الأقصى",
+          encryptedUpload: "رفع طبي مشفّر ومباشر",
+          chooseFile: "اختر ملفاً",
+          uploading: "جاري الرفع بأمان...",
+        }
+      : locale === "fr"
+        ? {
+            replace: "Remplacer",
+            remove: "Supprimer",
+            maxPrefix: "Max",
+            encryptedUpload: "Téléversement médical chiffré",
+            chooseFile: "Choisir un fichier",
+            uploading: "Envoi sécurisé en cours...",
+          }
+        : {
+            replace: "Replace",
+            remove: "Remove",
+            maxPrefix: "Max",
+            encryptedUpload: "Direct encrypted clinical upload",
+            chooseFile: "Choose File",
+            uploading: "Uploading securely...",
+          };
   const inputId = id ?? generatedId;
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -68,10 +97,10 @@ export function FileUploadDropzone({
         }}
         onDragLeave={() => setDragActive(false)}
         onDrop={handleDrop}
-        className={`rounded-xl border-2 border-dashed p-3.5 transition-colors ${
+        className={`rounded-2xl border border-dashed p-4 transition-colors ${
           dragActive
-            ? "border-teal-700 bg-teal-50/80"
-            : "border-slate-300 bg-slate-50/70 hover:border-teal-700/60"
+            ? "border-[#0066CC] bg-emerald-50/70"
+            : "border-[#B9C3CD] bg-[#F3F8FD] hover:border-[#0066CC]/60 hover:bg-white"
         } ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
       >
         <input
@@ -87,7 +116,7 @@ export function FileUploadDropzone({
         {selectedFile ? (
           <div className="flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2.5">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-teal-200 bg-teal-50 text-teal-800">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-emerald-200 bg-emerald-50 text-[#0066CC]">
                 {isImage ? (
                   <ImageIcon className="h-4 w-4" aria-hidden="true" />
                 ) : (
@@ -95,7 +124,7 @@ export function FileUploadDropzone({
                 )}
               </div>
               <div className="min-w-0">
-                <p className="truncate text-xs font-semibold text-slate-900">
+                <p className="truncate text-xs font-semibold text-[#0F243E]">
                   <bdi dir="auto">{selectedFile.name}</bdi>
                 </p>
                 <p className="font-mono-tabular text-[11px] text-slate-600">
@@ -110,34 +139,34 @@ export function FileUploadDropzone({
                 type="button"
                 disabled={disabled}
                 onClick={() => inputRef.current?.click()}
-                className="min-h-[32px] rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:border-teal-700 hover:text-teal-800 active:scale-95"
+                className="min-h-[32px] rounded-lg border border-[#CBDDF0] bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-[#E8F1FA] hover:text-[#0066CC] active:scale-95"
               >
-                Replace
+                {dropCopy.replace}
               </button>
               <button
                 type="button"
                 disabled={disabled}
-                aria-label={`Remove ${selectedFile.name}`}
+                aria-label={`${dropCopy.remove} ${selectedFile.name}`}
                 onClick={() => {
                   if (inputRef.current) inputRef.current.value = "";
                   onFileSelected(null);
                 }}
-                className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:border-red-300 hover:text-red-700 active:scale-95"
+                className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#CBDDF0] bg-white text-slate-500 hover:bg-rose-50 hover:text-rose-700 active:scale-95"
               >
                 <X className="h-3.5 w-3.5" aria-hidden="true" />
               </button>
             </div>
           </div>
         ) : (
-          <div className="flex flex-col items-center justify-center gap-2 py-2 text-center sm:flex-row sm:justify-between sm:text-start">
+          <div className="flex flex-col items-center justify-center gap-2 py-1.5 text-center sm:flex-row sm:justify-between sm:text-start">
             <div className="flex items-center gap-2.5">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-teal-800 shadow-2xs">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#CBDDF0] bg-white text-[#0066CC]">
                 <UploadCloud className="h-4 w-4" aria-hidden="true" />
               </div>
               <div>
-                <p className="text-xs font-semibold text-slate-800">{hint}</p>
+                <p className="text-xs font-semibold text-[#0F243E]">{hint}</p>
                 <p className="font-mono-tabular text-[11px] text-slate-500">
-                  Max {formatByteSize(maxBytes)} · Direct encrypted clinical upload
+                  {dropCopy.maxPrefix} {formatByteSize(maxBytes)} · {dropCopy.encryptedUpload}
                 </p>
               </div>
             </div>
@@ -146,22 +175,22 @@ export function FileUploadDropzone({
               type="button"
               disabled={disabled}
               onClick={() => inputRef.current?.click()}
-              className="min-h-[36px] shrink-0 rounded-lg border border-teal-800 bg-white px-3 py-1.5 text-xs font-semibold text-teal-900 transition-colors hover:bg-teal-50 active:scale-95"
+              className="min-h-[34px] shrink-0 rounded-lg border border-[#CBDDF0] bg-white px-3.5 py-1.5 text-xs font-semibold text-[#0F243E] transition-colors hover:border-[#0066CC]/45 hover:text-[#0066CC] active:scale-95"
             >
-              Choose File
+              {dropCopy.chooseFile}
             </button>
           </div>
         )}
 
         {typeof progressPercent === "number" ? (
           <div className="mt-2.5 space-y-1">
-            <div className="flex justify-between font-mono-tabular text-[11px] font-semibold text-teal-900">
-              <span>Uploading securely...</span>
+            <div className="flex justify-between font-mono-tabular text-[11px] font-semibold text-emerald-800">
+              <span>{dropCopy.uploading}</span>
               <span>{progressPercent}%</span>
             </div>
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
               <div
-                className="h-full rounded-full bg-teal-700 transition-all"
+                className="h-full rounded-full bg-emerald-600 transition-all"
                 style={{ width: `${Math.max(4, progressPercent)}%` }}
               />
             </div>

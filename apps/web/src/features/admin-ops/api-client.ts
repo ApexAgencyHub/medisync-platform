@@ -1,14 +1,17 @@
 import {
   AdminAuditListResponseSchema,
+  type AdminCreateUserInput,
   AdminOverviewResponseSchema,
   AdminUserResponseSchema,
   AdminUsersListResponseSchema,
   DispatchResponseSchema,
   DisputeResponseSchema,
   DisputesListResponseSchema,
+  type AccountStatus,
   type AdminAuditListResponse,
   type AdminOverviewResponse,
   type AdminOverrideDispatchInput,
+  type AdminUpdateUserStatusInput,
   type AdminUserResponse,
   type AdminUsersListResponse,
   type CreateDisputeInput,
@@ -45,13 +48,23 @@ export async function fetchAdminUsers(
   options?: {
     countryCode?: string | undefined;
     role?: UserRole | undefined;
+    accountStatus?: AccountStatus | undefined;
+    facilityId?: string | undefined;
+    pendingVerification?: boolean | undefined;
+    q?: string | undefined;
     limit?: number | undefined;
   },
 ): Promise<ApiResult<AdminUsersListResponse>> {
   const params = new URLSearchParams();
   if (options?.countryCode) params.set("countryCode", options.countryCode);
   if (options?.role) params.set("role", options.role);
-  params.set("limit", String(options?.limit ?? 50));
+  if (options?.accountStatus) params.set("accountStatus", options.accountStatus);
+  if (options?.facilityId) params.set("facilityId", options.facilityId);
+  if (options?.pendingVerification !== undefined) {
+    params.set("pendingVerification", String(options.pendingVerification));
+  }
+  if (options?.q?.trim()) params.set("q", options.q.trim());
+  params.set("limit", String(options?.limit ?? 100));
 
   return requestTyped(
     `${apiBaseUrl}/v1/admin/users?${params.toString()}`,
@@ -63,6 +76,25 @@ export async function fetchAdminUsers(
   );
 }
 
+export async function createAdminUser(
+  apiBaseUrl: string,
+  token: string,
+  input: AdminCreateUserInput,
+): Promise<ApiResult<AdminUserResponse>> {
+  return requestTyped(
+    `${apiBaseUrl}/v1/admin/users`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(input),
+    },
+    AdminUserResponseSchema,
+  );
+}
+
 export async function updateAdminUserRole(
   apiBaseUrl: string,
   token: string,
@@ -71,6 +103,26 @@ export async function updateAdminUserRole(
 ): Promise<ApiResult<AdminUserResponse>> {
   return requestTyped(
     `${apiBaseUrl}/v1/admin/users/${encodeURIComponent(userId)}/role`,
+    {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(input),
+    },
+    AdminUserResponseSchema,
+  );
+}
+
+export async function updateAdminUserStatus(
+  apiBaseUrl: string,
+  token: string,
+  userId: string,
+  input: AdminUpdateUserStatusInput,
+): Promise<ApiResult<AdminUserResponse>> {
+  return requestTyped(
+    `${apiBaseUrl}/v1/admin/users/${encodeURIComponent(userId)}/status`,
     {
       method: "PATCH",
       headers: {

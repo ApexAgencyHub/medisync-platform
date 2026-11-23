@@ -17,6 +17,7 @@ import {
   DIRECTORY_CACHE_GEN_KEY,
   withGenerationCache,
 } from "../../shared/redis/cache.js";
+import { isSimulatedCardAllowed } from "../../shared/payments/psp.js";
 import { authenticateRequest } from "../foundation/index.js";
 import {
   createMedicalInvoiceAtomic,
@@ -56,9 +57,16 @@ const EHR_ACCESS_ROLES: readonly UserRole[] = [
   "PATIENT",
   "CAREGIVER",
   "DOCTOR",
+  "NURSE",
+  "OPS_ADMIN",
+];
+
+// Administrative billing & reception staff may inspect and verify patient insurance cards
+// without gaining access to sensitive clinical EHR allergies, notes, or diagnoses.
+const INSURANCE_ACCESS_ROLES: readonly UserRole[] = [
+  ...EHR_ACCESS_ROLES,
   "CLINIC_STAFF",
   "HOSPITAL_ADMIN",
-  "OPS_ADMIN",
 ];
 
 const INSURANCE_ADMIN_ROLES: readonly UserRole[] = [
@@ -69,6 +77,7 @@ const INSURANCE_ADMIN_ROLES: readonly UserRole[] = [
 
 const SERVICE_PUBLISHER_ROLES: readonly UserRole[] = [
   "DOCTOR",
+  "NURSE",
   "CLINIC_STAFF",
   "HOSPITAL_ADMIN",
   "PHARMACIST",
@@ -78,6 +87,7 @@ const SERVICE_PUBLISHER_ROLES: readonly UserRole[] = [
 
 const INVOICE_ISSUER_ROLES: readonly UserRole[] = [
   "DOCTOR",
+  "NURSE",
   "CLINIC_STAFF",
   "HOSPITAL_ADMIN",
   "PHARMACIST",
@@ -118,6 +128,7 @@ export async function registerMedicalPlatformRoutes(
     redis?: Redis;
     authSecret: string;
     requireProviderVerification?: boolean;
+    allowSimulatedPayments?: boolean | undefined;
   },
 ): Promise<void> {
   const authDeps = {
@@ -136,6 +147,7 @@ export async function registerMedicalPlatformRoutes(
       reply,
       authDeps,
       EHR_ACCESS_ROLES,
+      { requireVerifiedProvider: Boolean(deps.requireProviderVerification) },
     );
     if (!claims) return;
 
@@ -197,7 +209,8 @@ export async function registerMedicalPlatformRoutes(
       request,
       reply,
       authDeps,
-      EHR_ACCESS_ROLES,
+      INSURANCE_ACCESS_ROLES,
+      { requireVerifiedProvider: Boolean(deps.requireProviderVerification) },
     );
     if (!claims) return;
 
@@ -223,7 +236,8 @@ export async function registerMedicalPlatformRoutes(
       request,
       reply,
       authDeps,
-      EHR_ACCESS_ROLES,
+      INSURANCE_ACCESS_ROLES,
+      { requireVerifiedProvider: Boolean(deps.requireProviderVerification) },
     );
     if (!claims) return;
 
@@ -317,6 +331,7 @@ export async function registerMedicalPlatformRoutes(
         reply,
         authDeps,
         INSURANCE_ADMIN_ROLES,
+        { requireVerifiedProvider: Boolean(deps.requireProviderVerification) },
       );
       if (!claims) return;
 
@@ -359,6 +374,7 @@ export async function registerMedicalPlatformRoutes(
       30,
       () => listMedicalServicesPublic(deps.pool, parsed.data),
     );
+    reply.header("Cache-Control", "public, max-age=30, stale-while-revalidate=120");
     return { services };
   });
 
@@ -425,7 +441,23 @@ export async function registerMedicalPlatformRoutes(
   });
 
   app.get("/v1/billing/invoices", async (request, reply) => {
-    const claims = await authenticateRequest(request, reply, authDeps);
+    const claims = await authenticateRequest(
+      request,
+      reply,
+      authDeps,
+      [
+        "PATIENT",
+        "CAREGIVER",
+        "DOCTOR",
+        "NURSE",
+        "PHARMACIST",
+        "LAB_TECH",
+        "CLINIC_STAFF",
+        "HOSPITAL_ADMIN",
+        "OPS_ADMIN",
+      ],
+      { requireVerifiedProvider: Boolean(deps.requireProviderVerification) },
+    );
     if (!claims) return;
 
     const parsed = ListMedicalInvoicesQuerySchema.safeParse(request.query);
@@ -456,6 +488,7 @@ export async function registerMedicalPlatformRoutes(
         reply,
         authDeps,
         INVOICE_PAYER_ROLES,
+        { requireVerifiedProvider: Boolean(deps.requireProviderVerification) },
       );
       if (!claims) return;
 
@@ -463,6 +496,17 @@ export async function registerMedicalPlatformRoutes(
       const body = PayMedicalInvoiceSchema.safeParse(request.body ?? {});
       if (!params.success || !body.success) {
         return reply.status(400).send({ error: "INVALID_PAYMENT_PAYLOAD" });
+      }
+
+      if (
+        body.data.paymentMethod === "CARD" &&
+        !isSimulatedCardAllowed(deps.allowSimulatedPayments)
+      ) {
+        return reply.status(403).send({
+          error: "PAYMENT_PROVIDER_REQUIRED",
+          message:
+            "Direct card settlement without PSP webhook verification is disabled in production.",
+        });
       }
 
       try {

@@ -14,3 +14,5 @@ export * from "./pharmacy-commerce.js";
 export * from "./system-ops.js";
 export * from "./patient-care.js";
 export * from "./medical-platform.js";
+export * from "./telehealth.js";
+export * from "./compliance.js";

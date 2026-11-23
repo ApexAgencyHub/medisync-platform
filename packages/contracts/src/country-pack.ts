@@ -17,6 +17,9 @@ export const CountryPackSchema = z.object({
   measurementSystem: z.enum(["metric", "imperial"]),
   licenseNumberPattern: z.string().min(2),
   dataResidencyRegion: z.string().min(2),
+  allowRxCourierDelivery: z.boolean().default(true),
+  pharmacyLawReference: z.string().optional(),
+  dataPrivacyLawReference: z.string().optional(),
 });
 
 export type CountryPack = z.infer<typeof CountryPackSchema>;

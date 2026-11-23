@@ -45,6 +45,7 @@ export const DispatchStatusSchema = z.enum([
 export type DispatchStatus = z.infer<typeof DispatchStatusSchema>;
 
 export const CreateDispatchRequestSchema = z.object({
+  countryCode: z.string().regex(/^[A-Z]{2,4}$/).optional(),
   pickupLat: z.number().min(-90).max(90),
   pickupLng: z.number().min(-180).max(180),
   pickupAddress: z.string().min(4).max(280),
@@ -74,6 +75,8 @@ export const DispatchListQuerySchema = z.object({
 
 export type DispatchListQuery = z.infer<typeof DispatchListQuerySchema>;
 
+export const DRIVER_OFFER_WINDOW_SECONDS = 60;
+
 export const DispatchRequestSummarySchema = z.object({
   id: z.string().uuid(),
   countryCode: z.string().regex(/^[A-Z]{2,4}$/),
@@ -88,6 +91,9 @@ export const DispatchRequestSummarySchema = z.object({
   notes: z.string().nullable(),
   createdAtIso: z.string().datetime(),
   updatedAtIso: z.string().datetime(),
+  offerExpiresAtIso: z.string().datetime().optional(),
+  offerWindowSeconds: z.number().int().positive().optional(),
+  offerRemainingMs: z.number().int().nonnegative().optional(),
 });
 
 export type DispatchRequestSummary = z.infer<
@@ -96,11 +102,33 @@ export type DispatchRequestSummary = z.infer<
 
 export const DispatchListResponseSchema = z.object({
   dispatches: z.array(DispatchRequestSummarySchema),
+  driverDutyStatus: DriverStatusSchema.optional(),
 });
+
+export type DispatchListResponse = z.infer<typeof DispatchListResponseSchema>;
 
 export const DispatchResponseSchema = z.object({
   dispatch: DispatchRequestSummarySchema,
 });
+
+export const DeclineDispatchRequestSchema = z.object({
+  reason: z.string().trim().max(200).optional(),
+});
+
+export type DeclineDispatchRequestInput = z.infer<
+  typeof DeclineDispatchRequestSchema
+>;
+
+export const DeclineDispatchResponseSchema = z.object({
+  declined: z.literal(true),
+  dispatchId: z.string().uuid(),
+  releasedToQueue: z.boolean(),
+  dispatch: DispatchRequestSummarySchema.optional(),
+});
+
+export type DeclineDispatchResponse = z.infer<
+  typeof DeclineDispatchResponseSchema
+>;
 
 export const DriverResponseSchema = z.object({
   driver: LiveDriverMarkerSchema,
@@ -121,6 +149,12 @@ export const DispatchStreamEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("dispatch.updated"),
     dispatch: DispatchRequestSummarySchema,
+  }),
+  z.object({
+    type: z.literal("dispatch.offer_expired"),
+    dispatchId: z.string().uuid(),
+    reason: z.string(),
+    expiredAtIso: z.string().datetime(),
   }),
 ]);
 

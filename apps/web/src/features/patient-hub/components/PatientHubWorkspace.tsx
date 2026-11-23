@@ -2,145 +2,405 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import {
-  computeVisitCountdown,
-  type AppointmentSummary,
-  type AuthResponse,
-  type ClinicalMediaObjectSummary,
-  type CountryPack,
-  type DispatchRequestSummary,
-  type LabOrderSummary,
-  type PrescriptionSummary,
-  type VisitCountdownTone,
-  type VisitNoteSummary,
+import type {
+  AppointmentSummary,
+  AuthResponse,
+  ClinicalMediaObjectSummary,
+  CountryPack,
+  DirectoryDoctorSummary,
+  DirectoryDriverSummary,
+  DirectoryFacilitySummary,
+  DispatchRequestSummary,
+  LabOrderSummary,
+  LocaleCode,
+  MedicalServiceSummary,
+  PatientInsurancePolicy,
+  PatientMedicalProfile,
+  PrescriptionSummary,
+  VisitNoteSummary,
 } from "@medisync/contracts";
 import { fetchAppointments } from "@/features/booking";
 import {
   fetchClinicalMedia,
   fetchLabOrders,
+  fetchMyPatientProfile,
   fetchPrescriptions,
   fetchVisitNotes,
+  listMyPatientInsurances,
 } from "@/features/clinical-workspace";
 import { listDispatchRequests } from "@/features/maps-dispatch";
-import { checkBackendOnline } from "@/shared/api/directory-client";
+import {
+  checkBackendOnline,
+  fetchDirectoryDoctors,
+  fetchDirectoryDrivers,
+  fetchDirectoryFacilities,
+  fetchMedicalServices,
+} from "@/shared/api/directory-client";
+import { ConsumerWorkspaceGuard } from "@/shared/auth/ConsumerWorkspaceGuard";
+import {
+  canReadAppointments,
+  canReadClinicalEhr,
+  canReadDispatchFeed,
+  canReadLabOrders,
+  canReadPrescriptions,
+  canReadVisitNotes,
+  isConsumerUserOrGuest,
+  syncPendingSessionStatus,
+} from "@/shared/auth/role-capabilities";
 import {
   clearStoredSession,
   readStoredSession,
+  revokeClientSession,
 } from "@/shared/auth/session-storage";
-import {
-  formatClinicalFileType,
-  formatDispatchStatus,
-  formatVisitMode,
-} from "@/shared/i18n/human-labels";
-import { useLocale } from "@/shared/i18n/locale-store";
-import {
-  removeGuestActivityPass,
-  useBookmarkedProviders,
-  useGuestActivityPasses,
-} from "@/shared/patient/patient-local-store";
-import { BookmarkButton } from "@/shared/ui/BookmarkButton";
-import { EntityAvatar } from "@/shared/ui/EntityAvatar";
-import { useImageLightbox } from "@/shared/ui/ImageLightboxProvider";
-import { QrPrescriptionCard } from "@/shared/ui/QrPrescriptionCard";
 import {
   ACTIVE_COUNTRY_CODE,
   resolveActivePack,
+  resolveEffectiveCountryCode,
 } from "@/shared/config/deployment";
 import {
-  ActiveRegionPill,
-  SessionAccountBar,
-  StatusBanner,
-  UiBadge,
-  UiButton,
-  type UiBadgeTone,
-} from "@/shared/ui/primitives";
+  expandMoroccanCityKeywords,
+  normalizeCityText,
+} from "@/shared/config/morocco-standards";
+import { useLocale } from "@/shared/i18n/locale-store";
 import {
-  Ambulance,
-  BookmarkCheck,
-  CalendarClock,
-  FileText,
-  FlaskConical,
-  HeartHandshake,
-  Lock,
-  Trash2,
-} from "lucide-react";
+  formatCountryDisplayName,
+  formatFacilityKind,
+} from "@/shared/i18n/human-labels";
+import {
+  buildSpecialtyFilterOptions,
+  formatSpecialtyLabel,
+  getSpecialtyKeywords,
+  matchesDoctorSpecialtyFilter,
+} from "@/shared/i18n/specialties";
+import {
+  useBookmarkedProviders,
+  useGuestActivityPasses,
+} from "@/shared/patient/patient-local-store";
+import {
+  resolveFacilityPicture,
+  resolveVehiclePicture,
+} from "@/shared/ui/EntityAvatar";
+import {
+  VerificationGateNotice,
+  isPendingStaffVerification,
+} from "@/shared/ui/VerificationGateNotice";
+import { WorkspaceHeader, useToastSetter } from "@/shared/ui/primitives";
+import { Ambulance, Compass, MapPin } from "lucide-react";
+import {
+  formatPlainSpecialty,
+  getPatientUiCopy,
+  type PatientSearchCategory,
+  type PatientSearchResultItem,
+} from "../patient-copy";
+import { CareGuideGrid } from "./CareGuideGrid";
+import { NearbyCareStrip } from "./NearbyCareStrip";
+import { PatientActivitySection } from "./PatientActivitySection";
+import { PatientHealthFolderSection } from "./PatientHealthFolderSection";
+import { PatientSafetySection } from "./PatientSafetySection";
+import { PatientSearchSection } from "./PatientSearchSection";
 
 interface PatientHubWorkspaceProps {
   packs: readonly CountryPack[];
   apiBaseUrl: string;
 }
 
-const COUNTDOWN_BADGE_TONE: Record<VisitCountdownTone, UiBadgeTone> = {
-  urgent: "red",
-  upcoming: "amber",
-  future: "teal",
-  past: "slate",
-};
-
-const QUICK_CARE_TILES = [
-  {
-    href: "/map",
-    title: "Live Map & Fast Book",
-    caption: "See nearby drivers, doctors & clinics",
-    imageSrc: "/media/clinical-map-hero.webp",
-  },
-  {
-    href: "/booking",
-    title: "Book Doctor or Nurse",
-    caption: "Pick an open clinic or home slot",
-    imageSrc: "/media/avatars/doctor-female.webp",
-  },
-  {
-    href: "/profiles",
-    title: "Public Profiles",
-    caption: "Compare photos, specialties & centers",
-    imageSrc: "/media/facilities/clinic-interior.webp",
-  },
-  {
-    href: "/pharmacy",
-    title: "Pharmacy & Refills",
-    caption: "Order medicines & track delivery",
-    imageSrc: "/media/facilities/pharmacy-interior.webp",
-  },
-] as const;
-
-function resolveBookmarkAvatarRole(
-  kind: "DOCTOR" | "NURSE" | "CLINIC" | "HOSPITAL" | "PHARMACY" | "LAB",
-): "DOCTOR" | "CLINIC_STAFF" | "PHARMACIST" | "LAB_TECH" {
-  switch (kind) {
-    case "PHARMACY":
-      return "PHARMACIST";
-    case "LAB":
-      return "LAB_TECH";
-    case "CLINIC":
-    case "HOSPITAL":
-      return "CLINIC_STAFF";
-    default:
-      return "DOCTOR";
+function buildStaticCareResults(
+  locale: LocaleCode,
+): readonly PatientSearchResultItem[] {
+  if (locale === "ar") {
+    return [
+      {
+        id: "care-action-ambulance",
+        category: "DRIVER",
+        badgeLabel: "إسعاف · 141",
+        badgeTone: "red",
+        title: "سيارة إسعاف ونقل طبي استعجالي",
+        plainHint: "برّك باش تشوف أقرب سيارات الإسعاف المباشرة على الخريطة",
+        subtitle: "تتبع سيارات الإسعاف أو اطلب سيارة بنقرة واحدة",
+        keywords:
+          "ambulance driver 141 transport samu emergency urgent ride pickup إسعاف طوارئ urgence",
+        href: "/map?layer=DRIVER",
+        ctaLabel: "فتح الخريطة المباشرة",
+        imageSrc: "/media/vehicles/ambulance-van.webp",
+      },
+      {
+        id: "care-action-doctors",
+        category: "DOCTOR",
+        badgeLabel: "أطباء وممرضون",
+        badgeTone: "emerald",
+        title: "الطب العام، أطباء القلب وممرضو المنزل",
+        plainHint: "احجز زيارة في مكان عمل الطبيب أو مكالمة فيديو",
+        subtitle: "قارن بين الأطباء المعتمدين واحجز موعدك بسهولة",
+        keywords:
+          "doctor nurse cardiology heart chest blood pressure pediatrics dermatology gp consultation home visit طبيب ممرض قلب طونسيو médecin infirmier",
+        href: "/booking?provider=doctor&mode=IN_PERSON",
+        ctaLabel: "زيارة فالعيادة",
+        secondaryHref: "/booking?provider=doctor&mode=TELEHEALTH",
+        secondaryCtaLabel: "مكالمة فيديو",
+        imageSrc: "/media/scenes/telehealth-video.webp",
+      },
+      {
+        id: "care-action-clinics",
+        category: "CARE_CENTER",
+        badgeLabel: "عيادات",
+        badgeTone: "teal",
+        title: "عيادات ومراكز طبية قريبة منك",
+        plainHint: "تأكد أن العيادة مفتوحة الآن قبل الخروج من البيت",
+        subtitle: "افتح العيادات على الخريطة المباشرة واعرف المسار",
+        keywords:
+          "clinic poliklinik medical center urgent care appointment casablanca rabat marrakech عيادة مصحة clinique",
+        href: "/map?layer=CLINIC",
+        ctaLabel: "عرض العيادات",
+        imageSrc: "/media/facilities/clinic-interior.webp",
+      },
+      {
+        id: "care-action-hospitals",
+        category: "CARE_CENTER",
+        badgeLabel: "مستشفيات",
+        badgeTone: "teal",
+        title: "مستشفيات الطوارئ والمستعجلات 24/7",
+        plainHint: "اعثر على المستشفيات المفتوحة ليلاً ونهاراً بالقرب منك",
+        subtitle: "تفقد جاهزية أقسام المستعجلات ومواقع المستشفيات على الخريطة",
+        keywords:
+          "hospital chu trauma emergency inpatient surgery urgent care مستشفى سبيطار طوارئ hôpital urgences",
+        href: "/map?layer=HOSPITAL",
+        ctaLabel: "عرض المستشفيات",
+        imageSrc: "/media/facilities/hospital-hub.webp",
+      },
+      {
+        id: "care-action-pharmacies",
+        category: "PHARMACY_LAB",
+        badgeLabel: "صيدلية 24/7",
+        badgeTone: "amber",
+        title: "صيدليات الحراسة وصرف وصفات QR بالصيدلية",
+        plainHint: "استعمل رمز QR لصرف الوصفة بالصيدلية أو اطلب منتجات شبه الصيدلية",
+        subtitle: "صرف الوصفات الإلكترونية بالصيدلية (قانون 17-04) وتوصيل العناية OTC",
+        keywords:
+          "pharmacy garde medication refill prescription aspirin insulin antibiotics delivery صيدلية حراسة دواء pharmacie médicament",
+        href: "/pharmacy",
+        ctaLabel: "فتح الصيدلية",
+        imageSrc: "/media/facilities/pharmacy-interior.webp",
+      },
+      {
+        id: "care-action-labs",
+        category: "PHARMACY_LAB",
+        badgeLabel: "تحاليل وراديو",
+        badgeTone: "slate",
+        title: "تحاليل الدم، الأشعة ومختبرات التشخيص",
+        plainHint: "ابحث عن مختبرات تحاليل الدم، الرنين المغناطيسي والراديو",
+        subtitle: "حدد موقع المختبرات المعتمدة وتابع نتائج تحاليلك",
+        keywords:
+          "diagnostic lab laboratory blood panel mri xray scan analysis مختبر تحاليل راديو أشعة laboratoire analyses",
+        href: "/map?layer=DIAGNOSTIC_LAB",
+        ctaLabel: "عرض المختبرات",
+        imageSrc: "/media/scenes/diagnostic-imaging-lab.webp",
+      },
+    ];
   }
+
+  if (locale === "fr") {
+    return [
+      {
+        id: "care-action-ambulance",
+        category: "DRIVER",
+        badgeLabel: "Ambulance · 141",
+        badgeTone: "red",
+        title: "Ambulance d'Urgence & Transport Médical",
+        plainHint: "Touchez pour voir les ambulances proches sur la carte en direct",
+        subtitle: "Suivre les ambulances en direct ou réserver en 1 clic",
+        keywords:
+          "ambulance driver 141 transport samu emergency urgent ride pickup إسعاف طوارئ urgence",
+        href: "/map?layer=DRIVER",
+        ctaLabel: "Ouvrir la Carte",
+        imageSrc: "/media/vehicles/ambulance-van.webp",
+      },
+      {
+        id: "care-action-doctors",
+        category: "DOCTOR",
+        badgeLabel: "Médecins & Infirmiers",
+        badgeTone: "emerald",
+        title: "Médecine Générale, Cardiologues & Infirmiers à Domicile",
+        plainHint: "Réservez au cabinet du médecin ou en appel vidéo HD",
+        subtitle: "Comparez les praticiens vérifiés et réservez un créneau",
+        keywords:
+          "doctor nurse cardiology heart chest blood pressure pediatrics dermatology gp consultation home visit طبيب ممرض قلب طونسيو médecin infirmier",
+        href: "/booking?provider=doctor&mode=IN_PERSON",
+        ctaLabel: "Au Cabinet",
+        secondaryHref: "/booking?provider=doctor&mode=TELEHEALTH",
+        secondaryCtaLabel: "Appel Vidéo",
+        imageSrc: "/media/scenes/telehealth-video.webp",
+      },
+      {
+        id: "care-action-clinics",
+        category: "CARE_CENTER",
+        badgeLabel: "Cliniques",
+        badgeTone: "teal",
+        title: "Cliniques de Quartier Vérifiées Près de Vous",
+        plainHint: "Vérifiez si la clinique est ouverte avant de partir",
+        subtitle: "Ouvrir les cliniques sur la carte et voir l'itinéraire",
+        keywords:
+          "clinic poliklinik medical center urgent care appointment casablanca rabat marrakech عيادة مصحة clinique",
+        href: "/map?layer=CLINIC",
+        ctaLabel: "Voir les Cliniques",
+        imageSrc: "/media/facilities/clinic-interior.webp",
+      },
+      {
+        id: "care-action-hospitals",
+        category: "CARE_CENTER",
+        badgeLabel: "Hôpitaux",
+        badgeTone: "teal",
+        title: "Hôpitaux d'Urgence & Blocs 24/7",
+        plainHint: "Trouvez les hôpitaux ouverts jour et nuit autour de vous",
+        subtitle: "Consulter les urgences et hôpitaux sur la carte en direct",
+        keywords:
+          "hospital chu trauma emergency inpatient surgery urgent care مستشفى سبيطار طوارئ hôpital urgences",
+        href: "/map?layer=HOSPITAL",
+        ctaLabel: "Voir les Hôpitaux",
+        imageSrc: "/media/facilities/hospital-hub.webp",
+      },
+      {
+        id: "care-action-pharmacies",
+        category: "PHARMACY_LAB",
+        badgeLabel: "Pharmacie 24/7",
+        badgeTone: "amber",
+        title: "Pharmacies de Garde & Ordonnances QR",
+        plainHint: "Retrait Rx au comptoir (Loi 17-04) ou livraison parapharmacie",
+        subtitle: "Valider un QR médical au comptoir ou commander des soins OTC",
+        keywords:
+          "pharmacy garde medication refill prescription aspirin insulin antibiotics delivery صيدلية حراسة دواء pharmacie médicament",
+        href: "/pharmacy",
+        ctaLabel: "Ouvrir la Pharmacie",
+        imageSrc: "/media/facilities/pharmacy-interior.webp",
+      },
+      {
+        id: "care-action-labs",
+        category: "PHARMACY_LAB",
+        badgeLabel: "Bilans & Radios",
+        badgeTone: "slate",
+        title: "Analyses de Sang, Radiologie & Laboratoires",
+        plainHint: "Trouvez un laboratoire pour prises de sang, IRM ou radios",
+        subtitle: "Localiser les laboratoires agréés et suivre vos comptes-rendus",
+        keywords:
+          "diagnostic lab laboratory blood panel mri xray scan analysis مختبر تحاليل راديو أشعة laboratoire analyses",
+        href: "/map?layer=DIAGNOSTIC_LAB",
+        ctaLabel: "Voir les Labos",
+        imageSrc: "/media/scenes/diagnostic-imaging-lab.webp",
+      },
+    ];
+  }
+
+  return [
+    {
+      id: "care-action-ambulance",
+      category: "DRIVER",
+      badgeLabel: "Ambulance · 141",
+      badgeTone: "red",
+      title: "Emergency Ambulance & Medical Transport",
+      plainHint: "Tap to see nearest ambulances moving on the street map",
+      subtitle: "View live ambulances or trigger 1-Tap Fast Book",
+      keywords:
+        "ambulance driver 141 transport samu emergency urgent ride pickup إسعاف طوارئ urgence",
+      href: "/map?layer=DRIVER",
+      ctaLabel: "Open Live Map",
+      imageSrc: "/media/vehicles/ambulance-van.webp",
+    },
+    {
+      id: "care-action-doctors",
+      category: "DOCTOR",
+      badgeLabel: "Doctors & Home Nurses",
+      badgeTone: "emerald",
+      title: "General Practice, Heart Doctors & Home Nurses",
+      plainHint: "Book a clinic workplace visit or video call with a doctor",
+      subtitle: "Compare verified clinicians and reserve visits",
+      keywords:
+        "doctor nurse cardiology heart chest blood pressure pediatrics dermatology gp consultation home visit طبيب ممرض قلب طونسيو médecin infirmier",
+      href: "/booking?provider=doctor&mode=IN_PERSON",
+      ctaLabel: "Visit Workplace",
+      secondaryHref: "/booking?provider=doctor&mode=TELEHEALTH",
+      secondaryCtaLabel: "Video Call",
+      imageSrc: "/media/scenes/telehealth-video.webp",
+    },
+    {
+      id: "care-action-clinics",
+      category: "CARE_CENTER",
+      badgeLabel: "Clinics",
+      badgeTone: "teal",
+      title: "Verified Neighborhood Clinics Near You",
+      plainHint: "Check if the clinic is open right now before leaving home",
+      subtitle: "Open Clinics on the live map and inspect directions",
+      keywords:
+        "clinic poliklinik medical center urgent care appointment casablanca rabat marrakech عيادة مصحة clinique",
+      href: "/map?layer=CLINIC",
+      ctaLabel: "View Clinics",
+      imageSrc: "/media/facilities/clinic-interior.webp",
+    },
+    {
+      id: "care-action-hospitals",
+      category: "CARE_CENTER",
+      badgeLabel: "Hospitals",
+      badgeTone: "teal",
+      title: "24/7 Emergency Hospitals & Trauma Units",
+      plainHint: "Find nearby hospitals open day and night",
+      subtitle: "Check ER readiness and emergency hospital locations on the map",
+      keywords:
+        "hospital chu trauma emergency inpatient surgery urgent care مستشفى سبيطار طوارئ hôpital urgences",
+      href: "/map?layer=HOSPITAL",
+      ctaLabel: "View Hospitals",
+      imageSrc: "/media/facilities/hospital-hub.webp",
+    },
+    {
+      id: "care-action-pharmacies",
+      category: "PHARMACY_LAB",
+      badgeLabel: "24/7 Pharmacy",
+      badgeTone: "amber",
+      title: "Guard Pharmacies, QR Rx Pickup & OTC Care",
+      plainHint: "Redeem doctor QR prescriptions at the counter (Law 17-04) or order OTC care",
+      subtitle: "Counter QR prescription pickup & OTC parapharmacy delivery",
+      keywords:
+        "pharmacy garde medication refill prescription aspirin insulin antibiotics delivery صيدلية حراسة دواء pharmacie médicament",
+      href: "/pharmacy",
+      ctaLabel: "Open Pharmacy",
+      imageSrc: "/media/facilities/pharmacy-interior.webp",
+    },
+    {
+      id: "care-action-labs",
+      category: "PHARMACY_LAB",
+      badgeLabel: "Blood Tests & X-Rays",
+      badgeTone: "slate",
+      title: "Blood Tests, Radiology & Diagnostic Laboratories",
+      plainHint: "Find labs for blood tests, MRI, or X-ray scans nearby",
+      subtitle: "Locate accredited analytical labs and check test reports",
+      keywords:
+        "diagnostic lab laboratory blood panel mri xray scan analysis مختبر تحاليل راديو أشعة laboratoire analyses",
+      href: "/map?layer=DIAGNOSTIC_LAB",
+      ctaLabel: "View Labs",
+      imageSrc: "/media/scenes/diagnostic-imaging-lab.webp",
+    },
+  ];
+}
+
+function isNurseSpecialty(specialty: string): boolean {
+  return /nursing|infirmier|nurse/i.test(specialty);
 }
 
 /**
- * Personal Patient Care Hub uniting saved doctors/clinics, upcoming visit & transport
- * deadlines, and signed-in clinical documents/prescriptions without requiring signup
- * for browsing or local bookmarks.
+ * Plain-language visual Patient Care Hub uniting illustrated care pathways,
+ * everyday search, real provider photos, live ride tracking, and private health records.
  */
 export function PatientHubWorkspace({
   packs,
   apiBaseUrl,
 }: PatientHubWorkspaceProps) {
-  const { t } = useLocale();
-  const { openImage } = useImageLightbox();
+  const { locale, t, isRtl } = useLocale();
+  const copy = useMemo(() => getPatientUiCopy(locale), [locale]);
 
   const defaultCountry = resolveActivePack(packs)?.code ?? ACTIVE_COUNTRY_CODE;
   const [selectedCountry, setSelectedCountry] = useState<string>(defaultCountry);
   const [session, setSession] = useState<AuthResponse | null>(null);
+  const [sessionHydrated, setSessionHydrated] = useState<boolean>(false);
   const [apiOnline, setApiOnline] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
-  const [banner, setBanner] = useState<{
-    tone: "info" | "success" | "warning" | "error";
-    text: string;
-  } | null>(null);
+  const setBanner = useToastSetter();
 
   const [appointments, setAppointments] = useState<AppointmentSummary[]>([]);
   const [dispatches, setDispatches] = useState<DispatchRequestSummary[]>([]);
@@ -150,6 +410,28 @@ export function PatientHubWorkspace({
   const [mediaFiles, setMediaFiles] = useState<ClinicalMediaObjectSummary[]>(
     [],
   );
+  const [medicalProfile, setMedicalProfile] =
+    useState<PatientMedicalProfile | null>(null);
+  const [insurancePolicies, setInsurancePolicies] = useState<
+    PatientInsurancePolicy[]
+  >([]);
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchCategory, setSearchCategory] =
+    useState<PatientSearchCategory>("ALL");
+  const [specialtyFilter, setSpecialtyFilter] = useState<string>("ALL");
+  const [directoryDoctors, setDirectoryDoctors] = useState<
+    DirectoryDoctorSummary[]
+  >([]);
+  const [directoryFacilities, setDirectoryFacilities] = useState<
+    DirectoryFacilitySummary[]
+  >([]);
+  const [directoryDrivers, setDirectoryDrivers] = useState<
+    DirectoryDriverSummary[]
+  >([]);
+  const [medicalServices, setMedicalServices] = useState<
+    MedicalServiceSummary[]
+  >([]);
 
   const bookmarks = useBookmarkedProviders(selectedCountry);
   const guestPasses = useGuestActivityPasses(selectedCountry);
@@ -163,29 +445,121 @@ export function PatientHubWorkspace({
     const stored = readStoredSession();
     if (stored) {
       setSession(stored);
-      setSelectedCountry(stored.user.countryCode);
+      setSelectedCountry(resolveEffectiveCountryCode(stored.user.countryCode));
     }
+    setSessionHydrated(true);
   }, []);
 
   useEffect(() => {
+    if (!sessionHydrated) return;
     let active = true;
     async function loadPatientData() {
       const online = await checkBackendOnline();
       if (!active) return;
       setApiOnline(online);
 
-      if (!online || !session?.token) {
+      const currentVisitor = session?.user ?? null;
+      if (
+        !online ||
+        (currentVisitor && !isConsumerUserOrGuest(currentVisitor))
+      ) {
+        setDirectoryDoctors([]);
+        setDirectoryFacilities([]);
+        setDirectoryDrivers([]);
+        setMedicalServices([]);
         setAppointments([]);
         setDispatches([]);
         setVisitNotes([]);
         setPrescriptions([]);
         setLabOrders([]);
         setMediaFiles([]);
+        setMedicalProfile(null);
+        setInsurancePolicies([]);
+        return;
+      }
+
+      const [docsRes, facsRes, drvsRes, svcRes] = await Promise.all([
+        fetchDirectoryDoctors(apiBaseUrl, {
+          countryCode: selectedCountry,
+          limit: 50,
+        }),
+        fetchDirectoryFacilities(apiBaseUrl, {
+          countryCode: selectedCountry,
+          limit: 50,
+        }),
+        fetchDirectoryDrivers(apiBaseUrl, {
+          countryCode: selectedCountry,
+          limit: 50,
+        }),
+        fetchMedicalServices(apiBaseUrl, {
+          countryCode: selectedCountry,
+          limit: 50,
+        }),
+      ]);
+      if (!active) return;
+      if (docsRes.ok) setDirectoryDoctors(docsRes.doctors);
+      if (facsRes.ok) setDirectoryFacilities(facsRes.facilities);
+      if (drvsRes.ok) setDirectoryDrivers(drvsRes.drivers);
+      if (svcRes.ok) setMedicalServices(svcRes.services);
+
+      if (!session?.token) {
+        setAppointments([]);
+        setDispatches([]);
+        setVisitNotes([]);
+        setPrescriptions([]);
+        setLabOrders([]);
+        setMediaFiles([]);
+        setMedicalProfile(null);
+        setInsurancePolicies([]);
+        return;
+      }
+
+      let activeSession = session;
+      if (isPendingStaffVerification(activeSession.user)) {
+        const syncRes = await syncPendingSessionStatus(
+          apiBaseUrl,
+          activeSession,
+        );
+        if (!active) return;
+        if (syncRes.status === "expired") {
+          setSession(null);
+          return;
+        }
+        if (syncRes.status === "updated" && syncRes.session) {
+          activeSession = syncRes.session;
+          setSession(syncRes.session);
+        }
+      }
+
+      const activeUser = activeSession.user;
+      const allowAppointments = canReadAppointments(activeUser);
+      const allowDispatch = canReadDispatchFeed(activeUser);
+      const allowNotes = canReadVisitNotes(activeUser);
+      const allowRx = canReadPrescriptions(activeUser);
+      const allowLabs = canReadLabOrders(activeUser);
+      const allowEhr = canReadClinicalEhr(activeUser);
+
+      if (
+        !allowAppointments &&
+        !allowDispatch &&
+        !allowNotes &&
+        !allowRx &&
+        !allowLabs &&
+        !allowEhr
+      ) {
+        setAppointments([]);
+        setDispatches([]);
+        setVisitNotes([]);
+        setPrescriptions([]);
+        setLabOrders([]);
+        setMediaFiles([]);
+        setMedicalProfile(null);
+        setInsurancePolicies([]);
         return;
       }
 
       setLoading(true);
-      const token = session.token;
+      const token = activeSession.token;
       const [
         apptRes,
         dispatchRes,
@@ -193,30 +567,74 @@ export function PatientHubWorkspace({
         rxRes,
         labsRes,
         mediaRes,
+        profileRes,
+        insurancesRes,
       ] = await Promise.all([
-        fetchAppointments(apiBaseUrl, token, selectedCountry),
-        listDispatchRequests(apiBaseUrl, token, selectedCountry),
-        fetchVisitNotes(apiBaseUrl, token, selectedCountry),
-        fetchPrescriptions(apiBaseUrl, token, selectedCountry),
-        fetchLabOrders(apiBaseUrl, token, selectedCountry),
-        fetchClinicalMedia(apiBaseUrl, token, selectedCountry),
+        allowAppointments
+          ? fetchAppointments(apiBaseUrl, token, selectedCountry)
+          : Promise.resolve(null),
+        allowDispatch
+          ? listDispatchRequests(apiBaseUrl, token, selectedCountry)
+          : Promise.resolve(null),
+        allowNotes
+          ? fetchVisitNotes(apiBaseUrl, token, selectedCountry)
+          : Promise.resolve(null),
+        allowRx
+          ? fetchPrescriptions(apiBaseUrl, token, selectedCountry)
+          : Promise.resolve(null),
+        allowLabs
+          ? fetchLabOrders(apiBaseUrl, token, selectedCountry)
+          : Promise.resolve(null),
+        allowLabs
+          ? fetchClinicalMedia(apiBaseUrl, token, selectedCountry)
+          : Promise.resolve(null),
+        allowEhr
+          ? fetchMyPatientProfile(apiBaseUrl, token)
+          : Promise.resolve(null),
+        allowEhr
+          ? listMyPatientInsurances(apiBaseUrl, token)
+          : Promise.resolve(null),
       ]);
       if (!active) return;
       setLoading(false);
 
-      if (apptRes.ok) setAppointments(apptRes.data.appointments);
-      if (dispatchRes.ok) setDispatches(dispatchRes.data.dispatches);
-      if (notesRes.ok) setVisitNotes(notesRes.data.visitNotes);
-      if (rxRes.ok) setPrescriptions(rxRes.data.prescriptions);
-      if (labsRes.ok) setLabOrders(labsRes.data.labOrders);
-      if (mediaRes.ok) setMediaFiles(mediaRes.data.mediaObjects);
+      setAppointments(apptRes && apptRes.ok ? apptRes.data.appointments : []);
+      setDispatches(
+        dispatchRes && dispatchRes.ok ? dispatchRes.data.dispatches : [],
+      );
+      setVisitNotes(notesRes && notesRes.ok ? notesRes.data.visitNotes : []);
+      setPrescriptions(rxRes && rxRes.ok ? rxRes.data.prescriptions : []);
+      setLabOrders(labsRes && labsRes.ok ? labsRes.data.labOrders : []);
+      setMediaFiles(mediaRes && mediaRes.ok ? mediaRes.data.mediaObjects : []);
+      setMedicalProfile(
+        profileRes && profileRes.ok ? profileRes.data.profile : null,
+      );
+      setInsurancePolicies(
+        insurancesRes && insurancesRes.ok ? insurancesRes.data.policies : [],
+      );
 
-      if (!apptRes.ok && apptRes.status === 401) {
+      const hasUnauthorized = [
+        apptRes,
+        dispatchRes,
+        notesRes,
+        rxRes,
+        labsRes,
+        mediaRes,
+        profileRes,
+        insurancesRes,
+      ].some((res) => res !== null && !res.ok && res.status === 401);
+
+      if (hasUnauthorized) {
         clearStoredSession();
         setSession(null);
         setBanner({
           tone: "warning",
-          text: "Your sign-in session expired. Local bookmarks and guest passes remain saved on this device.",
+          text:
+            locale === "ar"
+              ? "انتهت صلاحية الجلسة. تبقى المفضلة وتذاكر المتابعة المحلية محفوظة على جهازك."
+              : locale === "fr"
+                ? "Votre session a expiré. Vos favoris et suivis locaux restent enregistrés sur cet appareil."
+                : "Your sign-in session expired. Local bookmarks and guest passes remain saved on this device.",
         });
       }
     }
@@ -224,529 +642,368 @@ export function PatientHubWorkspace({
     return () => {
       active = false;
     };
-  }, [apiBaseUrl, selectedCountry, session?.token]);
+  }, [apiBaseUrl, locale, selectedCountry, session, sessionHydrated, setBanner]);
 
-  const sortedAppointments = useMemo(() => {
-    return [...appointments].sort((a, b) => {
-      const aInfo = computeVisitCountdown(a.slotStartIso);
-      const bInfo = computeVisitCountdown(b.slotStartIso);
-      if (aInfo.isPast !== bInfo.isPast) {
-        return aInfo.isPast ? 1 : -1;
-      }
-      return Date.parse(a.slotStartIso) - Date.parse(b.slotStartIso);
-    });
+  const activeAppointments = useMemo(() => {
+    return appointments
+      .filter((a) => a.status !== "CANCELLED" && a.status !== "NO_SHOW")
+      .sort((a, b) => Date.parse(a.slotStartIso) - Date.parse(b.slotStartIso));
   }, [appointments]);
 
+  const activeDispatches = useMemo(
+    () =>
+      dispatches.filter(
+        (d) => d.status !== "CANCELLED" && d.status !== "COMPLETED",
+      ),
+    [dispatches],
+  );
+
+  const specialtyOptions = useMemo(
+    () =>
+      buildSpecialtyFilterOptions(
+        directoryDoctors.map((d) => d.specialty),
+        locale,
+        { includeNurse: false },
+      ),
+    [directoryDoctors, locale],
+  );
+
+  const searchableCatalog = useMemo<PatientSearchResultItem[]>(() => {
+    const items: PatientSearchResultItem[] = [];
+    const verifiedCareFallback =
+      locale === "ar"
+        ? "عيادة معتمدة"
+        : locale === "fr"
+          ? "Soins vérifiés"
+          : "Verified Care";
+    const readyNearbyFallback =
+      locale === "ar"
+        ? "متاح بالقرب منك"
+        : locale === "fr"
+          ? "Disponible à proximité"
+          : "Ready nearby";
+
+    for (const doc of directoryDoctors) {
+      const isNurse = isNurseSpecialty(doc.specialty);
+      const specLabel = isNurse
+        ? copy.requestNurseLabel
+        : formatSpecialtyLabel(doc.specialty, locale);
+      const plainSpec = formatPlainSpecialty(doc.specialty, locale);
+      items.push({
+        id: `doc-${doc.id}`,
+        category: "DOCTOR",
+        badgeLabel: specLabel,
+        badgeTone: "emerald",
+        title: doc.fullName,
+        plainHint: `${plainSpec} · ${doc.facilityName ?? verifiedCareFallback}`,
+        subtitle: `${specLabel} · ${doc.facilityName ?? verifiedCareFallback}`,
+        keywords: `${doc.fullName} ${doc.specialty} ${specLabel} ${plainSpec} ${getSpecialtyKeywords(doc.specialty)} ${doc.facilityName ?? ""} ${doc.facilityCity ?? ""} ${expandMoroccanCityKeywords(doc.facilityCity)} doctor nurse`,
+        specialty: doc.specialty,
+        href: isNurse
+          ? `/booking?doctorId=${encodeURIComponent(doc.id)}&provider=nurse`
+          : `/booking?doctorId=${encodeURIComponent(doc.id)}&mode=IN_PERSON`,
+        ctaLabel: isNurse ? copy.requestNurseLabel : copy.visitWorkplaceLabel,
+        ...(!isNurse && doc.telehealthEnabled
+          ? {
+              secondaryHref: `/booking?doctorId=${encodeURIComponent(doc.id)}&mode=TELEHEALTH`,
+              secondaryCtaLabel: copy.videoCallLabel,
+            }
+          : {}),
+        imageSrc: doc.avatarUrl ?? "/media/avatars/doctor-female.webp",
+        avatarName: doc.fullName,
+        avatarRole: "DOCTOR",
+        avatarSpecialty: doc.specialty,
+      });
+    }
+
+    for (const drv of directoryDrivers) {
+      items.push({
+        id: `drv-${drv.id}`,
+        category: "DRIVER",
+        badgeLabel:
+          drv.vehicleType === "AMBULANCE"
+            ? locale === "ar"
+              ? "إسعاف · 141"
+              : "Ambulance · 141"
+            : locale === "ar"
+              ? "نقل طبي"
+              : locale === "fr"
+                ? "Transport Médical"
+                : "Medical Ride",
+        badgeTone: "red",
+        title: `${drv.fullName} · ${drv.vehicleLabel}`,
+        plainHint: `${drv.serviceZone} · ${drv.facilityName ?? readyNearbyFallback}`,
+        subtitle: drv.serviceZone,
+        keywords: `${drv.fullName} ${drv.vehicleLabel} ${drv.serviceZone} ${drv.facilityCity ?? ""} ${expandMoroccanCityKeywords(drv.facilityCity)} ${drv.vehicleType} ambulance driver 141`,
+        href: "/map?layer=DRIVER",
+        ctaLabel: copy.seeOnMapLabel,
+        imageSrc: resolveVehiclePicture(drv.vehicleType),
+      });
+    }
+
+    for (const fac of directoryFacilities) {
+      const isPharmLab =
+        fac.kind === "PHARMACY" || fac.kind === "DIAGNOSTIC_LAB";
+      items.push({
+        id: `fac-${fac.id}`,
+        category: isPharmLab ? "PHARMACY_LAB" : "CARE_CENTER",
+        badgeLabel: formatFacilityKind(fac.kind, locale),
+        badgeTone: fac.kind === "PHARMACY" ? "amber" : "teal",
+        title: fac.name,
+        plainHint: `${fac.address} · ${fac.acceptedInsurances.join(", ")}`,
+        subtitle: fac.address,
+        keywords: `${fac.name} ${fac.kind} ${formatFacilityKind(fac.kind, locale)} ${fac.address} ${fac.city ?? ""} ${expandMoroccanCityKeywords(fac.city)} ${fac.acceptedInsurances.join(" ")} lab pharmacy hospital clinic`,
+        href:
+          fac.kind === "PHARMACY"
+            ? `/pharmacy?facilityId=${encodeURIComponent(fac.id)}`
+            : `/map?layer=${encodeURIComponent(fac.kind)}&facilityId=${encodeURIComponent(fac.id)}`,
+        ctaLabel:
+          fac.kind === "PHARMACY" ? copy.openPharmacyLabel : copy.seeOnMapLabel,
+        imageSrc: resolveFacilityPicture(fac.kind),
+      });
+    }
+
+    for (const svc of medicalServices) {
+      const cat: Exclude<PatientSearchCategory, "ALL"> =
+        svc.category === "AMBULANCE"
+          ? "DRIVER"
+          : svc.category === "PHARMACY_SERVICE" ||
+              svc.category === "LAB_TEST" ||
+              svc.category === "IMAGING"
+            ? "PHARMACY_LAB"
+            : svc.category === "HOME_CARE"
+              ? "DOCTOR"
+              : "CARE_CENTER";
+      items.push({
+        id: `svc-${svc.id}`,
+        category: cat,
+        badgeLabel: svc.specialty
+          ? formatSpecialtyLabel(svc.specialty, locale)
+          : svc.category.replace("_", " "),
+        badgeTone: svc.category === "AMBULANCE" ? "red" : "teal",
+        title: svc.name,
+        plainHint: `${svc.facilityName} · ${svc.durationMinutes} min`,
+        subtitle: svc.facilityName,
+        keywords: `${svc.name} ${svc.facilityName} ${svc.specialty ?? ""} ${svc.specialty ? getSpecialtyKeywords(svc.specialty) : ""} ${svc.description ?? ""} ${svc.category}`,
+        ...(svc.specialty ? { specialty: svc.specialty } : {}),
+        href:
+          svc.category === "AMBULANCE"
+            ? "/map?layer=DRIVER"
+            : `/booking?facilityId=${encodeURIComponent(svc.facilityId)}`,
+        ctaLabel:
+          svc.category === "AMBULANCE" ? copy.seeOnMapLabel : copy.bookNowLabel,
+        imageSrc:
+          svc.category === "AMBULANCE"
+            ? "/media/vehicles/ambulance-van.webp"
+            : "/media/scenes/diagnostic-imaging-lab.webp",
+      });
+    }
+
+    return [...buildStaticCareResults(locale), ...items];
+  }, [
+    copy.bookNowLabel,
+    copy.openPharmacyLabel,
+    copy.requestNurseLabel,
+    copy.seeOnMapLabel,
+    copy.videoCallLabel,
+    copy.visitWorkplaceLabel,
+    directoryDoctors,
+    directoryDrivers,
+    directoryFacilities,
+    locale,
+    medicalServices,
+  ]);
+
+  const normalizedQuery = normalizeCityText(searchQuery);
+  const isSearchActive =
+    normalizedQuery.length > 0 ||
+    searchCategory !== "ALL" ||
+    specialtyFilter !== "ALL";
+
+  const filteredSearchResults = useMemo(() => {
+    if (!isSearchActive) return [];
+    const tokens = normalizedQuery.split(/\s+/).filter(Boolean);
+    return searchableCatalog
+      .filter((item) => {
+        if (searchCategory !== "ALL" && item.category !== searchCategory) {
+          return false;
+        }
+        if (specialtyFilter !== "ALL") {
+          if (
+            !item.specialty ||
+            !matchesDoctorSpecialtyFilter(item.specialty, specialtyFilter)
+          ) {
+            return false;
+          }
+        }
+        if (tokens.length === 0) return true;
+        const haystack = normalizeCityText(
+          `${item.title} ${item.plainHint} ${item.subtitle} ${item.badgeLabel} ${item.keywords}`,
+        );
+        return tokens.every((tok) => haystack.includes(tok));
+      })
+      .slice(0, 8);
+  }, [
+    isSearchActive,
+    normalizedQuery,
+    searchCategory,
+    searchableCatalog,
+    specialtyFilter,
+  ]);
+
   function handleSignOut() {
-    clearStoredSession();
+    revokeClientSession(apiBaseUrl);
     setSession(null);
     setBanner({
       tone: "info",
-      text: "Signed out cleanly. Your saved doctors and local guest passes remain stored in this browser.",
+      text: copy.signedOutNotice,
     });
   }
 
+  const isBlockedStaffVisitor =
+    sessionHydrated &&
+    Boolean(session?.user) &&
+    !isConsumerUserOrGuest(session?.user);
+
+  const hotline = activePack?.emergencyHotlines.ambulance ?? "141";
+  const displayCountryName = formatCountryDisplayName(
+    selectedCountry,
+    activePack?.name ?? selectedCountry,
+    locale,
+  );
+
   return (
-    <div className="space-y-6">
-      {/* Top Hero & Region Bar */}
-      <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <p className="inline-flex items-center gap-1.5 font-mono-tabular text-xs font-semibold uppercase tracking-wider text-teal-800">
-              <HeartHandshake className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>{t("patient.eyebrow")}</span>
-            </p>
-            <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">
-              {t("patient.heading")}
-            </h1>
-            <p className="mt-1 max-w-3xl text-sm text-slate-600">
-              {t("patient.subtitle")}
-            </p>
-          </div>
+    <div dir={isRtl ? "rtl" : "ltr"} className="space-y-5">
+      <WorkspaceHeader
+        title={t("patient.heading")}
+        countryCode={selectedCountry}
+        countryName={displayCountryName}
+        currencyCode={activePack?.currencyCode ?? selectedCountry}
+        emergencyHotline={hotline}
+        user={session?.user ?? null}
+        guestLabel={copy.guestLabel}
+        onSignOut={handleSignOut}
+        actions={
+          isBlockedStaffVisitor ? null : (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Link
+                href="/map?fastBook=1"
+                className="inline-flex h-10 items-center gap-1.5 rounded-xl bg-[#0066CC] px-4 text-xs font-semibold text-white shadow-2xs transition hover:bg-[#0052A3]"
+              >
+                <Ambulance className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>{copy.fastBookHeaderCta}</span>
+              </Link>
+              <Link
+                href="/booking"
+                className="hidden h-10 items-center rounded-xl bg-[#F3F8FD] border border-[#D7E4F2] px-4 text-xs font-semibold text-slate-800 transition hover:bg-[#E1EBF2] hover:text-[#0066CC] sm:inline-flex"
+              >
+                {copy.reserveHeaderCta}
+              </Link>
+            </div>
+          )
+        }
+      />
 
-          <div className="flex flex-wrap gap-2">
-            <Link href="/map">
-              <UiButton size="sm">1-Tap Fast Book Ride</UiButton>
-            </Link>
-            <Link href="/booking">
-              <UiButton size="sm" variant="secondary">
-                Reserve Visit Slot
-              </UiButton>
-            </Link>
-          </div>
-        </div>
+      <ConsumerWorkspaceGuard
+        user={session?.user ?? null}
+        hydrated={sessionHydrated}
+        surfaceTitle={t("patient.heading")}
+        onSignOut={handleSignOut}
+      >
+        <VerificationGateNotice user={session?.user} compact />
 
-        <ActiveRegionPill
-          code={selectedCountry}
-          name={activePack?.name ?? "Morocco"}
-          currencyCode={activePack?.currencyCode}
-          emergencyHotline={activePack?.emergencyHotlines.ambulance}
+        {/* Wrap-safe Page Menu without misleading /map highlight or clipped pills */}
+        <nav
+          aria-label="Patient homepage menu"
+          className="flex flex-wrap items-center gap-1.5"
+        >
+          {copy.navItems.map((item) => {
+            const isMapLink = item.href.startsWith("/map");
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`inline-flex h-9 items-center gap-1.5 rounded-xl px-3.5 text-xs font-semibold transition-colors ${
+                  item.isCurrent
+                    ? "bg-[#0066CC] text-white"
+                    : "bg-slate-100/90 text-slate-700 hover:bg-emerald-50 hover:text-[#0066CC]"
+                }`}
+              >
+                {item.isCurrent ? (
+                  <Compass className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                ) : isMapLink ? (
+                  <MapPin className="h-3.5 w-3.5 shrink-0 text-[#0066CC]" aria-hidden="true" />
+                ) : null}
+                <span>{item.label}</span>
+              </Link>
+            );
+          })}
+        </nav>
+
+        {/* 1. Visual "What Do You Need Today?" Picture Guide */}
+        <CareGuideGrid copy={copy} emergencyHotline={hotline} />
+
+        {/* 2. Plain-Language Universal Search */}
+        <PatientSearchSection
+          copy={copy}
+          searchQuery={searchQuery}
+          onSearchQueryChange={setSearchQuery}
+          searchCategory={searchCategory}
+          onSearchCategoryChange={setSearchCategory}
+          specialtyFilter={specialtyFilter}
+          onSpecialtyFilterChange={setSpecialtyFilter}
+          specialtyOptions={specialtyOptions}
+          isSearchActive={isSearchActive}
+          filteredResults={filteredSearchResults}
         />
 
-        <SessionAccountBar
+        {/* 3. Real Nearby Doctors, Nurses & Open Places */}
+        <NearbyCareStrip
+          copy={copy}
+          locale={locale}
+          doctors={directoryDoctors}
+          facilities={directoryFacilities}
+        />
+
+        {/* 4. Upcoming Visits, Live Rides & Saved Team */}
+        <PatientActivitySection
+          copy={copy}
+          activeAppointments={activeAppointments}
+          activeDispatches={activeDispatches}
+          guestPasses={guestPasses}
+          bookmarks={bookmarks}
+        />
+
+        {/* 5. Personal Health Folder */}
+        <PatientHealthFolderSection
+          copy={copy}
+          locale={locale}
           session={session}
-          onSignOut={handleSignOut}
-          prompt="Using Guest Care Mode: save doctors, view visit passes, and fast-book rides without an account. Sign in to unlock private clinical records."
+          apiOnline={apiOnline}
+          loading={loading}
+          prescriptions={prescriptions}
+          mediaFiles={mediaFiles}
+          visitNotes={visitNotes}
+          labOrders={labOrders}
         />
 
-        {banner ? (
-          <StatusBanner tone={banner.tone} message={banner.text} />
-        ) : null}
-      </section>
-
-      {/* Photo-First Care Action Tiles for Any Literacy Level */}
-      <section aria-label="Quick Care Access">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {QUICK_CARE_TILES.map((tile) => (
-            <Link
-              key={tile.href}
-              href={tile.href}
-              className="group flex items-center gap-3.5 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-xs transition-all hover:border-teal-700 hover:bg-teal-50/30 active:scale-[0.99]"
-            >
-              <img
-                src={tile.imageSrc}
-                alt=""
-                className="h-12 w-12 shrink-0 rounded-xl border border-slate-200 object-cover"
-              />
-              <div className="min-w-0">
-                <p className="truncate text-sm font-bold text-slate-900 group-hover:text-teal-900">
-                  {tile.title}
-                </p>
-                <p className="truncate text-xs text-slate-600">
-                  {tile.caption}
-                </p>
-              </div>
-            </Link>
-          ))}
-        </div>
-      </section>
-
-      {/* Saved Doctors / Facilities + Visit Deadlines */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-        {/* Bookmarked Doctors, Nurses & Centers */}
-        <section className="min-w-0 space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs lg:col-span-6">
-          <div className="flex items-center justify-between gap-2 border-b border-slate-200 pb-3">
-            <div className="flex items-center gap-2">
-              <BookmarkCheck
-                className="h-4 w-4 text-amber-600"
-                aria-hidden="true"
-              />
-              <h2 className="text-base font-bold text-slate-900">
-                Saved Doctors, Nurses & Centers
-              </h2>
-            </div>
-            <UiBadge tone="amber">{bookmarks.length} saved</UiBadge>
-          </div>
-
-          {bookmarks.length === 0 ? (
-            <div className="space-y-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-5 text-center">
-              <p className="text-xs font-semibold text-slate-800">
-                No providers bookmarked in {selectedCountry} yet.
-              </p>
-              <p className="text-xs text-slate-600">
-                Tap the Save button on any doctor, home nurse, clinic, or pharmacy card to pin them here for quick rebooking.
-              </p>
-              <div className="flex flex-wrap justify-center gap-2 pt-1">
-                <Link href="/profiles">
-                  <UiButton size="sm">Browse Public Profiles</UiButton>
-                </Link>
-                <Link href="/map">
-                  <UiButton size="sm" variant="secondary">
-                    Explore Live Map
-                  </UiButton>
-                </Link>
-              </div>
-            </div>
-          ) : (
-            <ul className="space-y-3">
-              {bookmarks.map((item) => (
-                <li
-                  key={item.id}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3.5"
-                >
-                  <div className="flex min-w-0 items-center gap-3">
-                    <EntityAvatar
-                      name={item.title}
-                      role={resolveBookmarkAvatarRole(item.kind)}
-                      subtitle={item.subtitle}
-                      size="sm"
-                    />
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <p className="truncate text-sm font-bold text-slate-900">
-                          <bdi dir="auto">{item.title}</bdi>
-                        </p>
-                        <UiBadge tone="slate">{item.kind}</UiBadge>
-                      </div>
-                      <p className="mt-0.5 truncate text-xs text-slate-600">
-                        <bdi dir="auto">{item.subtitle}</bdi>
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex shrink-0 flex-wrap items-center gap-2">
-                    <Link href={item.href}>
-                      <UiButton size="sm">Open</UiButton>
-                    </Link>
-                    <BookmarkButton
-                      compact
-                      entry={{
-                        id: item.id,
-                        kind: item.kind,
-                        countryCode: item.countryCode,
-                        title: item.title,
-                        subtitle: item.subtitle,
-                        ...(item.facilityId ? { facilityId: item.facilityId } : {}),
-                        ...(item.facilityName
-                          ? { facilityName: item.facilityName }
-                          : {}),
-                        href: item.href,
-                      }}
-                    />
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        {/* Visit Deadlines & Active Ride Passes */}
-        <section className="min-w-0 space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs lg:col-span-6">
-          <div className="flex items-center justify-between gap-2 border-b border-slate-200 pb-3">
-            <div className="flex items-center gap-2">
-              <CalendarClock
-                className="h-4 w-4 text-teal-800"
-                aria-hidden="true"
-              />
-              <h2 className="text-base font-bold text-slate-900">
-                Upcoming Visit Deadlines & Rides
-              </h2>
-            </div>
-            <UiBadge tone="teal">
-              {sortedAppointments.length + dispatches.length + guestPasses.length}{" "}
-              tracked
-            </UiBadge>
-          </div>
-
-          {sortedAppointments.length === 0 &&
-          dispatches.length === 0 &&
-          guestPasses.length === 0 ? (
-            <div className="space-y-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-5 text-center">
-              <p className="text-xs font-semibold text-slate-800">
-                No active visits or ride alerts in {selectedCountry}.
-              </p>
-              <p className="text-xs text-slate-600">
-                Reserve a time window with a specialist or trigger a 1-Tap Fast Book pickup from the map.
-              </p>
-              <div className="flex flex-wrap justify-center gap-2 pt-1">
-                <Link href="/booking">
-                  <UiButton size="sm">Reserve Visit</UiButton>
-                </Link>
-                <Link href="/map">
-                  <UiButton size="sm" variant="secondary">
-                    1-Tap Fast Book
-                  </UiButton>
-                </Link>
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {/* Confirmed Appointments with Time-Remaining Countdown */}
-              {sortedAppointments.map((appt) => {
-                const countdown = computeVisitCountdown(appt.slotStartIso);
-                return (
-                  <div
-                    key={appt.id}
-                    className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 text-xs"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="font-mono-tabular font-bold text-slate-900">
-                        {appt.slotStartIso.slice(0, 16).replace("T", " ")}
-                      </span>
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <UiBadge tone={COUNTDOWN_BADGE_TONE[countdown.tone]}>
-                          {countdown.label}
-                        </UiBadge>
-                        <UiBadge tone="slate">{appt.status}</UiBadge>
-                      </div>
-                    </div>
-                    <p className="mt-1.5 font-semibold text-slate-900">
-                      <bdi dir="auto">{appt.doctorName}</bdi> ·{" "}
-                      <bdi dir="auto">{appt.facilityName}</bdi>
-                    </p>
-                    <p className="mt-0.5 text-slate-600">
-                      {formatVisitMode(appt.visitMode)}
-                      {appt.reason ? ` · ${appt.reason}` : ""}
-                    </p>
-                  </div>
-                );
-              })}
-
-              {/* Real-Time Backend Dispatch Alerts */}
-              {dispatches.map((ride) => (
-                <div
-                  key={ride.id}
-                  className="rounded-xl border border-teal-200 bg-teal-50/40 p-3.5 text-xs"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="inline-flex items-center gap-1.5 font-bold text-slate-900">
-                      <Ambulance
-                        className="h-3.5 w-3.5 text-teal-800"
-                        aria-hidden="true"
-                      />
-                      <span>Medical Pickup Request</span>
-                    </span>
-                    <UiBadge tone="teal">
-                      {formatDispatchStatus(ride.status)}
-                    </UiBadge>
-                  </div>
-                  <p className="mt-1 text-slate-700">
-                    <bdi dir="auto">{ride.pickupAddress}</bdi>
-                  </p>
-                </div>
-              ))}
-
-              {/* Guest Local Passes (Offline / No-Account Mode) */}
-              {guestPasses.map((pass) => {
-                const countdown = computeVisitCountdown(pass.scheduledAtIso);
-                return (
-                  <div
-                    key={pass.id}
-                    className="rounded-xl border border-amber-200 bg-amber-50/50 p-3.5 text-xs"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="font-bold text-slate-900">
-                        {pass.title} ·{" "}
-                        <span className="font-mono-tabular text-amber-900">
-                          {pass.trackingCode}
-                        </span>
-                      </span>
-                      <div className="flex items-center gap-1.5">
-                        <UiBadge tone={COUNTDOWN_BADGE_TONE[countdown.tone]}>
-                          {pass.statusLabel}
-                        </UiBadge>
-                        <button
-                          type="button"
-                          onClick={() => removeGuestActivityPass(pass.id)}
-                          aria-label={`Remove tracking pass ${pass.trackingCode}`}
-                          className="rounded p-1 text-slate-500 hover:bg-white hover:text-red-700"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                        </button>
-                      </div>
-                    </div>
-                    <p className="mt-1 text-slate-700">
-                      <bdi dir="auto">{pass.landmarkOrFacility}</bdi>
-                      {pass.phoneContact ? ` · ${pass.phoneContact}` : ""}
-                    </p>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </section>
-      </div>
-
-      {/* Doctor-Shared Documents, Lab Results, Notes & QR Prescriptions */}
-      <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-3">
-          <div className="flex items-center gap-2">
-            <FileText className="h-4 w-4 text-teal-800" aria-hidden="true" />
-            <h2 className="text-base font-bold text-slate-900">
-              Doctor Documents, Visit Notes, Labs & QR Prescriptions
-            </h2>
-          </div>
-          {session ? (
-            <UiBadge tone="emerald">
-              Encrypted Access · {session.user.fullName}
-            </UiBadge>
-          ) : (
-            <UiBadge tone="slate">Sign-In Required for Private Records</UiBadge>
-          )}
-        </div>
-
-        {!session ? (
-          <div className="flex flex-col items-start justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-5 sm:flex-row sm:items-center">
-            <div className="flex items-start gap-3">
-              <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-teal-800">
-                <Lock className="h-5 w-5" aria-hidden="true" />
-              </span>
-              <div className="space-y-1">
-                <p className="text-sm font-bold text-slate-900">
-                  Your private clinical documents stay protected
-                </p>
-                <p className="max-w-2xl text-xs text-slate-600">
-                  Browsing the map, fast-booking drivers, and saving doctors work without an account. Sign in on the Care Portal whenever you want to inspect doctor consultation notes, lab PDFs, imaging scans, and scannable QR prescriptions.
-                </p>
-              </div>
-            </div>
-            <Link href="/portal" className="shrink-0">
-              <UiButton size="sm">Unlock Clinical Documents</UiButton>
-            </Link>
-          </div>
-        ) : !apiOnline ? (
-          <StatusBanner
-            tone="warning"
-            message="Care backend is currently offline. Connect the local API service to load synced consultation notes and laboratory files."
+        {/* 6. Emergency Safety Card & Health Insurance */}
+        {session && apiOnline && canReadClinicalEhr(session.user) ? (
+          <PatientSafetySection
+            key={medicalProfile?.updatedAtIso ?? session.user.id}
+            copy={copy}
+            locale={locale}
+            apiBaseUrl={apiBaseUrl}
+            token={session.token}
+            medicalProfile={medicalProfile}
+            insurancePolicies={insurancePolicies}
+            onProfileUpdated={setMedicalProfile}
+            onPolicyAdded={(policy) =>
+              setInsurancePolicies((prev) => [policy, ...prev])
+            }
           />
-        ) : loading ? (
-          <p className="text-xs font-medium text-slate-600">
-            Loading consultation notes, prescriptions, lab orders, and shared documents...
-          </p>
-        ) : (
-          <div className="grid gap-5 lg:grid-cols-2">
-            {/* Prescriptions + Shared Scans */}
-            <div className="space-y-3">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                Digital QR Prescriptions ({prescriptions.length})
-              </h3>
-              {prescriptions.length === 0 ? (
-                <p className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 text-xs text-slate-600">
-                  No prescriptions recorded in {selectedCountry} yet.
-                </p>
-              ) : (
-                <div className="space-y-2.5">
-                  {prescriptions.map((rx) => (
-                    <QrPrescriptionCard key={rx.id} prescription={rx} />
-                  ))}
-                </div>
-              )}
-
-              <h3 className="pt-2 text-xs font-bold uppercase tracking-wider text-slate-500">
-                Uploaded Lab Reports & Medical Scans ({mediaFiles.length})
-              </h3>
-              {mediaFiles.length === 0 ? (
-                <p className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 text-xs text-slate-600">
-                  No imaging scans or PDF reports uploaded for this region.
-                </p>
-              ) : (
-                <ul className="space-y-2">
-                  {mediaFiles.map((file) => (
-                    <li
-                      key={file.id}
-                      className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate font-bold text-slate-900">
-                          <bdi dir="auto">{file.fileName}</bdi>
-                        </p>
-                        <p className="text-slate-600">
-                          {formatClinicalFileType(file.mimeType)} ·{" "}
-                          {file.createdAtIso.slice(0, 10)}
-                        </p>
-                      </div>
-                      {file.downloadUrl && file.mimeType.startsWith("image/") ? (
-                        <UiButton
-                          size="sm"
-                          variant="secondary"
-                          onClick={() =>
-                            openImage({
-                              src: file.downloadUrl!,
-                              downloadUrl: file.downloadUrl,
-                              mimeType: file.mimeType,
-                              alt: file.fileName,
-                              title: file.fileName,
-                              subtitle: formatClinicalFileType(file.mimeType),
-                            })
-                          }
-                        >
-                          Inspect Photo
-                        </UiButton>
-                      ) : file.downloadUrl ? (
-                        <a
-                          href={file.downloadUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex min-h-[34px] items-center rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 hover:border-teal-700"
-                        >
-                          Open Document
-                        </a>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
-            {/* Doctor Consultation Notes + Lab Orders */}
-            <div className="space-y-3">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                Consultation Notes ({visitNotes.length})
-              </h3>
-              {visitNotes.length === 0 ? (
-                <p className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 text-xs text-slate-600">
-                  No doctor visit notes found in {selectedCountry}.
-                </p>
-              ) : (
-                <ul className="space-y-2">
-                  {visitNotes.map((note) => (
-                    <li
-                      key={note.id}
-                      className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 text-xs"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-bold text-slate-900">
-                          <bdi dir="auto">{note.doctorName}</bdi>{" "}
-                          {note.icd10Codes.length > 0 ? (
-                            <span className="font-mono-tabular font-normal text-teal-800">
-                              ({note.icd10Codes.join(", ")})
-                            </span>
-                          ) : null}
-                        </span>
-                        <span className="font-mono-tabular text-[11px] text-slate-500">
-                          {note.createdAtIso.slice(0, 10)}
-                        </span>
-                      </div>
-                      <p className="mt-1 text-slate-700">
-                        <strong className="font-semibold text-slate-900">Assessment:</strong>{" "}
-                        <bdi dir="auto">{note.assessment}</bdi>
-                      </p>
-                      <p className="mt-1 text-slate-600">
-                        <strong className="font-semibold text-slate-900">Plan:</strong>{" "}
-                        <bdi dir="auto">{note.plan}</bdi>
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              <h3 className="pt-2 text-xs font-bold uppercase tracking-wider text-slate-500">
-                Diagnostic Lab Orders ({labOrders.length})
-              </h3>
-              {labOrders.length === 0 ? (
-                <p className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 text-xs text-slate-600">
-                  No active diagnostic lab orders in {selectedCountry}.
-                </p>
-              ) : (
-                <ul className="space-y-2">
-                  {labOrders.map((lab) => (
-                    <li
-                      key={lab.id}
-                      className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs"
-                    >
-                      <div className="flex min-w-0 items-center gap-2">
-                        <FlaskConical
-                          className="h-4 w-4 shrink-0 text-teal-800"
-                          aria-hidden="true"
-                        />
-                        <div className="min-w-0">
-                          <p className="truncate font-bold text-slate-900">
-                            <bdi dir="auto">{lab.panelName}</bdi>
-                          </p>
-                          <p className="truncate text-slate-600">
-                            {lab.urgency} · {lab.createdAtIso.slice(0, 10)}
-                          </p>
-                        </div>
-                      </div>
-                      <UiBadge tone="teal">{lab.status}</UiBadge>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-        )}
-      </section>
+        ) : null}
+      </ConsumerWorkspaceGuard>
     </div>
   );
 }

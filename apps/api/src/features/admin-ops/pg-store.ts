@@ -29,6 +29,7 @@ import {
   invalidateUserAuthCache,
   type AuthTokenClaims,
 } from "../foundation/index.js";
+import { findActiveDriverDispatchId } from "../maps-dispatch/index.js";
 import {
   createSigV4PresignedUrl,
   type S3PresignConfig,
@@ -167,6 +168,7 @@ export async function listAuditEventsFiltered(
        action,
        resource_type AS "resourceType",
        resource_id::text AS "resourceId",
+       metadata,
        to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "occurredAtIso"
      FROM audit_logs
      WHERE ($1::text IS NULL OR country_code = $1)
@@ -195,14 +197,41 @@ export async function getAdminOverview(
   const [countsRes, recentAuditLogs] = await Promise.all([
     pool.query(
       `SELECT
-         (SELECT COUNT(*)::int FROM users WHERE ($1::text IS NULL OR country_code = $1)) AS "totalUsers",
-         (SELECT COUNT(*)::int FROM facilities WHERE ($1::text IS NULL OR country_code = $1)) AS "totalFacilities",
-         (SELECT COUNT(*)::int FROM facilities WHERE ($1::text IS NULL OR country_code = $1) AND verification_status = 'PENDING_REVIEW') AS "pendingVerificationFacilities",
-         (SELECT COUNT(*)::int FROM dispatch_requests WHERE ($1::text IS NULL OR country_code = $1) AND status NOT IN ('COMPLETED', 'CANCELLED')) AS "activeDispatches",
+         u_stats."totalUsers",
+         u_stats."pendingVerificationUsers",
+         u_stats."totalNurses",
+         f_stats."totalFacilities",
+         f_stats."pendingVerificationFacilities",
+         (
+           (SELECT COUNT(*)::int FROM facility_media_documents WHERE ($1::text IS NULL OR country_code = $1) AND upload_status = 'UPLOADED' AND review_status = 'PENDING_REVIEW') +
+           (SELECT COUNT(*)::int FROM user_media_documents WHERE ($1::text IS NULL OR country_code = $1) AND upload_status = 'UPLOADED' AND review_status = 'PENDING_REVIEW')
+         ) AS "pendingReviewDocuments",
+         d_stats."activeDispatches",
+         d_stats."completedDispatches",
          (SELECT COUNT(*)::int FROM appointments WHERE ($1::text IS NULL OR country_code = $1) AND status IN ('CONFIRMED', 'CHECKED_IN')) AS "activeAppointments",
          (SELECT COUNT(*)::int FROM prescriptions WHERE ($1::text IS NULL OR country_code = $1) AND status = 'ISSUED') AS "openPrescriptions",
          (SELECT COUNT(*)::int FROM lab_orders WHERE ($1::text IS NULL OR country_code = $1) AND status IN ('ORDERED', 'SAMPLE_COLLECTED')) AS "pendingLabOrders",
-         (SELECT COUNT(*)::int FROM platform_disputes WHERE ($1::text IS NULL OR country_code = $1) AND status IN ('OPEN', 'UNDER_REVIEW')) AS "openDisputes"`,
+         p_stats."totalPharmacyOrders",
+         p_stats."pharmacyRevenueMinor",
+         (SELECT COUNT(*)::int FROM platform_disputes WHERE ($1::text IS NULL OR country_code = $1) AND status IN ('OPEN', 'UNDER_REVIEW')) AS "openDisputes"
+       FROM
+         (SELECT
+            COUNT(*)::int AS "totalUsers",
+            COUNT(*) FILTER (WHERE account_status = 'PENDING_APPROVAL' OR (role IN ('DOCTOR', 'NURSE', 'CLINIC_STAFF', 'HOSPITAL_ADMIN', 'DRIVER', 'PHARMACIST', 'LAB_TECH') AND credential_verified = FALSE))::int AS "pendingVerificationUsers",
+            COUNT(*) FILTER (WHERE role = 'NURSE')::int AS "totalNurses"
+          FROM users WHERE ($1::text IS NULL OR country_code = $1)) u_stats,
+         (SELECT
+            COUNT(*)::int AS "totalFacilities",
+            COUNT(*) FILTER (WHERE verification_status = 'PENDING_REVIEW')::int AS "pendingVerificationFacilities"
+          FROM facilities WHERE ($1::text IS NULL OR country_code = $1)) f_stats,
+         (SELECT
+            COUNT(*) FILTER (WHERE status NOT IN ('COMPLETED', 'CANCELLED'))::int AS "activeDispatches",
+            COUNT(*) FILTER (WHERE status = 'COMPLETED')::int AS "completedDispatches"
+          FROM dispatch_requests WHERE ($1::text IS NULL OR country_code = $1)) d_stats,
+         (SELECT
+            COUNT(*) FILTER (WHERE status <> 'CANCELLED')::int AS "totalPharmacyOrders",
+            COALESCE(SUM(total_minor) FILTER (WHERE status IN ('PAID', 'PREPARING', 'OUT_FOR_DELIVERY', 'DELIVERED')), 0)::bigint AS "pharmacyRevenueMinor"
+          FROM pharmacy_orders WHERE ($1::text IS NULL OR country_code = $1)) p_stats`,
       [effectiveCountry],
     ),
     listAuditEventsFiltered(pool, actor, {
@@ -212,9 +241,15 @@ export async function getAdminOverview(
   ]);
 
   const countsRow = countsRes.rows[0] as Record<string, unknown> | undefined;
+  const normalizedCounts = countsRow
+    ? {
+        ...countsRow,
+        pharmacyRevenueMinor: Number(countsRow.pharmacyRevenueMinor ?? 0),
+      }
+    : {};
   return AdminOverviewMetricsSchema.parse({
     countryCode: effectiveCountry,
-    ...(countsRow ?? {}),
+    ...normalizedCounts,
     recentAuditLogs,
   });
 }
@@ -253,14 +288,24 @@ export async function listUsersAdmin(
      WHERE ($1::text IS NULL OR country_code = $1)
        AND ($2::text IS NULL OR role = $2)
        AND ($3::text IS NULL OR account_status = $3)
-       AND ($4::text IS NULL OR full_name ILIKE $4 OR email ILIKE $4)
+       AND ($4::text IS NULL OR full_name ILIKE $4 OR email ILIKE $4 OR COALESCE(phone, '') ILIKE $4)
+       AND ($5::uuid IS NULL OR facility_id = $5)
+       AND ($6::boolean IS NOT TRUE OR (
+         account_status = 'PENDING_APPROVAL'
+         OR (
+           role IN ('DOCTOR', 'NURSE', 'CLINIC_STAFF', 'HOSPITAL_ADMIN', 'DRIVER', 'PHARMACIST', 'LAB_TECH')
+           AND credential_verified = FALSE
+         )
+       ))
      ORDER BY created_at DESC
-     LIMIT $5`,
+     LIMIT $7`,
     [
       effectiveCountry,
       query.role ?? null,
       query.accountStatus ?? null,
       qPattern,
+      query.facilityId ?? null,
+      Boolean(query.pendingVerification),
       query.limit,
     ],
   );
@@ -458,12 +503,33 @@ export async function updateUserStatusAdmin(
     const existingUser = AuthenticatedUserSchema.parse(
       withUserAvatarUrl(existingRes.rows[0] as Record<string, unknown>, s3Config),
     );
-    const shouldBumpVersion = input.accountStatus === "SUSPENDED";
+    const shouldBumpVersion =
+      input.accountStatus !== "ACTIVE" || input.credentialVerified === false;
+
+    const hasFacilityUpdate = input.facilityId !== undefined;
+    if (hasFacilityUpdate && input.facilityId !== null) {
+      const facRes = await client.query<{ countryCode: string }>(
+        `SELECT country_code AS "countryCode"
+         FROM facilities
+         WHERE id = $1
+         LIMIT 1`,
+        [input.facilityId],
+      );
+      if (facRes.rowCount === 0) {
+        throw new AdminNotFoundError("Target workplace facility not found.");
+      }
+      if (facRes.rows[0]?.countryCode !== existingUser.countryCode) {
+        throw new AdminBadRequestError(
+          "Assigned facility must belong to the user's CountryPack jurisdiction.",
+        );
+      }
+    }
 
     const updatedRes = await client.query(
       `UPDATE users
        SET account_status = $2,
            credential_verified = COALESCE($3, credential_verified),
+           facility_id = CASE WHEN $5::boolean THEN $6::uuid ELSE facility_id END,
            token_version = token_version + CASE WHEN $4::boolean THEN 1 ELSE 0 END
        WHERE id = $1
        RETURNING ${USER_RETURNING_COLUMNS}`,
@@ -472,6 +538,8 @@ export async function updateUserStatusAdmin(
         input.accountStatus,
         input.credentialVerified ?? null,
         shouldBumpVersion,
+        hasFacilityUpdate,
+        input.facilityId ?? null,
       ],
     );
 
@@ -490,6 +558,12 @@ export async function updateUserStatusAdmin(
         previousStatus: existingUser.accountStatus,
         nextStatus: updatedUser.accountStatus,
         credentialVerified: updatedUser.credentialVerified,
+        ...(hasFacilityUpdate
+          ? {
+              previousFacilityId: existingUser.facilityId,
+              nextFacilityId: updatedUser.facilityId,
+            }
+          : {}),
         reason: input.reason?.trim() ?? null,
       },
     });
@@ -574,6 +648,25 @@ export async function overrideDispatchAdmin(
       throw new AdminBadRequestError(
         `Dispatch override to ${input.status} requires an assigned driver.`,
       );
+    }
+
+    if (
+      (input.status === "ASSIGNED" ||
+        input.status === "EN_ROUTE" ||
+        input.status === "ARRIVED") &&
+      nextDriverId
+    ) {
+      const busyDispatchId = await findActiveDriverDispatchId(
+        client,
+        nextDriverId,
+        dispatchId,
+      );
+      if (busyDispatchId) {
+        throw new AdminConflictError(
+          "DRIVER_ALREADY_ASSIGNED",
+          "Target driver already has an active dispatch in progress.",
+        );
+      }
     }
 
     const overrideLine = `[ADMIN OVERRIDE -> ${input.status}]: ${input.note.trim()}`;

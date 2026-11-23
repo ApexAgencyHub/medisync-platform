@@ -1,15 +1,51 @@
+/* MediSync Global — Authentic Clinical Medical Design Tokens
+ * Pure Luminous White (#FFFFFF) × Clinical Sky Wash (#F3F8FD) × Soft Sky Hairlines (#D7E4F2)
+ * Deep Clinical Navy (#0F243E) · Clinical Medical Blue (#0066CC) · Pharmacy Teal (#0F9D88) · Emergency 141 Red (#DC2626)
+ */
 :root {
-  --ms-bg-canvas: #F8FAFC;
-  --ms-bg-surface: #FFFFFF;
-  --ms-bg-subtle: #F1F5F9;
-  --ms-ink-primary: #0F172A;
-  --ms-ink-secondary: #475569;
-  --ms-ink-muted: #64748B;
-  --ms-brand-primary: #0D7377;
-  --ms-brand-primary-hover: #09575A;
-  --ms-brand-soft: #CCFBF1;
-  --ms-border-subtle: #E2E8F0;
-  --ms-status-success: #059669;
-  --ms-status-warning: #D97706;
-  --ms-status-emergency: #DC2626;
+  --ms-bg-canvas: #f3f8fd;
+  --ms-bg-surface: #ffffff;
+  --ms-bg-subtle: #e8f1fa;
+  --ms-bg-elevated: #ffffff;
+
+  --ms-ink-primary: #0f243e;
+  --ms-ink-secondary: #4a627d;
+  --ms-ink-muted: #6b829d;
+
+  --ms-accent-primary: #0066cc;
+  --ms-accent-primary-hover: #0052a3;
+  --ms-accent-soft: #ebf4ff;
+  --ms-accent-border: #bfdbfe;
+  --ms-accent-navy: #0f243e;
+
+  --ms-healthy-primary: #0f9d88;
+  --ms-healthy-soft: #e6f7f4;
+  --ms-healthy-border: #b2e5dc;
+
+  --ms-emergency-primary: #dc2626;
+  --ms-emergency-hover: #b91c1c;
+  --ms-emergency-soft: #fef2f2;
+
+  --ms-warning-primary: #d97706;
+  --ms-warning-soft: #fffbeb;
+
+  --ms-border-hairline: #d7e4f2;
+  --ms-border-strong: #b7cde4;
+  --ms-focus-ring: rgba(0, 102, 204, 0.22);
+
+  --ms-radius-xs: 8px;
+  --ms-radius-sm: 10px;
+  --ms-radius-md: 12px;
+  --ms-radius-lg: 16px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

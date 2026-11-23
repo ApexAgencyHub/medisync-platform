@@ -40,7 +40,7 @@ export function MapDispatchScreen({
 }) {
   return (
     <View style={styles.card}>
-      <Text style={styles.sectionEyebrow}>SLICE 2 · POSTGIS + REDIS GEO</Text>
+      <Text style={styles.sectionEyebrow}>LIVE EMERGENCY RADAR</Text>
       <Text style={styles.cardTitle}>Emergency & Transport Dispatch</Text>
       <Text style={styles.bodyText}>
         Emergency dispatch hotline for {pack.name}:{" "}
@@ -93,7 +93,7 @@ export function BookingScreen({
 }) {
   return (
     <View style={styles.card}>
-      <Text style={styles.sectionEyebrow}>SLICE 3 · ATOMIC BOOKING LOCKS</Text>
+      <Text style={styles.sectionEyebrow}>CLINIC &amp; TELEHEALTH SLOTS</Text>
       <Text style={styles.cardTitle}>Multi-Clinic Shifts & Slots</Text>
       <Text style={styles.bodyText}>
         Tariff Currency:{" "}
@@ -136,7 +136,7 @@ export function ClinicalScreen({ pack }: SharedTabProps) {
   return (
     <View style={styles.card}>
       <Text style={styles.sectionEyebrow}>
-        SLICE 4 · SOAP, HMAC QR & LABS
+        CLINICAL CARE, E-RX QR & LABS
       </Text>
       <Text style={styles.cardTitle}>Clinical & Pharmacy Operations</Text>
       <Text style={styles.bodyText}>
@@ -186,7 +186,7 @@ export function AdminOpsScreen({
 
   return (
     <View style={styles.card}>
-      <Text style={styles.sectionEyebrow}>SLICE 5 · SOVEREIGN GOVERNANCE</Text>
+      <Text style={styles.sectionEyebrow}>COMPLIANCE &amp; GOVERNANCE</Text>
       <Text style={styles.cardTitle}>Operations & Compliance Desk</Text>
       <Text style={styles.bodyText}>
         RBAC Roles Active: {UserRoleSchema.options.length} · Regex:{" "}

@@ -41,6 +41,7 @@ const UuidParamSchema = z.object({
 
 const VISIT_NOTE_WRITER_ROLES: readonly UserRole[] = [
   "DOCTOR",
+  "NURSE",
   "OPS_ADMIN",
 ];
 
@@ -48,8 +49,7 @@ const VISIT_NOTE_VIEWER_ROLES: readonly UserRole[] = [
   "PATIENT",
   "CAREGIVER",
   "DOCTOR",
-  "CLINIC_STAFF",
-  "HOSPITAL_ADMIN",
+  "NURSE",
   "OPS_ADMIN",
 ];
 
@@ -59,6 +59,7 @@ const RX_VIEWER_ROLES: readonly UserRole[] = [
   "PATIENT",
   "CAREGIVER",
   "DOCTOR",
+  "NURSE",
   "PHARMACIST",
   "HOSPITAL_ADMIN",
   "OPS_ADMIN",
@@ -68,6 +69,7 @@ const PHARMACIST_ROLES: readonly UserRole[] = ["PHARMACIST", "OPS_ADMIN"];
 
 const LAB_ORDER_CREATOR_ROLES: readonly UserRole[] = [
   "DOCTOR",
+  "NURSE",
   "CLINIC_STAFF",
   "HOSPITAL_ADMIN",
   "OPS_ADMIN",
@@ -77,6 +79,7 @@ const LAB_ORDER_VIEWER_ROLES: readonly UserRole[] = [
   "PATIENT",
   "CAREGIVER",
   "DOCTOR",
+  "NURSE",
   "CLINIC_STAFF",
   "HOSPITAL_ADMIN",
   "LAB_TECH",
@@ -93,6 +96,7 @@ const MEDIA_UPLOADER_ROLES: readonly UserRole[] = [
   "PATIENT",
   "CAREGIVER",
   "DOCTOR",
+  "NURSE",
   "LAB_TECH",
   "CLINIC_STAFF",
   "HOSPITAL_ADMIN",
@@ -163,6 +167,7 @@ export async function registerClinicalRoutes(
       reply,
       { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       VISIT_NOTE_VIEWER_ROLES,
+      { requireVerifiedProvider: deps.requireProviderVerification },
     );
     if (!claims) return;
 
@@ -220,6 +225,7 @@ export async function registerClinicalRoutes(
       reply,
       { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       RX_VIEWER_ROLES,
+      { requireVerifiedProvider: deps.requireProviderVerification },
     );
     if (!claims) return;
 
@@ -246,6 +252,7 @@ export async function registerClinicalRoutes(
       reply,
       { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       PHARMACIST_ROLES,
+      { requireVerifiedProvider: deps.requireProviderVerification },
     );
     if (!claims) return;
 
@@ -275,6 +282,7 @@ export async function registerClinicalRoutes(
         reply,
         { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
         PHARMACIST_ROLES,
+        { requireVerifiedProvider: deps.requireProviderVerification },
       );
       if (!claims) return;
 
@@ -306,6 +314,7 @@ export async function registerClinicalRoutes(
       reply,
       { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       LAB_ORDER_CREATOR_ROLES,
+      { requireVerifiedProvider: deps.requireProviderVerification },
     );
     if (!claims) return;
 
@@ -331,6 +340,7 @@ export async function registerClinicalRoutes(
       reply,
       { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       LAB_ORDER_VIEWER_ROLES,
+      { requireVerifiedProvider: deps.requireProviderVerification },
     );
     if (!claims) return;
 
@@ -357,6 +367,7 @@ export async function registerClinicalRoutes(
       reply,
       { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       LAB_TECH_ROLES,
+      { requireVerifiedProvider: deps.requireProviderVerification },
     );
     if (!claims) return;
 
@@ -385,6 +396,7 @@ export async function registerClinicalRoutes(
       reply,
       { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       MEDIA_UPLOADER_ROLES,
+      { requireVerifiedProvider: deps.requireProviderVerification },
     );
     if (!claims) return;
 
@@ -415,6 +427,7 @@ export async function registerClinicalRoutes(
       reply,
       { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       MEDIA_UPLOADER_ROLES,
+      { requireVerifiedProvider: deps.requireProviderVerification },
     );
     if (!claims) return;
 
@@ -442,6 +455,7 @@ export async function registerClinicalRoutes(
       reply,
       { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       LAB_ORDER_VIEWER_ROLES,
+      { requireVerifiedProvider: deps.requireProviderVerification },
     );
     if (!claims) return;
 

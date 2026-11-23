@@ -23,6 +23,7 @@ const PATIENT_PICKER_ROLES: readonly UserRole[] = [
   "PATIENT",
   "CAREGIVER",
   "DOCTOR",
+  "NURSE",
   "CLINIC_STAFF",
   "HOSPITAL_ADMIN",
   "PHARMACIST",
@@ -37,6 +38,7 @@ export async function registerDirectoryRoutes(
     redis?: Redis;
     authSecret: string;
     s3Config?: S3PresignConfig;
+    requireProviderVerification?: boolean;
   },
 ): Promise<void> {
   app.get("/v1/directory/patients", async (request, reply) => {
@@ -45,6 +47,7 @@ export async function registerDirectoryRoutes(
       reply,
       { authSecret: deps.authSecret, pool: deps.pool, redis: deps.redis },
       PATIENT_PICKER_ROLES,
+      { requireVerifiedProvider: deps.requireProviderVerification },
     );
     if (!claims) return;
 
@@ -82,6 +85,7 @@ export async function registerDirectoryRoutes(
       30,
       () => listDirectoryDoctorsScoped(deps.pool, parsed.data, deps.s3Config),
     );
+    reply.header("Cache-Control", "public, max-age=30, stale-while-revalidate=120");
     return { doctors };
   });
 
@@ -102,6 +106,7 @@ export async function registerDirectoryRoutes(
       30,
       () => listDirectoryFacilitiesPublic(deps.pool, parsed.data),
     );
+    reply.header("Cache-Control", "public, max-age=30, stale-while-revalidate=120");
     return { facilities };
   });
 
@@ -120,17 +125,29 @@ export async function registerDirectoryRoutes(
       parsed.data,
       deps.s3Config,
     );
+    reply.header("Cache-Control", "public, max-age=15, stale-while-revalidate=60");
     return { drivers };
   });
 
-  app.get("/v1/directory/demo-personas", async () => {
+  app.get("/v1/directory/demo-personas", async (_request, reply) => {
     if (
       process.env.NODE_ENV === "production" &&
+      process.env.ALLOW_DEV_SEED !== "true" &&
       process.env.ENABLE_DEMO_SEED !== "true"
     ) {
       return { personas: [] };
     }
-    const personas = await listSeededDemoPersonas(deps.pool);
+    const personas = await withGenerationCache(
+      deps.redis,
+      DIRECTORY_CACHE_GEN_KEY,
+      "demo-personas",
+      300,
+      () => listSeededDemoPersonas(deps.pool),
+    );
+    reply.header(
+      "Cache-Control",
+      "public, max-age=120, stale-while-revalidate=300",
+    );
     return { personas };
   });
 }

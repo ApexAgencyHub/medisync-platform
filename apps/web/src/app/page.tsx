@@ -1,39 +1,26 @@
 import { listCountryPacks } from "@medisync/country-packs";
 import {
+  ConsumerHomeRedirect,
   CountryPackExplorer,
-  EcosystemSlicesGrid,
   HomeCareLaunchpad,
+  ServicePillarsShowcase,
 } from "@/features/platform-overview";
+import { resolvePublicApiUrl } from "@/shared/config/deployment";
 import { AppHeader } from "@/shared/ui/AppHeader";
-import { ZoomableHeroImage } from "@/shared/ui/ZoomableHeroImage";
 
 export default function HomePage() {
-  const packs = listCountryPacks();
+  const packs = [...listCountryPacks()];
+  const apiBaseUrl = resolvePublicApiUrl();
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <AppHeader
-        activeRoute="/"
-        statusPill={`${packs.length} Regions · 24/7 Care Network`}
-      />
+    <div className="flex min-h-screen flex-col bg-white text-[#0F243E]">
+      <AppHeader activeRoute="/" />
 
-      <main className="mx-auto max-w-7xl space-y-8 px-4 py-7 sm:px-6 lg:px-8">
-        {/* Hero Band */}
-        <section className="grid items-center gap-8 lg:grid-cols-12">
-          <HomeCareLaunchpad />
-
-          <div className="lg:col-span-6">
-            <ZoomableHeroImage
-              src="/media/clinical-map-hero.webp"
-              alt="Isometric medical district coordination map connecting hospital, clinic, pharmacy, and ambulances"
-              title="Connected Medical Care District Overview"
-              subtitle="Hospital Intake · Specialty Clinics · 24/7 Pharmacies · Emergency Dispatch"
-            />
-          </div>
-        </section>
-
+      <main className="flex flex-1 flex-col">
+        <ConsumerHomeRedirect />
+        <HomeCareLaunchpad packs={packs} apiBaseUrl={apiBaseUrl} />
+        <ServicePillarsShowcase />
         <CountryPackExplorer packs={packs} />
-        <EcosystemSlicesGrid />
       </main>
     </div>
   );

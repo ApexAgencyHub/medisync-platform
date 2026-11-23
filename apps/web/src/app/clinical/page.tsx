@@ -1,22 +1,24 @@
+import type { Metadata } from "next";
 import { listCountryPacks } from "@medisync/country-packs";
 import { ClinicalWorkspace } from "@/features/clinical-workspace";
-import { AppHeader } from "@/shared/ui/AppHeader";
+import { resolvePublicApiUrl } from "@/shared/config/deployment";
+import { WorkspaceShell } from "@/shared/ui/WorkspaceShell";
+
+export const metadata: Metadata = {
+  title: "Clinical Care, QR Prescriptions & Labs — MediSync Global",
+  description:
+    "Review scheduled consultations, record visit notes, issue verified QR prescriptions, and manage diagnostic lab orders.",
+};
 
 export const dynamic = "force-dynamic";
 
 export default function ClinicalPage() {
   const packs = [...listCountryPacks()];
-  const apiBaseUrl =
-    process.env.API_URL ??
-    process.env.NEXT_PUBLIC_API_URL ??
-    "http://127.0.0.1:4000";
+  const apiBaseUrl = resolvePublicApiUrl();
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <AppHeader activeRoute="/clinical" />
-      <main className="mx-auto max-w-7xl px-4 py-7 sm:px-6 lg:px-8">
-        <ClinicalWorkspace packs={packs} apiBaseUrl={apiBaseUrl} />
-      </main>
-    </div>
+    <WorkspaceShell activeRoute="/clinical" maxWidthClass="max-w-[1560px]">
+      <ClinicalWorkspace packs={packs} apiBaseUrl={apiBaseUrl} />
+    </WorkspaceShell>
   );
 }

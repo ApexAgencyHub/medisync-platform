@@ -7,6 +7,7 @@ import type {
   AuthResponse,
   AuthenticatedUser,
   ClinicalMediaObjectResponse,
+  DeleteUserMediaResponse,
   FacilityMediaDocumentResponse,
   FacilityMediaListResponse,
   FacilityPresignedUploadResponse,
@@ -448,5 +449,52 @@ describe("api slice 6 media-certifications: real MinIO S3 PUT, magic-byte valida
         .json<UserMediaListResponse>()
         .documents.some((doc) => doc.id === avatarPresign.document.id),
     ).toBe(true);
+
+    // 4. OPS_ADMIN global /v1/admin/user-media feed includes practitioner licenses (excluding AVATAR) & user deletes pending doc
+    const presignLicense = await app.inject({
+      method: "POST",
+      url: "/v1/users/me/media/presign-upload",
+      headers: { authorization: `Bearer ${doctor.token}` },
+      payload: {
+        category: "PRACTITIONER_LICENSE",
+        fileName: "dr-nadia-license.png",
+        mimeType: "image/png",
+        sizeBytes: SAMPLE_PNG_BYTES.length,
+      },
+    });
+    expect(presignLicense.statusCode).toBe(201);
+    const practitionerLicensePresign = presignLicense.json<UserPresignedUploadResponse>();
+    uploadedS3Keys.push(practitionerLicensePresign.document.objectKey);
+
+    await fetch(practitionerLicensePresign.uploadUrl, {
+      method: "PUT",
+      headers: practitionerLicensePresign.requiredHeaders,
+      body: new Uint8Array(SAMPLE_PNG_BYTES),
+    });
+
+    const confirmPractitionerLicenseRes = await app.inject({
+      method: "POST",
+      url: `/v1/users/me/media/${practitionerLicensePresign.document.id}/confirm`,
+      headers: { authorization: `Bearer ${doctor.token}` },
+    });
+    expect(confirmPractitionerLicenseRes.statusCode).toBe(200);
+
+    const globalUserMediaRes = await app.inject({
+      method: "GET",
+      url: "/v1/admin/user-media?countryCode=MA",
+      headers: { authorization: `Bearer ${opsToken}` },
+    });
+    expect(globalUserMediaRes.statusCode).toBe(200);
+    const globalDocs = globalUserMediaRes.json<UserMediaListResponse>().documents;
+    expect(globalDocs.some((doc) => doc.id === practitionerLicensePresign.document.id)).toBe(true);
+    expect(globalDocs.some((doc) => doc.id === avatarPresign.document.id)).toBe(false);
+
+    const deleteOwnDocRes = await app.inject({
+      method: "DELETE",
+      url: `/v1/users/me/media/${practitionerLicensePresign.document.id}`,
+      headers: { authorization: `Bearer ${doctor.token}` },
+    });
+    expect(deleteOwnDocRes.statusCode).toBe(200);
+    expect(deleteOwnDocRes.json<DeleteUserMediaResponse>().deleted).toBe(true);
   });
 });

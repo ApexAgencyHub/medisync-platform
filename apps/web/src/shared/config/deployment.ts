@@ -8,6 +8,31 @@ import type { CountryPack } from "@medisync/contracts";
 export const ACTIVE_COUNTRY_CODE: string =
   process.env.NEXT_PUBLIC_DEFAULT_COUNTRY?.trim().toUpperCase() || "MA";
 
+/**
+ * Resolves the effective country code for deployment-level UI chrome (emergency hotlines, currency, compliance).
+ * Global super-admin accounts ("INTL") inherit the active regional deployment ("MA" by default)
+ * instead of falling back to generic international defaults (e.g. 112 / USD).
+ */
+export function resolveEffectiveCountryCode(
+  userCountryCode?: string | null,
+): string {
+  const normalized = userCountryCode?.trim().toUpperCase();
+  if (!normalized || normalized === "INTL") {
+    return ACTIVE_COUNTRY_CODE;
+  }
+  return normalized;
+}
+
+/**
+ * Resolves the browser-facing API base URL passed from Next.js Server Components to Client Components.
+ * NEVER uses server-only `process.env.API_URL` (e.g. Docker internal `http://api:4000`), which is
+ * unreachable from end-user browsers and only belongs in server-side route handlers like `/api/backend-status`.
+ */
+export function resolvePublicApiUrl(): string {
+  const configured = process.env.NEXT_PUBLIC_API_URL?.trim();
+  return (configured || "http://127.0.0.1:4000").replace(/\/+$/, "");
+}
+
 export function resolveActivePack(
   packs: readonly CountryPack[],
 ): CountryPack | null {

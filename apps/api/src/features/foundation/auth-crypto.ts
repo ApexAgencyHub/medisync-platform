@@ -1,14 +1,16 @@
 import crypto from "node:crypto";
-import type { UserRole } from "@medisync/contracts";
+import type { AccountStatus, UserRole } from "@medisync/contracts";
 
 export interface AuthTokenClaims {
   sub: string;
   role: UserRole;
   countryCode: string;
   facilityId: string | null;
-  email: string;
+  email: string | null;
+  phone?: string;
   jti: string;
   ver: number;
+  accountStatus?: AccountStatus;
   credentialVerified?: boolean;
   iat: number;
   exp: number;
@@ -47,6 +49,9 @@ export async function verifyPassword(
     return false;
   }
   const expectedBuf = Buffer.from(hexDigest, "hex");
+  if (expectedBuf.length === 0) {
+    return false;
+  }
   const derivedBuf = await new Promise<Buffer>((resolve, reject) => {
     crypto.scrypt(password, salt, expectedBuf.length, (err, key) => {
       if (err) reject(err);
@@ -78,7 +83,8 @@ export function signAuthToken(
     role: UserRole;
     countryCode: string;
     facilityId: string | null;
-    email: string;
+    email: string | null;
+    phone?: string | null;
     ver?: number;
   },
   secret: string,
@@ -91,6 +97,7 @@ export function signAuthToken(
     countryCode: payload.countryCode,
     facilityId: payload.facilityId,
     email: payload.email,
+    ...(payload.phone ? { phone: payload.phone } : {}),
     jti: crypto.randomUUID(),
     ver: payload.ver ?? 1,
     iat: nowSec,
@@ -145,12 +152,19 @@ export function verifyAuthToken(
   }
 
   try {
+    const header = JSON.parse(decodeBase64Url(headerPart)) as {
+      alg?: unknown;
+      typ?: unknown;
+    };
+    if (header.alg !== "HS256" || header.typ !== "JWT") {
+      return null;
+    }
     const parsed = JSON.parse(decodeBase64Url(payloadPart)) as Partial<AuthTokenClaims>;
     if (
       !parsed.sub ||
       !parsed.role ||
       !parsed.countryCode ||
-      !parsed.email ||
+      parsed.email === undefined ||
       typeof parsed.exp !== "number"
     ) {
       return null;
@@ -164,7 +178,8 @@ export function verifyAuthToken(
       role: parsed.role,
       countryCode: parsed.countryCode,
       facilityId: parsed.facilityId ?? null,
-      email: parsed.email,
+      email: parsed.email ?? null,
+      ...(typeof parsed.phone === "string" ? { phone: parsed.phone } : {}),
       jti: typeof parsed.jti === "string" ? parsed.jti : "",
       ver: typeof parsed.ver === "number" ? parsed.ver : 1,
       iat: typeof parsed.iat === "number" ? parsed.iat : nowSec,

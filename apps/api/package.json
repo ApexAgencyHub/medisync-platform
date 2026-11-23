@@ -11,6 +11,8 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@fastify/compress": "^9.3.0",
+    "@fastify/cookie": "^11.1.5",
     "@fastify/cors": "^11.4.1",
     "@medisync/contracts": "workspace:*",
     "@medisync/country-packs": "workspace:*",

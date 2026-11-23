@@ -4,6 +4,15 @@ import { createRedisClient } from "../redis/client.js";
 import { loadApiEnv } from "../env.js";
 import { seedRealisticWorld } from "../../features/directory/index.js";
 
+if (
+  process.env.NODE_ENV === "production" &&
+  process.env.ALLOW_DEV_SEED !== "true"
+) {
+  throw new Error(
+    "Refusing to run demo world seeder in NODE_ENV=production unless ALLOW_DEV_SEED=true is explicitly set.",
+  );
+}
+
 const env = loadApiEnv();
 const pool = createDbPool(env.DATABASE_URL);
 const redis = createRedisClient(env.REDIS_URL);

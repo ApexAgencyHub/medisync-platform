@@ -1,4 +1,4 @@
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { z } from "zod";
 import {
   DispatchRequestSummarySchema,
@@ -55,6 +55,46 @@ const ALLOWED_TRANSITIONS: Record<DispatchStatus, readonly DispatchStatus[]> = {
   COMPLETED: [],
   CANCELLED: [],
 };
+
+const DISPATCH_ROW_COLUMNS = `
+  id,
+  country_code AS "countryCode",
+  patient_user_id AS "patientUserId",
+  driver_user_id AS "driverUserId",
+  target_facility_id AS "targetFacilityId",
+  pickup_lat AS "pickupLat",
+  pickup_lng AS "pickupLng",
+  pickup_address AS "pickupAddress",
+  urgency,
+  status,
+  notes,
+  to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso",
+  to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "updatedAtIso"
+`;
+
+/**
+ * Serializes concurrent driver dispatch assignments on an advisory transaction lock
+ * and returns any existing in-progress dispatch assigned to the same driver.
+ */
+export async function findActiveDriverDispatchId(
+  client: PoolClient,
+  driverUserId: string,
+  excludeDispatchId: string,
+): Promise<string | null> {
+  await client.query(`SELECT pg_advisory_xact_lock(hashtext('driver_assign:' || $1))`, [
+    driverUserId,
+  ]);
+  const res = await client.query<{ id: string }>(
+    `SELECT id
+     FROM dispatch_requests
+     WHERE driver_user_id = $1
+       AND id <> $2
+       AND status IN ('ASSIGNED', 'EN_ROUTE', 'ARRIVED')
+     LIMIT 1`,
+    [driverUserId, excludeDispatchId],
+  );
+  return res.rows[0]?.id ?? null;
+}
 
 export async function queryFacilitiesInViewport(
   pool: Pool,
@@ -123,7 +163,12 @@ export async function queryFacilitiesInViewport(
 export async function updateFacilityOperationalStatus(
   pool: Pool,
   facilityId: string,
-  actor: { userId: string; role: UserRole; countryCode: string },
+  actor: {
+    userId: string;
+    role: UserRole;
+    countryCode: string;
+    facilityId?: string | null;
+  },
   input: UpdateFacilityOperationalStatusInput,
 ): Promise<ViewportFacilityItem | null> {
   const existing = await pool.query(
@@ -139,8 +184,8 @@ export async function updateFacilityOperationalStatus(
 
   const isAuthorized =
     actor.role === "OPS_ADMIN" ||
-    (meta.ownerUserId === actor.userId &&
-      meta.countryCode === actor.countryCode);
+    (meta.countryCode === actor.countryCode &&
+      (meta.ownerUserId === actor.userId || actor.facilityId === facilityId));
 
   if (!isAuthorized) {
     throw new DispatchForbiddenError(
@@ -195,74 +240,125 @@ export async function createDispatchRequest(
   patientUserId: string,
   countryCode: string,
   input: CreateDispatchRequestInput,
+  actorRole?: UserRole,
 ): Promise<DispatchRequestSummary> {
-  if (input.targetFacilityId) {
-    const facilityCheck = await pool.query<{ id: string }>(
-      `SELECT id
-       FROM facilities
-       WHERE id = $1
-         AND country_code = $2
-         AND verification_status = 'VERIFIED'
-       LIMIT 1`,
-      [input.targetFacilityId, countryCode],
+  const cleanAddress = input.pickupAddress.trim();
+  const cleanNotes = input.notes?.trim() ?? null;
+  let effectiveCountry =
+    actorRole === "OPS_ADMIN" && input.countryCode
+      ? input.countryCode
+      : countryCode;
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `SELECT pg_advisory_xact_lock(hashtext('dispatch_create:' || $1))`,
+      [patientUserId],
     );
-    if (facilityCheck.rowCount === 0) {
-      throw new TargetFacilityInvalidError(
-        "Target facility must exist in your country jurisdiction and be verified.",
-      );
+
+    if (input.targetFacilityId) {
+      const facilityCheck =
+        actorRole === "OPS_ADMIN"
+          ? await client.query<{ id: string; countryCode: string }>(
+              `SELECT id, country_code AS "countryCode"
+               FROM facilities
+               WHERE id = $1
+                 AND verification_status = 'VERIFIED'
+               LIMIT 1`,
+              [input.targetFacilityId],
+            )
+          : await client.query<{ id: string; countryCode: string }>(
+              `SELECT id, country_code AS "countryCode"
+               FROM facilities
+               WHERE id = $1
+                 AND country_code = $2
+                 AND verification_status = 'VERIFIED'
+               LIMIT 1`,
+              [input.targetFacilityId, effectiveCountry],
+            );
+      if (facilityCheck.rowCount === 0 || !facilityCheck.rows[0]) {
+        throw new TargetFacilityInvalidError(
+          "Target facility must exist in your country jurisdiction and be verified.",
+        );
+      }
+      if (actorRole === "OPS_ADMIN") {
+        effectiveCountry = facilityCheck.rows[0].countryCode;
+      }
     }
+
+    // Idempotency guard: rapid accidental double-taps within 10s reuse the pending request
+    const recentDuplicate = await client.query(
+      `SELECT ${DISPATCH_ROW_COLUMNS}
+       FROM dispatch_requests
+       WHERE patient_user_id = $1
+         AND country_code = $2
+         AND status = 'REQUESTED'
+         AND pickup_address = $3
+         AND urgency = $4
+         AND COALESCE(target_facility_id::text, '') = COALESCE($5, '')
+         AND COALESCE(notes, '') = COALESCE($6, '')
+         AND created_at >= NOW() - INTERVAL '10 seconds'
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [
+        patientUserId,
+        effectiveCountry,
+        cleanAddress,
+        input.urgency,
+        input.targetFacilityId ?? null,
+        cleanNotes,
+      ],
+    );
+    if (recentDuplicate.rowCount && recentDuplicate.rows[0]) {
+      await client.query("COMMIT");
+      return DispatchRequestSummarySchema.parse(recentDuplicate.rows[0]);
+    }
+
+    const res = await client.query(
+      `INSERT INTO dispatch_requests (
+         country_code,
+         patient_user_id,
+         target_facility_id,
+         pickup_location,
+         pickup_lat,
+         pickup_lng,
+         pickup_address,
+         urgency,
+         notes
+       )
+       VALUES (
+         $1,
+         $2,
+         $3,
+         ST_SetSRID(ST_MakePoint($5, $4), 4326)::geography,
+         $4,
+         $5,
+         $6,
+         $7,
+         $8
+       )
+       RETURNING ${DISPATCH_ROW_COLUMNS}`,
+      [
+        effectiveCountry,
+        patientUserId,
+        input.targetFacilityId ?? null,
+        input.pickupLat,
+        input.pickupLng,
+        cleanAddress,
+        input.urgency,
+        cleanNotes,
+      ],
+    );
+
+    await client.query("COMMIT");
+    return DispatchRequestSummarySchema.parse(res.rows[0]);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
   }
-
-  const res = await pool.query(
-    `INSERT INTO dispatch_requests (
-       country_code,
-       patient_user_id,
-       target_facility_id,
-       pickup_location,
-       pickup_lat,
-       pickup_lng,
-       pickup_address,
-       urgency,
-       notes
-     )
-     VALUES (
-       $1,
-       $2,
-       $3,
-       ST_SetSRID(ST_MakePoint($5, $4), 4326)::geography,
-       $4,
-       $5,
-       $6,
-       $7,
-       $8
-     )
-     RETURNING
-       id,
-       country_code AS "countryCode",
-       patient_user_id AS "patientUserId",
-       driver_user_id AS "driverUserId",
-       target_facility_id AS "targetFacilityId",
-       pickup_lat AS "pickupLat",
-       pickup_lng AS "pickupLng",
-       pickup_address AS "pickupAddress",
-       urgency,
-       status,
-       notes,
-       to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso",
-       to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "updatedAtIso"`,
-    [
-      countryCode,
-      patientUserId,
-      input.targetFacilityId ?? null,
-      input.pickupLat,
-      input.pickupLng,
-      input.pickupAddress.trim(),
-      input.urgency,
-      input.notes?.trim() ?? null,
-    ],
-  );
-
-  return DispatchRequestSummarySchema.parse(res.rows[0]);
 }
 
 export async function listDispatchRequestsScoped(
@@ -312,6 +408,21 @@ export async function listDispatchRequestsScoped(
   return res.rows.map((row) => DispatchRequestSummarySchema.parse(row));
 }
 
+const DISPATCH_SUMMARY_SELECT_COLS = `
+  id,
+  country_code AS "countryCode",
+  patient_user_id AS "patientUserId",
+  driver_user_id AS "driverUserId",
+  target_facility_id AS "targetFacilityId",
+  pickup_lat AS "pickupLat",
+  pickup_lng AS "pickupLng",
+  pickup_address AS "pickupAddress",
+  urgency,
+  status,
+  notes,
+  to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso",
+  to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "updatedAtIso"`;
+
 export async function transitionDispatchStatus(
   pool: Pool,
   actor: { userId: string; role: UserRole; countryCode: string },
@@ -324,20 +435,7 @@ export async function transitionDispatchStatus(
   try {
     await client.query("BEGIN");
     const currentRes = await client.query(
-      `SELECT
-         id,
-         country_code AS "countryCode",
-         patient_user_id AS "patientUserId",
-         driver_user_id AS "driverUserId",
-         target_facility_id AS "targetFacilityId",
-         pickup_lat AS "pickupLat",
-         pickup_lng AS "pickupLng",
-         pickup_address AS "pickupAddress",
-         urgency,
-         status,
-         notes,
-         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso",
-         to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "updatedAtIso"
+      `SELECT ${DISPATCH_SUMMARY_SELECT_COLS}
        FROM dispatch_requests
        WHERE id = $1
        FOR UPDATE`,
@@ -400,6 +498,19 @@ export async function transitionDispatchStatus(
       } else {
         throw new DispatchForbiddenError("Role cannot assign dispatch.");
       }
+
+      if (nextDriverId) {
+        const activeDriverDispatchId = await findActiveDriverDispatchId(
+          client,
+          nextDriverId,
+          dispatchId,
+        );
+        if (activeDriverDispatchId) {
+          throw new DispatchConflictError(
+            "Driver already has an active dispatch in progress.",
+          );
+        }
+      }
     } else if (nextStatus === "EN_ROUTE" || nextStatus === "ARRIVED") {
       const isAssignedDriver =
         actor.role === "DRIVER" && current.driverUserId === actor.userId;
@@ -439,25 +550,86 @@ export async function transitionDispatchStatus(
            driver_user_id = $3,
            updated_at = NOW()
        WHERE id = $1
-       RETURNING
-         id,
-         country_code AS "countryCode",
-         patient_user_id AS "patientUserId",
-         driver_user_id AS "driverUserId",
-         target_facility_id AS "targetFacilityId",
-         pickup_lat AS "pickupLat",
-         pickup_lng AS "pickupLng",
-         pickup_address AS "pickupAddress",
-         urgency,
-         status,
-         notes,
-         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso",
-         to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "updatedAtIso"`,
+       RETURNING ${DISPATCH_SUMMARY_SELECT_COLS}`,
       [dispatchId, nextStatus, nextDriverId],
     );
 
     await client.query("COMMIT");
     return DispatchRequestSummarySchema.parse(updatedRes.rows[0]);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Allows a driver to decline an incoming REQUESTED dispatch for their own feed
+ * without cancelling it for other eligible drivers, or release an ASSIGNED ride
+ * back into the open queue before departing EN_ROUTE.
+ */
+export async function declineOrReleaseDispatch(
+  pool: Pool,
+  actor: { userId: string; role: UserRole; countryCode: string },
+  dispatchId: string,
+): Promise<{ dispatch: DispatchRequestSummary; releasedToQueue: boolean }> {
+  if (actor.role !== "DRIVER") {
+    throw new DispatchForbiddenError(
+      "Only transport drivers can decline dispatch requests.",
+    );
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const currentRes = await client.query(
+      `SELECT ${DISPATCH_SUMMARY_SELECT_COLS}
+       FROM dispatch_requests
+       WHERE id = $1
+       FOR UPDATE`,
+      [dispatchId],
+    );
+    if (currentRes.rowCount === 0) {
+      throw new DispatchNotFoundError("Dispatch request not found.");
+    }
+
+    const current = DispatchRequestSummarySchema.parse(currentRes.rows[0]);
+    if (current.countryCode !== actor.countryCode) {
+      throw new DispatchForbiddenError(
+        "Cross-country dispatch decline forbidden.",
+      );
+    }
+
+    if (current.status === "REQUESTED") {
+      await client.query("COMMIT");
+      return { dispatch: current, releasedToQueue: false };
+    }
+
+    if (
+      current.status === "ASSIGNED" &&
+      current.driverUserId === actor.userId
+    ) {
+      const updatedRes = await client.query(
+        `UPDATE dispatch_requests
+         SET status = 'REQUESTED',
+             driver_user_id = NULL,
+             updated_at = NOW()
+         WHERE id = $1
+         RETURNING ${DISPATCH_SUMMARY_SELECT_COLS}`,
+        [dispatchId],
+      );
+      await client.query("COMMIT");
+      return {
+        dispatch: DispatchRequestSummarySchema.parse(updatedRes.rows[0]),
+        releasedToQueue: true,
+      };
+    }
+
+    throw new DispatchConflictError(
+      "Dispatch is already claimed or in progress and cannot be declined.",
+    );
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;

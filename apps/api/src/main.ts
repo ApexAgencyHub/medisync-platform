@@ -17,18 +17,23 @@ const server = await buildApiServer({
     accessKeyId: env.S3_ACCESS_KEY_ID,
     secretAccessKey: env.S3_SECRET_ACCESS_KEY,
     expiresInSeconds: env.S3_PRESIGN_EXPIRES_SECONDS,
+    urlStyle: env.S3_URL_STYLE,
   },
   runDbMigrations: true,
   seedDemoWorld:
-    env.NODE_ENV !== "production" || process.env.ENABLE_DEMO_SEED === "true",
+    env.NODE_ENV !== "production" || process.env.ALLOW_DEV_SEED === "true",
   rateLimitMaxPerMinute: env.RATE_LIMIT_MAX_PER_MIN,
   authRateLimitMaxPerMinute: env.AUTH_RATE_LIMIT_MAX_PER_MIN,
   allowPublicRegistration: env.ALLOW_PUBLIC_REGISTRATION,
   requireProviderVerification: env.REQUIRE_PROVIDER_VERIFICATION,
+  ...(env.GOOGLE_CLIENT_ID ? { googleClientId: env.GOOGLE_CLIENT_ID } : {}),
   dbPoolMax: env.DB_POOL_MAX,
   dbStatementTimeoutMs: env.DB_STATEMENT_TIMEOUT_MS,
   trustProxy: env.TRUST_PROXY,
   enableRequestLogs: env.ENABLE_REQUEST_LOGS,
+  allowSimulatedPayments: env.ALLOW_SIMULATED_PAYMENTS,
+  paymentWebhookSecret: env.PAYMENT_WEBHOOK_SECRET,
+  s3AutoConfigureCors: env.S3_AUTO_CONFIGURE_CORS,
 });
 
 await server.listen({ port: env.PORT, host: env.HOST });

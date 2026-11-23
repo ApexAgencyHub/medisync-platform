@@ -1,24 +1,38 @@
 import type { Metadata } from "next";
-import { JetBrains_Mono, Plus_Jakarta_Sans } from "next/font/google";
+import {
+  DM_Sans,
+  IBM_Plex_Sans_Arabic,
+  Plus_Jakarta_Sans,
+} from "next/font/google";
 import { ImageLightboxProvider } from "@/shared/ui/ImageLightboxProvider";
+import { ToastProvider } from "@/shared/ui/ToastProvider";
+import { TopProgressBar } from "@/shared/ui/TopProgressBar";
 import "./globals.css";
 
 const plusJakartaSans = Plus_Jakarta_Sans({
+  subsets: ["latin"],
+  variable: "--font-display",
+  display: "swap",
+});
+
+const dmSans = DM_Sans({
   subsets: ["latin"],
   variable: "--font-sans",
   display: "swap",
 });
 
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ["latin"],
-  variable: "--font-mono",
+const ibmPlexArabic = IBM_Plex_Sans_Arabic({
+  subsets: ["arabic"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-arabic",
   display: "swap",
+  preload: false,
 });
 
 export const metadata: Metadata = {
-  title: "MediSync Global — Connected Medical & Emergency Care",
+  title: "MediSync Global — Medical Care & Health Network",
   description:
-    "Locate trusted hospitals and pharmacies, book clinic or video appointments, verify digital prescriptions, and coordinate medical transport in one connected network.",
+    "Find verified hospitals, clinics, doctors, and 24/7 duty pharmacies, book consultations, manage QR prescriptions, and request 141 medical transport.",
   icons: {
     icon: [
       { url: "/favicon.ico", sizes: "32x32" },
@@ -36,10 +50,13 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${plusJakartaSans.variable} ${jetbrainsMono.variable}`}
+      className={`${plusJakartaSans.variable} ${dmSans.variable} ${ibmPlexArabic.variable}`}
     >
-      <body className="min-h-screen antialiased">
-        <ImageLightboxProvider>{children}</ImageLightboxProvider>
+      <body className="min-h-screen bg-[#F3F8FD] text-[#0F243E] antialiased selection:bg-[#0066CC]/15 selection:text-[#0F243E]">
+        <TopProgressBar />
+        <ToastProvider>
+          <ImageLightboxProvider>{children}</ImageLightboxProvider>
+        </ToastProvider>
       </body>
     </html>
   );

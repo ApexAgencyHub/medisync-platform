@@ -1,18 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import {
-  Building2,
-  Package,
-  Pill,
-  Plus,
-  Printer,
-  RefreshCw,
-  Search,
-  ShoppingCart,
-  Trash2,
-  Truck,
-} from "lucide-react";
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
+import dynamic from "next/dynamic";
+import { Package, Pill, Plus, QrCode, RefreshCw, ShieldCheck } from "lucide-react";
+import {
+  listFacilityMedia,
+  listMyUserMedia,
+} from "@/features/media-certifications";
 import {
   checkBackendOnline,
   fetchDirectoryFacilities,
@@ -20,38 +21,63 @@ import {
 import {
   clearStoredSession,
   readStoredSession,
+  revokeClientSession,
 } from "@/shared/auth/session-storage";
-import { useLocale } from "@/shared/i18n/locale-store";
 import {
-  ProductThumbnail,
-  resolveFacilityPicture,
-  resolveProductPicture,
-} from "@/shared/ui/EntityAvatar";
-import { useImageLightbox } from "@/shared/ui/ImageLightboxProvider";
+  canReadPharmacyOrders,
+  canReadPrescriptions,
+  isConsumerUserOrGuest,
+  syncPendingSessionStatus,
+} from "@/shared/auth/role-capabilities";
+import { ConsumerWorkspaceGuard } from "@/shared/auth/ConsumerWorkspaceGuard";
+import { formatCountryDisplayName } from "@/shared/i18n/human-labels";
+import { useLocale } from "@/shared/i18n/locale-store";
+import { PHARMA_COPY } from "../pharmacy-i18n";
+import {
+  dispensePrescription,
+  fetchPrescriptions,
+  listMyPatientInsurances,
+  verifyPrescriptionQr,
+} from "@/features/clinical-workspace";
+
+const ProfileCredentialsPanel = dynamic(
+  () =>
+    import("@/features/auth-portal").then((m) => m.ProfileCredentialsPanel),
+  { ssr: false },
+);
+const FacilityPapersCard = dynamic(
+  () =>
+    import("@/features/media-certifications").then(
+      (m) => m.FacilityPapersCard,
+    ),
+  { ssr: false },
+);
+import {
+  isPendingStaffVerification,
+  VerificationGateNotice,
+} from "@/shared/ui/VerificationGateNotice";
 import {
   ACTIVE_COUNTRY_CODE,
   resolveActivePack,
+  resolveEffectiveCountryCode,
 } from "@/shared/config/deployment";
-import {
-  ActiveRegionPill,
-  SessionAccountBar,
-  StatusBanner,
-  UiBadge,
-  UiButton,
-  UiInput,
-  UiSelect,
-} from "@/shared/ui/primitives";
-import {
-  PharmacyProductCategorySchema,
-  type AuthResponse,
-  type CountryPack,
-  type DirectoryFacilitySummary,
-  type FulfillmentMode,
-  type PaymentMethod,
-  type PharmacyOrderSummary,
-  type PharmacyProductCategory,
-  type PharmacyProductSummary,
-  type PrescriptionSummary,
+import { UiTabBar, WorkspaceHeader, useToastSetter } from "@/shared/ui/primitives";
+import type {
+  AllergyWarning,
+  AuthResponse,
+  CountryPack,
+  DirectoryFacilitySummary,
+  FacilityMediaDocument,
+  FulfillmentMode,
+  LocaleCode,
+  PatientInsurancePolicy,
+  PaymentMethod,
+  PharmacyOrderSummary,
+  PharmacyProductCategory,
+  PharmacyProductSummary,
+  PrescriptionSummary,
+  UpdatePharmacyProductInput,
+  UserMediaDocument,
 } from "@medisync/contracts";
 import {
   confirmPharmacyOrderPayment,
@@ -63,71 +89,104 @@ import {
   updatePharmacyOrderStatus,
   updatePharmacyProductStock,
 } from "../api-client";
+import {
+  type CartLine,
+  type CatalogSafetyFilter,
+  type CatalogSortOption,
+} from "./pharmacy-utils";
+import { PharmacyCatalogGrid } from "./PharmacyCatalogGrid";
+import { PharmacyCartSidebar } from "./PharmacyCartSidebar";
+import { PharmacyOrdersView } from "./PharmacyOrdersView";
+import { PharmacistDispenseDesk } from "./PharmacistDispenseDesk";
+import { PharmacistInventoryDesk } from "./PharmacistInventoryDesk";
+import { ProductDetailModal } from "./ProductDetailModal";
 
 interface PharmacyStorefrontProps {
   packs: readonly CountryPack[];
   apiBaseUrl: string;
 }
 
-interface CartLine {
-  product: PharmacyProductSummary;
-  quantity: number;
-}
-
-const CATEGORY_LABELS: Record<PharmacyProductCategory, string> = {
-  OTC_MEDICATION: "OTC Care",
-  PRESCRIPTION_RX: "Prescription Rx",
-  MEDICAL_DEVICE: "Devices",
-  WELLNESS_SUPPLEMENT: "Supplements",
-  PEDIATRIC_CARE: "Pediatric",
-  COLD_CHAIN: "Cold Chain 2-8°C",
+const PHARMA_PAPERS_TAB_COPY: Record<
+  LocaleCode,
+  { tabPapers: string }
+> = {
+  en: { tabPapers: "Papers & Permits" },
+  fr: { tabPapers: "Agréments & Dossier" },
+  ar: { tabPapers: "التراخيص والوثائق" },
 };
 
-function formatMinorMoney(
-  minor: number,
-  currencyCode: string,
-  divisor = 100,
-): string {
-  const major = (minor / divisor).toFixed(2);
-  return `${major} ${currencyCode}`;
-}
-
+/** Industry-grade MediSync pharmacy commerce storefront & role-isolated pharmacist desk. */
 export function PharmacyStorefront({
   packs,
   apiBaseUrl,
 }: PharmacyStorefrontProps) {
-  const { t } = useLocale();
-  const { openImage } = useImageLightbox();
+  const { locale, t, isRtl } = useLocale();
+  const copy = PHARMA_COPY[locale];
+  const papersCopy = PHARMA_PAPERS_TAB_COPY[locale];
   const defaultCountry = resolveActivePack(packs)?.code ?? ACTIVE_COUNTRY_CODE;
 
-  const [selectedCountry, setSelectedCountry] = useState<string>(defaultCountry);
+  const [selectedCountry, setSelectedCountry] =
+    useState<string>(defaultCountry);
   const [selectedCategory, setSelectedCategory] = useState<
     PharmacyProductCategory | "ALL"
   >("ALL");
   const [selectedFacilityId, setSelectedFacilityId] = useState<string>("");
   const [searchText, setSearchText] = useState("");
-  const [activeMode, setActiveMode] = useState<"store" | "orders" | "manage">(
-    "store",
-  );
+  const [safetyFilter, setSafetyFilter] = useState<CatalogSafetyFilter>("ALL");
+  const [inStockOnly, setInStockOnly] = useState(false);
+  const [sortBy, setSortBy] = useState<CatalogSortOption>("recommended");
+  const [activeMode, setActiveMode] = useState<
+    "store" | "orders" | "dispense" | "manage" | "papers"
+  >("store");
 
   const [session, setSession] = useState<AuthResponse | null>(null);
+  const [sessionHydrated, setSessionHydrated] = useState(false);
   const sessionToken = session?.token ?? null;
   const sessionRole = session?.user.role ?? null;
   const sessionCountry = session?.user.countryCode ?? null;
+  const isPendingStaff = isPendingStaffVerification(session?.user);
   const canManageStock =
-    sessionRole === "PHARMACIST" || sessionRole === "OPS_ADMIN";
+    (sessionRole === "PHARMACIST" || sessionRole === "OPS_ADMIN") &&
+    !isPendingStaff;
+  const actionLockRef = useRef(false);
 
   const [facilities, setFacilities] = useState<DirectoryFacilitySummary[]>([]);
   const [products, setProducts] = useState<PharmacyProductSummary[]>([]);
+  const [serverCourierFeeMinor, setServerCourierFeeMinor] = useState<
+    number | null
+  >(null);
+  const [backendOffline, setBackendOffline] = useState(false);
+  const [loadingCatalog, setLoadingCatalog] = useState(true);
   const [orders, setOrders] = useState<PharmacyOrderSummary[]>([]);
   const [prescriptions, setPrescriptions] = useState<PrescriptionSummary[]>([]);
+  const [patientInsurances, setPatientInsurances] = useState<
+    PatientInsurancePolicy[]
+  >([]);
+  const [staffRxQueue, setStaffRxQueue] = useState<PrescriptionSummary[]>([]);
+  const [userDocs, setUserDocs] = useState<UserMediaDocument[]>([]);
+  const [facilityDocs, setFacilityDocs] = useState<FacilityMediaDocument[]>([]);
+  const [qrInput, setQrInput] = useState("");
+  const [verifiedRx, setVerifiedRx] = useState<PrescriptionSummary | null>(
+    null,
+  );
+  const [rxAllergyWarnings, setRxAllergyWarnings] = useState<AllergyWarning[]>(
+    [],
+  );
+  const [dispenseNote, setDispenseNote] = useState("");
 
   const [cart, setCart] = useState<CartLine[]>([]);
+  const [pendingSwitchProduct, setPendingSwitchProduct] =
+    useState<PharmacyProductSummary | null>(null);
+  const [inspectedProduct, setInspectedProduct] =
+    useState<PharmacyProductSummary | null>(null);
   const [fulfillmentMode, setFulfillmentMode] =
     useState<FulfillmentMode>("PHARMACY_PICKUP");
-  const [deliveryAddress, setDeliveryAddress] = useState(
-    "240 Boulevard d'Anfa, Casablanca",
-  );
+  const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [gpsPinnedCoords, setGpsPinnedCoords] = useState<{
+    lat: number;
+    lng: number;
+  } | null>(null);
+  const [locatingGps, setLocatingGps] = useState(false);
   const [paymentMethod, setPaymentMethod] =
     useState<PaymentMethod>("CARD_SIMULATED");
   const [selectedRxId, setSelectedRxId] = useState("");
@@ -135,21 +194,19 @@ export function PharmacyStorefront({
   const [printableOrder, setPrintableOrder] =
     useState<PharmacyOrderSummary | null>(null);
 
-  // Pharmacist product creation state
   const [newSku, setNewSku] = useState("");
   const [newName, setNewName] = useState("");
   const [newGeneric, setNewGeneric] = useState("");
+  const [newDosageForm, setNewDosageForm] = useState("");
+  const [newStrength, setNewStrength] = useState("");
   const [newCategory, setNewCategory] =
     useState<PharmacyProductCategory>("OTC_MEDICATION");
-  const [newPriceMajor, setNewPriceMajor] = useState("45.00");
-  const [newStockQty, setNewStockQty] = useState("40");
+  const [newPriceMajor, setNewPriceMajor] = useState("");
+  const [newStockQty, setNewStockQty] = useState("");
   const [newRequiresRx, setNewRequiresRx] = useState(false);
 
   const [busy, setBusy] = useState(false);
-  const [banner, setBanner] = useState<{
-    tone: "info" | "success" | "error";
-    text: string;
-  } | null>(null);
+  const setBanner = useToastSetter();
 
   const activePack = useMemo(
     () => packs.find((p) => p.code === selectedCountry) ?? packs[0],
@@ -163,94 +220,250 @@ export function PharmacyStorefront({
     return selectedCountry;
   }, [sessionCountry, sessionRole, selectedCountry]);
 
-  const loadCatalogAndOrders = useCallback(
-    async (
-      countryCode: string,
-      token: string | null,
-      facilityFilter: string,
-      categoryFilter: PharmacyProductCategory | "ALL",
-      queryText: string,
-    ) => {
-      const online = await checkBackendOnline();
-      if (!online) return;
-
-      const [facRes, prodRes] = await Promise.all([
-        fetchDirectoryFacilities(apiBaseUrl, {
-          countryCode,
-          kind: "PHARMACY",
-        }),
-        listPharmacyProducts(apiBaseUrl, {
-          countryCode,
-          ...(facilityFilter ? { facilityId: facilityFilter } : {}),
-          ...(categoryFilter !== "ALL" ? { category: categoryFilter } : {}),
-          ...(queryText.trim() ? { q: queryText.trim() } : {}),
-        }),
+  const loadPharmacistPapers = useCallback(
+    async (activeSession: AuthResponse | null) => {
+      if (
+        !activeSession?.token ||
+        (activeSession.user.role !== "PHARMACIST" &&
+          activeSession.user.role !== "OPS_ADMIN")
+      ) {
+        setUserDocs([]);
+        setFacilityDocs([]);
+        return;
+      }
+      const [myRes, facRes] = await Promise.all([
+        listMyUserMedia(apiBaseUrl, activeSession.token),
+        activeSession.user.facilityId
+          ? listFacilityMedia(
+              apiBaseUrl,
+              activeSession.token,
+              activeSession.user.facilityId,
+            )
+          : Promise.resolve({ ok: true as const, data: { documents: [] } }),
       ]);
-
-      if (facRes.ok) {
-        setFacilities(facRes.facilities);
-      }
-      if (prodRes.ok) {
-        setProducts(prodRes.data.products);
-      }
-
-      if (token) {
-        const [ordRes, rxRes] = await Promise.all([
-          listPharmacyOrders(apiBaseUrl, token, countryCode),
-          listMyPrescriptionsForCheckout(apiBaseUrl, token, countryCode),
-        ]);
-        if (ordRes.ok) setOrders(ordRes.data.orders);
-        if (rxRes.ok) setPrescriptions(rxRes.data.prescriptions);
-      }
+      if (myRes.ok) setUserDocs(myRes.data.documents);
+      if (facRes.ok) setFacilityDocs(facRes.data.documents);
     },
     [apiBaseUrl],
   );
 
+  const loadCatalogAndOrders = useCallback(
+    async (
+      countryCode: string,
+      activeSession: AuthResponse | null,
+      facilityFilter: string,
+      categoryFilter: PharmacyProductCategory | "ALL",
+      queryText: string,
+    ) => {
+      setLoadingCatalog(true);
+      try {
+        const online = await checkBackendOnline();
+        if (!online) {
+          setBackendOffline(true);
+          return;
+        }
+        setBackendOffline(false);
+
+        const canViewInactive =
+          Boolean(activeSession?.token) &&
+          (activeSession?.user.role === "PHARMACIST" ||
+            activeSession?.user.role === "OPS_ADMIN") &&
+          !isPendingStaffVerification(activeSession?.user);
+
+        const [facRes, prodRes] = await Promise.all([
+          fetchDirectoryFacilities(apiBaseUrl, {
+            countryCode,
+            kind: "PHARMACY",
+          }),
+          listPharmacyProducts(
+            apiBaseUrl,
+            {
+              countryCode,
+              ...(facilityFilter ? { facilityId: facilityFilter } : {}),
+              ...(categoryFilter !== "ALL" ? { category: categoryFilter } : {}),
+              ...(queryText.trim() ? { q: queryText.trim() } : {}),
+              ...(canViewInactive ? { includeInactive: true } : {}),
+            },
+            activeSession?.token,
+          ),
+        ]);
+
+        if (facRes.ok) {
+          setFacilities(facRes.facilities);
+        }
+        if (prodRes.ok) {
+          setProducts(prodRes.data.products);
+          if (typeof prodRes.data.deliveryFeeMinor === "number") {
+            setServerCourierFeeMinor(prodRes.data.deliveryFeeMinor);
+          }
+        }
+
+        const allowOrders = canReadPharmacyOrders(activeSession?.user);
+        const allowRx = canReadPrescriptions(activeSession?.user);
+        const isConsumer =
+          activeSession?.user.role === "PATIENT" ||
+          activeSession?.user.role === "CAREGIVER";
+        if (!allowOrders || !activeSession?.token) {
+          setOrders([]);
+          setPrescriptions([]);
+          setPatientInsurances([]);
+          return;
+        }
+
+        const [ordRes, rxRes, insRes] = await Promise.all([
+          listPharmacyOrders(apiBaseUrl, activeSession.token, countryCode),
+          allowRx
+            ? listMyPrescriptionsForCheckout(
+                apiBaseUrl,
+                activeSession.token,
+                countryCode,
+              )
+            : Promise.resolve(null),
+          isConsumer
+            ? listMyPatientInsurances(apiBaseUrl, activeSession.token)
+            : Promise.resolve(null),
+        ]);
+
+        if (
+          (!ordRes.ok && ordRes.status === 401) ||
+          (rxRes !== null && !rxRes.ok && rxRes.status === 401)
+        ) {
+          clearStoredSession();
+          setSession(null);
+          setOrders([]);
+          setPrescriptions([]);
+          setPatientInsurances([]);
+          setBanner({
+            tone: "error",
+            text: "Your sign-in session expired. Please sign in again via Portal.",
+          });
+          return;
+        }
+
+        setOrders(ordRes.ok ? ordRes.data.orders : []);
+        setPrescriptions(rxRes && rxRes.ok ? rxRes.data.prescriptions : []);
+        setPatientInsurances(
+          insRes && insRes.ok ? insRes.data.policies : [],
+        );
+      } finally {
+        setLoadingCatalog(false);
+      }
+    },
+    [apiBaseUrl, setBanner],
+  );
+
   useEffect(() => {
+    let active = true;
     const stored = readStoredSession();
     const params = new URLSearchParams(window.location.search);
-    const urlCountry = params.get("country");
     const urlFacilityId = params.get("facilityId") ?? "";
-    const initialToken = stored?.token ?? null;
-    const lockedCountry =
-      stored?.user.countryCode && stored.user.role !== "OPS_ADMIN"
-        ? stored.user.countryCode
-        : null;
-    const initialCountry = lockedCountry ?? urlCountry ?? defaultCountry;
+    const storedIsPending = isPendingStaffVerification(stored?.user);
+    const initialCountry = resolveEffectiveCountryCode(
+      stored?.user.countryCode ?? defaultCountry,
+    );
     setSession(stored);
+    setSessionHydrated(true);
     setSelectedCountry(initialCountry);
     setSelectedFacilityId(urlFacilityId);
+    if (
+      (stored?.user.role === "PHARMACIST" ||
+        stored?.user.role === "OPS_ADMIN") &&
+      !storedIsPending
+    ) {
+      setActiveMode("dispense");
+    }
 
-    void loadCatalogAndOrders(
-      initialCountry,
-      initialToken,
-      urlFacilityId,
-      "ALL",
-      "",
-    );
-  }, [defaultCountry, loadCatalogAndOrders]);
-
-  function addToCart(product: PharmacyProductSummary) {
-    setCart((prev) => {
-      if (
-        prev.length > 0 &&
-        prev[0]!.product.facilityId !== product.facilityId
-      ) {
-        setBanner({
-          tone: "info",
-          text: `Cart switched to ${product.facilityName} because each checkout targets one dispensing pharmacy.`,
-        });
-        return [{ product, quantity: 1 }];
+    async function bootstrap() {
+      let activeSession = stored;
+      if (activeSession && isPendingStaffVerification(activeSession.user)) {
+        const syncRes = await syncPendingSessionStatus(
+          apiBaseUrl,
+          activeSession,
+        );
+        if (!active) return;
+        if (syncRes.status === "expired") {
+          activeSession = null;
+          setSession(null);
+        } else if (syncRes.status === "updated" && syncRes.session) {
+          activeSession = syncRes.session;
+          setSession(syncRes.session);
+          if (
+            syncRes.session.user.role === "PHARMACIST" ||
+            syncRes.session.user.role === "OPS_ADMIN"
+          ) {
+            setActiveMode("dispense");
+          }
+        }
       }
+      const activeUser = activeSession?.user ?? null;
+      if (
+        activeUser &&
+        (activeUser.role === "PHARMACIST" || activeUser.role === "OPS_ADMIN")
+      ) {
+        void loadPharmacistPapers(activeSession);
+      }
+      if (
+        activeUser &&
+        !isConsumerUserOrGuest(activeUser) &&
+        ((activeUser.role !== "PHARMACIST" && activeUser.role !== "OPS_ADMIN") ||
+          isPendingStaffVerification(activeUser))
+      ) {
+        setLoadingCatalog(false);
+        return;
+      }
+      await loadCatalogAndOrders(
+        resolveEffectiveCountryCode(
+          activeSession?.user.countryCode ?? initialCountry,
+        ),
+        activeSession,
+        urlFacilityId,
+        "ALL",
+        "",
+      );
+    }
+
+    void bootstrap();
+    return () => {
+      active = false;
+    };
+  }, [apiBaseUrl, defaultCountry, loadCatalogAndOrders, loadPharmacistPapers]);
+
+  useEffect(() => {
+    if (!sessionToken || !canManageStock) {
+      setStaffRxQueue([]);
+      return;
+    }
+    let cancelled = false;
+    fetchPrescriptions(apiBaseUrl, sessionToken, effectiveCountry).then(
+      (res) => {
+        if (!cancelled && res.ok) {
+          setStaffRxQueue(res.data.prescriptions);
+        }
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBaseUrl, canManageStock, effectiveCountry, sessionToken]);
+
+  function addProductQuantity(product: PharmacyProductSummary, qty = 1) {
+    if (product.stockQty <= 0) return;
+    const boundedQty = Math.max(1, Math.min(product.stockQty, qty));
+
+    if (cart.length > 0 && cart[0]!.product.facilityId !== product.facilityId) {
+      setPendingSwitchProduct(product);
+      return;
+    }
+
+    setCart((prev) => {
       const idx = prev.findIndex((c) => c.product.id === product.id);
       if (idx >= 0) {
-        const currentQty = prev[idx]!.quantity;
-        if (currentQty >= product.stockQty) return prev;
+        const nextQty = Math.min(product.stockQty, prev[idx]!.quantity + boundedQty);
         return prev.map((line, i) =>
-          i === idx ? { ...line, quantity: line.quantity + 1 } : line,
+          i === idx ? { ...line, quantity: nextQty } : line,
         );
       }
-      return [...prev, { product, quantity: 1 }];
+      return [...prev, { product, quantity: boundedQty }];
     });
   }
 
@@ -272,10 +485,69 @@ export function PharmacyStorefront({
     );
   }
 
+  function handleDetectGpsLocation() {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      setBanner({
+        tone: "error",
+        text: "GPS detection is unavailable in this browser; please enter your delivery address manually.",
+      });
+      return;
+    }
+    setLocatingGps(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        setGpsPinnedCoords({ lat, lng });
+        setDeliveryAddress(
+          `GPS Delivery Pin (${lat.toFixed(4)}, ${lng.toFixed(4)})`,
+        );
+        setLocatingGps(false);
+        setBanner({
+          tone: "success",
+          text: "Courier GPS dropoff coordinates locked.",
+        });
+      },
+      () => {
+        setLocatingGps(false);
+        setBanner({
+          tone: "info",
+          text: "Location permission declined — type your street address directly below.",
+        });
+      },
+      { enableHighAccuracy: true, timeout: 6000 },
+    );
+  }
+
+  const cartQuantities = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const line of cart) {
+      map.set(line.product.id, line.quantity);
+    }
+    return map;
+  }, [cart]);
+
   const cartRequiresRx = useMemo(
     () => cart.some((line) => line.product.requiresPrescription),
     [cart],
   );
+
+  const effectivePack = useMemo(
+    () => packs.find((p) => p.code === effectiveCountry) ?? activePack,
+    [packs, effectiveCountry, activePack],
+  );
+  const allowRxCourier = effectivePack?.allowRxCourierDelivery ?? false;
+  const rxPickupOnly = cartRequiresRx && !allowRxCourier;
+
+  useEffect(() => {
+    if (rxPickupOnly && fulfillmentMode === "COURIER_DELIVERY") {
+      setFulfillmentMode("PHARMACY_PICKUP");
+      setBanner({
+        tone: "info",
+        text: `${effectivePack?.pharmacyLawReference ?? "Local pharmacy law"}: switched to Pharmacy Pickup because prescription medicines require in-person dispensing.`,
+      });
+    }
+  }, [rxPickupOnly, fulfillmentMode, effectivePack?.pharmacyLawReference, setBanner]);
 
   const cartSubtotalMinor = useMemo(
     () =>
@@ -289,97 +561,145 @@ export function PharmacyStorefront({
   const deliveryFeeMinor =
     cart.length === 0 || fulfillmentMode === "PHARMACY_PICKUP"
       ? 0
-      : effectiveCountry === "MA"
-        ? 2500
-        : effectiveCountry === "FR"
-          ? 590
-          : effectiveCountry === "US"
-            ? 699
-            : 500;
+      : (serverCourierFeeMinor ?? 0);
 
   async function handleCheckoutAndPay(e: FormEvent) {
     e.preventDefault();
     if (!sessionToken) {
       setBanner({
         tone: "error",
-        text: "Sign in via Portal (or use 1-Click Demo Personas) before placing an order.",
+        text: "Sign in via Portal before placing a pharmacy order.",
       });
       return;
     }
-    if (cart.length === 0) return;
+    if (isPendingStaff) {
+      setBanner({
+        tone: "error",
+        text: "Account verification pending approval.",
+      });
+      return;
+    }
+    if (cart.length === 0 || actionLockRef.current) return;
+    if (rxPickupOnly && fulfillmentMode === "COURIER_DELIVERY") {
+      setFulfillmentMode("PHARMACY_PICKUP");
+      setBanner({
+        tone: "error",
+        text: `${effectivePack?.pharmacyLawReference ?? "Local pharmacy law"} requires in-person Pharmacy Pickup for prescription medicines.`,
+      });
+      return;
+    }
     if (cartRequiresRx && !selectedRxId) {
       setBanner({
         tone: "error",
-        text: "Select an issued e-prescription to unlock Rx medications in your cart.",
+        text: "Select an issued doctor E-Prescription to fulfill Rx items in your cart.",
       });
       return;
     }
 
+    actionLockRef.current = true;
     const facilityId = cart[0]!.product.facilityId;
     setBusy(true);
     setBanner(null);
 
-    const createRes = await createPharmacyOrder(apiBaseUrl, sessionToken, {
-      facilityId,
-      items: cart.map((c) => ({
-        productId: c.product.id,
-        quantity: c.quantity,
-      })),
-      fulfillmentMode,
-      ...(fulfillmentMode === "COURIER_DELIVERY"
-        ? { deliveryAddress }
-        : {}),
-      ...(cartRequiresRx && selectedRxId ? { prescriptionId: selectedRxId } : {}),
-      ...(checkoutNotes.trim() ? { notes: checkoutNotes.trim() } : {}),
-    });
+    try {
+      const createRes = await createPharmacyOrder(apiBaseUrl, sessionToken, {
+        facilityId,
+        items: cart.map((c) => ({
+          productId: c.product.id,
+          quantity: c.quantity,
+        })),
+        fulfillmentMode,
+        ...(fulfillmentMode === "COURIER_DELIVERY"
+          ? {
+              deliveryAddress,
+              ...(gpsPinnedCoords
+                ? {
+                    deliveryLat: gpsPinnedCoords.lat,
+                    deliveryLng: gpsPinnedCoords.lng,
+                  }
+                : {}),
+            }
+          : {}),
+        ...(cartRequiresRx && selectedRxId
+          ? { prescriptionId: selectedRxId }
+          : {}),
+        ...(checkoutNotes.trim() ? { notes: checkoutNotes.trim() } : {}),
+      });
 
-    if (!createRes.ok) {
+      if (!createRes.ok) {
+        setBanner({
+          tone: "error",
+          text: `Order checkout failed: ${createRes.error}`,
+        });
+        return;
+      }
+
+      const payRes = await confirmPharmacyOrderPayment(
+        apiBaseUrl,
+        sessionToken,
+        createRes.data.order.id,
+        { paymentMethod },
+      );
+
+      if (!payRes.ok) {
+        if (payRes.error === "PAYMENT_PROVIDER_REQUIRED") {
+          await updatePharmacyOrderStatus(
+            apiBaseUrl,
+            sessionToken,
+            createRes.data.order.id,
+            { status: "CANCELLED" },
+          ).catch(() => undefined);
+          setPaymentMethod("CASH_ON_DELIVERY");
+          setBanner({
+            tone: "info",
+            text:
+              locale === "fr"
+                ? "Le paiement carte simulé est désactivé en production. Mode basculé sur Paiement à la livraison — cliquez à nouveau pour confirmer."
+                : locale === "ar"
+                  ? "الدفع التجريبي بالبطاقة معطّل في بيئة الإنتاج. تم التحويل تلقائياً إلى الدفع عند الاستلام — اضغط مجدداً لتأكيد الطلب."
+                  : "Simulated card checkout is disabled in production. Switched to Pay on Delivery — click checkout again to confirm.",
+          });
+          return;
+        }
+        setBanner({
+          tone: "error",
+          text: `Payment confirmation error: ${payRes.error}`,
+        });
+        return;
+      }
+
+      const paid = payRes.data.order;
+      setCart([]);
+      setGpsPinnedCoords(null);
+      setPrintableOrder(paid);
+      setActiveMode("orders");
+      setBanner({
+        tone: "success",
+        text: `Order paid cleanly! Receipt ${paid.receiptNumber ?? paid.id.slice(0, 8)}${paid.dispatchRequestId ? " · Live courier dispatch created." : ""}`,
+      });
+      await loadCatalogAndOrders(
+        effectiveCountry,
+        session,
+        selectedFacilityId,
+        selectedCategory,
+        searchText,
+      );
+    } finally {
+      actionLockRef.current = false;
       setBusy(false);
-      setBanner({
-        tone: "error",
-        text: `Order checkout failed: ${createRes.error}`,
-      });
-      return;
     }
-
-    const payRes = await confirmPharmacyOrderPayment(
-      apiBaseUrl,
-      sessionToken,
-      createRes.data.order.id,
-      { paymentMethod },
-    );
-    setBusy(false);
-
-    if (!payRes.ok) {
-      setBanner({
-        tone: "error",
-        text: `Payment confirmation error: ${payRes.error}`,
-      });
-      return;
-    }
-
-    const paid = payRes.data.order;
-    setCart([]);
-    setPrintableOrder(paid);
-    setActiveMode("orders");
-    setBanner({
-      tone: "success",
-      text: `Order paid cleanly! Receipt ${paid.receiptNumber ?? paid.id.slice(0, 8)}${paid.dispatchRequestId ? " · Live courier dispatch created." : ""}`,
-    });
-    await loadCatalogAndOrders(
-      effectiveCountry,
-      sessionToken,
-      selectedFacilityId,
-      selectedCategory,
-      searchText,
-    );
   }
 
-  async function handleAddCatalogProduct(e: FormEvent) {
+  async function handleAddCatalogProduct(e: FormEvent): Promise<boolean> {
     e.preventDefault();
-    if (!sessionToken) {
-      setBanner({ tone: "error", text: "Sign in as Pharmacist or Admin first." });
-      return;
+    if (!sessionToken || actionLockRef.current) {
+      if (!sessionToken) {
+        setBanner({
+          tone: "error",
+          text: "Sign in as Pharmacist or Admin first.",
+        });
+      }
+      return false;
     }
     const targetFac = selectedFacilityId || facilities[0]?.id;
     if (!targetFac) {
@@ -387,928 +707,632 @@ export function PharmacyStorefront({
         tone: "error",
         text: "Select a verified pharmacy facility first.",
       });
-      return;
+      return false;
     }
-    const priceMinor = Math.round(Number(newPriceMajor) * 100);
-    const stockQty = Number(newStockQty);
+    const rawPrice = newPriceMajor.trim().replace(",", ".");
+    const rawStock = newStockQty.trim().replace(",", ".");
+    const priceMinor =
+      rawPrice === "" ? Number.NaN : Math.round(Number(rawPrice) * 100);
+    const stockQty = rawStock === "" ? Number.NaN : Number(rawStock);
     if (!Number.isFinite(priceMinor) || priceMinor < 10) {
-      setBanner({ tone: "error", text: "Enter a valid positive price." });
-      return;
+      setBanner({
+        tone: "error",
+        text:
+          locale === "fr"
+            ? "Veuillez saisir un prix PPV valide (≥ 0.10)."
+            : locale === "ar"
+              ? "يرجى إدخال سعر PPV صحيح (0.10 على الأقل)."
+              : "Enter a valid positive PPV price (≥ 0.10).",
+      });
+      return false;
+    }
+    if (!Number.isFinite(stockQty) || !Number.isInteger(stockQty) || stockQty < 0) {
+      setBanner({
+        tone: "error",
+        text:
+          locale === "fr"
+            ? "Veuillez saisir une quantité de stock entière valide (≥ 0)."
+            : locale === "ar"
+              ? "يرجى إدخال كمية مخزون صحيحة (0 أو أكثر)."
+              : "Enter a valid whole-number stock quantity (≥ 0).",
+      });
+      return false;
     }
 
+    actionLockRef.current = true;
     setBusy(true);
-    const res = await createPharmacyProduct(apiBaseUrl, sessionToken, {
-      facilityId: targetFac,
-      sku: newSku,
-      name: newName,
-      ...(newGeneric.trim() ? { genericName: newGeneric.trim() } : {}),
-      category: newCategory,
-      dosageForm: "Box",
-      strength: "Standard",
-      requiresPrescription: newRequiresRx,
-      priceMinor,
-      stockQty: Number.isFinite(stockQty) ? stockQty : 20,
-    });
-    setBusy(false);
+    try {
+      const res = await createPharmacyProduct(apiBaseUrl, sessionToken, {
+        facilityId: targetFac,
+        sku: newSku,
+        name: newName,
+        ...(newGeneric.trim() ? { genericName: newGeneric.trim() } : {}),
+        category: newCategory,
+        dosageForm: newDosageForm.trim() || "Box",
+        strength: newStrength.trim() || "Standard",
+        requiresPrescription: newRequiresRx,
+        priceMinor,
+        stockQty: Math.round(stockQty),
+      });
 
-    if (!res.ok) {
-      setBanner({ tone: "error", text: `Catalog error: ${res.error}` });
-      return;
+      if (!res.ok) {
+        setBanner({ tone: "error", text: `Catalog error: ${res.error}` });
+        return false;
+      }
+      setNewSku("");
+      setNewName("");
+      setNewGeneric("");
+      setNewDosageForm("");
+      setNewStrength("");
+      setNewPriceMajor("");
+      setNewStockQty("");
+      setBanner({
+        tone: "success",
+        text: `Added ${res.data.product.name} (${res.data.product.sku}) to catalog.`,
+      });
+      await loadCatalogAndOrders(
+        effectiveCountry,
+        session,
+        selectedFacilityId,
+        selectedCategory,
+        searchText,
+      );
+      return true;
+    } finally {
+      actionLockRef.current = false;
+      setBusy(false);
     }
-    setNewSku("");
-    setNewName("");
-    setNewGeneric("");
-    setBanner({
-      tone: "success",
-      text: `Added ${res.data.product.name} (${res.data.product.sku}) to catalog.`,
-    });
-    await loadCatalogAndOrders(
-      effectiveCountry,
-      sessionToken,
-      selectedFacilityId,
-      selectedCategory,
-      searchText,
-    );
   }
 
-  async function handleRestock(product: PharmacyProductSummary, delta: number) {
-    if (!sessionToken) return;
+  async function handleUpdateProductPricingStock(
+    product: PharmacyProductSummary,
+    patch: UpdatePharmacyProductInput,
+  ) {
+    if (!sessionToken || actionLockRef.current) return;
+    actionLockRef.current = true;
     setBusy(true);
-    const res = await updatePharmacyProductStock(
-      apiBaseUrl,
-      sessionToken,
-      product.id,
-      { stockQty: product.stockQty + delta },
-    );
-    setBusy(false);
-    if (!res.ok) {
-      setBanner({ tone: "error", text: `Restock blocked: ${res.error}` });
-      return;
+    try {
+      const res = await updatePharmacyProductStock(
+        apiBaseUrl,
+        sessionToken,
+        product.id,
+        patch,
+      );
+      if (!res.ok) {
+        setBanner({ tone: "error", text: `Restock blocked: ${res.error}` });
+        return;
+      }
+      setBanner({
+        tone: "success",
+        text: `${product.name} updated (${res.data.product.stockQty} units).`,
+      });
+      await loadCatalogAndOrders(
+        effectiveCountry,
+        session,
+        selectedFacilityId,
+        selectedCategory,
+        searchText,
+      );
+    } finally {
+      actionLockRef.current = false;
+      setBusy(false);
     }
-    setBanner({
-      tone: "success",
-      text: `${product.name} stock updated to ${res.data.product.stockQty}.`,
-    });
-    await loadCatalogAndOrders(
-      effectiveCountry,
-      sessionToken,
-      selectedFacilityId,
-      selectedCategory,
-      searchText,
-    );
+  }
+
+  async function handleVerifyQr(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!sessionToken || !canManageStock || actionLockRef.current) return;
+    if (!qrInput.trim()) return;
+    actionLockRef.current = true;
+    setBusy(true);
+    try {
+      const res = await verifyPrescriptionQr(
+        apiBaseUrl,
+        sessionToken,
+        qrInput.trim(),
+      );
+      if (!res.ok) {
+        setVerifiedRx(null);
+        setRxAllergyWarnings([]);
+        setBanner({
+          tone: "error",
+          text: `QR Verification Failed: ${res.error}`,
+        });
+        return;
+      }
+      const firstMed =
+        res.data.prescription.medications[0]?.name ?? "E-Prescription";
+      const warnings = res.data.allergyWarnings ?? [];
+      setVerifiedRx(res.data.prescription);
+      setRxAllergyWarnings(warnings);
+      setBanner({
+        tone: warnings.length > 0 ? "info" : "success",
+        text:
+          warnings.length > 0
+            ? `Allergy Alert on ${firstMed}: ${warnings[0]!.message}`
+            : `Verified E-Rx for ${res.data.prescription.patientName}: ${firstMed}.`,
+      });
+    } finally {
+      actionLockRef.current = false;
+      setBusy(false);
+    }
+  }
+
+  async function handleDispenseRx(prescriptionId: string) {
+    if (!sessionToken || !canManageStock || actionLockRef.current) return;
+    actionLockRef.current = true;
+    setBusy(true);
+    try {
+      const targetPharmacyId =
+        session?.user.facilityId ?? (selectedFacilityId || undefined);
+      const res = await dispensePrescription(
+        apiBaseUrl,
+        sessionToken,
+        prescriptionId,
+        {
+          ...(targetPharmacyId ? { pharmacyFacilityId: targetPharmacyId } : {}),
+          ...(dispenseNote.trim()
+            ? { dispensingNote: dispenseNote.trim() }
+            : {}),
+        },
+      );
+      if (!res.ok) {
+        setBanner({
+          tone: "error",
+          text:
+            res.status === 409
+              ? "Prescription already dispensed in another session."
+              : `Dispense failed: ${res.error}`,
+        });
+        return;
+      }
+      const firstMed =
+        res.data.prescription.medications[0]?.name ?? "Medication";
+      setVerifiedRx(res.data.prescription);
+      setDispenseNote("");
+      setStaffRxQueue((prev) =>
+        prev.map((rx) =>
+          rx.id === res.data.prescription.id ? res.data.prescription : rx,
+        ),
+      );
+      setBanner({
+        tone: "success",
+        text: `Dispensed ${firstMed} to ${res.data.prescription.patientName}.`,
+      });
+    } finally {
+      actionLockRef.current = false;
+      setBusy(false);
+    }
   }
 
   async function handleAdvanceOrder(
     order: PharmacyOrderSummary,
     nextStatus: "PREPARING" | "OUT_FOR_DELIVERY" | "DELIVERED" | "CANCELLED",
   ) {
-    if (!sessionToken) return;
+    if (!sessionToken || isPendingStaff || actionLockRef.current) return;
+    actionLockRef.current = true;
     setBusy(true);
-    const res = await updatePharmacyOrderStatus(apiBaseUrl, sessionToken, order.id, {
-      status: nextStatus,
-    });
-    setBusy(false);
-    if (!res.ok) {
-      setBanner({ tone: "error", text: `Order update blocked: ${res.error}` });
-      return;
+    try {
+      const res = await updatePharmacyOrderStatus(
+        apiBaseUrl,
+        sessionToken,
+        order.id,
+        { status: nextStatus },
+      );
+      if (!res.ok) {
+        setBanner({ tone: "error", text: `Order update blocked: ${res.error}` });
+        return;
+      }
+      setBanner({
+        tone: "success",
+        text: `Order ${order.receiptNumber ?? order.id.slice(0, 8)} moved to ${nextStatus}.`,
+      });
+      await loadCatalogAndOrders(
+        effectiveCountry,
+        session,
+        selectedFacilityId,
+        selectedCategory,
+        searchText,
+      );
+    } finally {
+      actionLockRef.current = false;
+      setBusy(false);
     }
-    setBanner({
-      tone: "success",
-      text: `Order ${order.receiptNumber ?? order.id.slice(0, 8)} moved to ${nextStatus}.`,
-    });
-    await loadCatalogAndOrders(
-      effectiveCountry,
-      sessionToken,
+  }
+
+  const currencyCode = activePack?.currencyCode ?? effectiveCountry;
+  const showPendingStaffGate =
+    sessionHydrated &&
+    Boolean(session?.user) &&
+    !isConsumerUserOrGuest(session?.user) &&
+    isPendingStaff;
+  const isBlockedStaffVisitor =
+    sessionHydrated &&
+    Boolean(session?.user) &&
+    !isConsumerUserOrGuest(session?.user) &&
+    !canManageStock;
+
+  const handleSignOut = () => {
+    revokeClientSession(apiBaseUrl);
+    setSession(null);
+    setOrders([]);
+    setPrescriptions([]);
+    setPatientInsurances([]);
+    setStaffRxQueue([]);
+    setVerifiedRx(null);
+    setQrInput("");
+    setActiveMode("store");
+    void loadCatalogAndOrders(
+      defaultCountry,
+      null,
       selectedFacilityId,
       selectedCategory,
       searchText,
     );
-  }
+  };
 
-  const currencyCode = activePack?.currencyCode ?? "MAD";
+  const inspectedFacility = inspectedProduct
+    ? (facilities.find((f) => f.id === inspectedProduct.facilityId) ?? null)
+    : null;
 
   return (
-    <div className="space-y-6">
-      <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-xs">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <p className="font-mono-tabular text-xs font-semibold uppercase tracking-wider text-teal-800">
-              {t("pharma.eyebrow")} · {currencyCode}
-            </p>
-            <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">
-              {t("pharma.heading")}
-            </h1>
-            <p className="mt-1 max-w-2xl text-sm text-slate-600">
-              {t("pharma.subtitle")}
-            </p>
-          </div>
-
-          <ActiveRegionPill
-            code={effectiveCountry}
-            name={activePack?.name ?? "Morocco"}
-            currencyCode={currencyCode}
-            emergencyHotline={activePack?.emergencyHotlines.ambulance}
-          />
-        </div>
-
-        <SessionAccountBar
-          session={session}
-          prompt="Sign in on the Care Portal to check out Rx items or track pharmacy deliveries."
-          onSignOut={() => {
-            clearStoredSession();
-            setSession(null);
-            setOrders([]);
-            setPrescriptions([]);
-            setActiveMode("store");
-          }}
-        />
-
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
-          <div className="flex flex-wrap gap-2" role="tablist">
+    <div dir={isRtl ? "rtl" : "ltr"} className="space-y-4">
+      <WorkspaceHeader
+        title={canManageStock ? copy.pharmacistHeading : t("pharma.heading")}
+        countryCode={effectiveCountry}
+        countryName={formatCountryDisplayName(
+          effectiveCountry,
+          activePack?.name ?? effectiveCountry,
+          locale,
+        )}
+        currencyCode={currencyCode}
+        emergencyHotline={activePack?.emergencyHotlines.ambulance ?? ""}
+        user={session?.user ?? null}
+        guestLabel={canManageStock ? copy.pharmacistGuest : copy.customerGuest}
+        onSignOut={handleSignOut}
+        actions={
+          isBlockedStaffVisitor ? null : (
             <button
               type="button"
-              role="tab"
-              aria-selected={activeMode === "store"}
-              onClick={() => setActiveMode("store")}
-              className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                activeMode === "store"
-                  ? "bg-teal-800 text-white"
-                  : "border border-slate-200 bg-white text-slate-700 hover:border-teal-700"
-              }`}
+              onClick={() =>
+                void loadCatalogAndOrders(
+                  effectiveCountry,
+                  session,
+                  selectedFacilityId,
+                  selectedCategory,
+                  searchText,
+                )
+              }
+              aria-label={copy.refreshAria}
+              className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 shadow-2xs transition hover:border-teal-700 hover:text-teal-900"
             >
-              <Pill className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>Catalog & Checkout</span>
+              <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+              <span className="hidden sm:inline">{copy.refreshBtn}</span>
             </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeMode === "orders"}
-              onClick={() => setActiveMode("orders")}
-              className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                activeMode === "orders"
-                  ? "bg-teal-800 text-white"
-                  : "border border-slate-200 bg-white text-slate-700 hover:border-teal-700"
-              }`}
-            >
-              <Package className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>Orders & Receipts ({orders.length})</span>
-            </button>
-            {canManageStock ? (
-              <button
-                type="button"
-                role="tab"
-                aria-selected={activeMode === "manage"}
-                onClick={() => setActiveMode("manage")}
-                className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                  activeMode === "manage"
-                    ? "bg-teal-800 text-white"
-                    : "border border-slate-200 bg-white text-slate-700 hover:border-teal-700"
-                }`}
-              >
-                <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>Pharmacist Stock Manager</span>
-              </button>
-            ) : null}
+          )
+        }
+      />
+
+      <ConsumerWorkspaceGuard
+        user={session?.user ?? null}
+        hydrated={sessionHydrated}
+        surfaceTitle={copy.surfaceTitle}
+        allowRoles={["PHARMACIST", "OPS_ADMIN"]}
+        onSignOut={handleSignOut}
+      >
+        {showPendingStaffGate && session?.user && sessionToken ? (
+          <div className="space-y-4">
+            <VerificationGateNotice user={session.user} />
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <FacilityPapersCard
+                apiBaseUrl={apiBaseUrl}
+                token={sessionToken}
+                facilityId={session.user.facilityId ?? null}
+                facilityName={
+                  facilities.find((f) => f.id === session.user.facilityId)?.name ??
+                  null
+                }
+                facilityKind="PHARMACY"
+                documents={facilityDocs}
+                busy={busy}
+                onBusyChange={setBusy}
+                onDocumentsUpdated={() => loadPharmacistPapers(session)}
+                onFeedback={(tone, text) => setBanner({ tone, text })}
+              />
+              <ProfileCredentialsPanel
+                apiBaseUrl={apiBaseUrl}
+                token={sessionToken}
+                userRole={session.user.role}
+                documents={userDocs}
+                busy={busy}
+                onBusyChange={setBusy}
+                onDocumentsUpdated={() => loadPharmacistPapers(session)}
+                onFeedback={(tone, text) => setBanner({ tone, text })}
+              />
+            </div>
           </div>
+        ) : (
+          <>
+            <VerificationGateNotice user={session?.user} compact />
 
-          <UiButton
-            variant="secondary"
-            size="sm"
-            onClick={() =>
-              void loadCatalogAndOrders(
-                effectiveCountry,
-                sessionToken,
-                selectedFacilityId,
-                selectedCategory,
-                searchText,
-              )
-            }
-          >
-            <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>Refresh</span>
-          </UiButton>
-        </div>
-      </section>
-
-      {banner ? <StatusBanner tone={banner.tone} message={banner.text} /> : null}
-
-      {activeMode === "store" ? (
-        <div className="grid gap-6 lg:grid-cols-12">
-          <div className="min-w-0 space-y-4 lg:col-span-8">
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="relative">
-                  <Search
-                    className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-400"
-                    aria-hidden="true"
-                  />
-                  <UiInput
-                    id="pharma-search"
-                    type="search"
-                    value={searchText}
-                    onChange={(e) => {
-                      const next = e.target.value;
-                      setSearchText(next);
-                      void loadCatalogAndOrders(
-                        effectiveCountry,
-                        sessionToken,
-                        selectedFacilityId,
-                        selectedCategory,
-                        next,
-                      );
-                    }}
-                    placeholder={t("pharma.searchPlaceholder")}
-                    className="pl-9"
-                  />
-                </div>
-
-                <UiSelect
-                  id="pharma-facility-filter"
-                  aria-label="Dispensing Pharmacy Filter"
-                  value={selectedFacilityId}
-                  onChange={(e) => {
-                    const nextFac = e.target.value;
-                    setSelectedFacilityId(nextFac);
+            {backendOffline ? (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-950">
+                <p className="font-semibold">{copy.offlineBanner}</p>
+                <button
+                  type="button"
+                  onClick={() =>
                     void loadCatalogAndOrders(
                       effectiveCountry,
-                      sessionToken,
-                      nextFac,
+                      session,
+                      selectedFacilityId,
                       selectedCategory,
                       searchText,
-                    );
-                  }}
-                >
-                  <option value="">All Pharmacies ({facilities.length})</option>
-                  {facilities.map((fac) => (
-                    <option key={fac.id} value={fac.id}>
-                      {fac.name} ({fac.licenseNumber})
-                    </option>
-                  ))}
-                </UiSelect>
-              </div>
-
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedCategory("ALL");
-                    void loadCatalogAndOrders(
-                      effectiveCountry,
-                      sessionToken,
-                      selectedFacilityId,
-                      "ALL",
-                      searchText,
-                    );
-                  }}
-                  className={`rounded-lg px-2.5 py-1 text-xs font-semibold ${
-                    selectedCategory === "ALL"
-                      ? "bg-slate-900 text-white"
-                      : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                  }`}
-                >
-                  All Categories
-                </button>
-                {PharmacyProductCategorySchema.options.map((cat) => (
-                  <button
-                    key={cat}
-                    type="button"
-                    onClick={() => {
-                      setSelectedCategory(cat);
-                      void loadCatalogAndOrders(
-                        effectiveCountry,
-                        sessionToken,
-                        selectedFacilityId,
-                        cat,
-                        searchText,
-                      );
-                    }}
-                    className={`rounded-lg px-2.5 py-1 text-xs font-semibold ${
-                      selectedCategory === cat
-                        ? "bg-teal-800 text-white"
-                        : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                    }`}
-                  >
-                    {CATEGORY_LABELS[cat]}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {products.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-600">
-                No pharmacy items loaded yet for {effectiveCountry}. Ensure the
-                API daemon is running with seeded data or add items in the
-                Pharmacist Stock Manager tab.
-              </div>
-            ) : (
-              <div className="grid gap-4 sm:grid-cols-2">
-                {products.map((product) => {
-                  const pharmacyInterior = resolveFacilityPicture("PHARMACY");
-                  const productPackshot = resolveProductPicture(
-                    product.category,
-                    product.imageUrl,
-                  );
-                  return (
-                    <article
-                      key={product.id}
-                      className="flex flex-col justify-between rounded-2xl border border-slate-200 bg-white p-4 shadow-xs"
-                    >
-                      <div>
-                        <div className="relative mb-3">
-                          <ProductThumbnail
-                            name={product.name}
-                            category={product.category}
-                            subtitle={`${product.facilityName} · ${formatMinorMoney(product.priceMinor, product.currencyCode)}`}
-                            imageUrl={product.imageUrl}
-                            className="h-52 sm:h-56 w-full"
-                          />
-                          <UiBadge
-                            tone={product.requiresPrescription ? "amber" : "teal"}
-                            className="pointer-events-none absolute left-2.5 top-2.5 uppercase shadow-xs"
-                          >
-                            {product.requiresPrescription ? "Rx Required" : "OTC"}
-                          </UiBadge>
-                        </div>
-                        <div className="flex items-start justify-between gap-2">
-                          <h2 className="text-sm font-bold text-slate-900">
-                            {product.name}
-                          </h2>
-                          <span className="shrink-0 font-mono-tabular text-[11px] font-medium text-slate-500">
-                            {product.sku}
-                          </span>
-                        </div>
-                        <p className="mt-0.5 text-xs text-slate-600">
-                          {product.genericName ?? product.dosageForm} ·{" "}
-                          {product.strength}
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            openImage({
-                              src: productPackshot,
-                              alt: product.name,
-                              primaryLabel: "Product Packshot",
-                              secondarySrc: pharmacyInterior,
-                              secondaryAlt: product.facilityName,
-                              secondaryLabel: "Dispensing Pharmacy",
-                              initialView: "secondary",
-                              title: product.name,
-                              subtitle: `${product.facilityName} · ${formatMinorMoney(product.priceMinor, product.currencyCode)}`,
-                              badge: product.requiresPrescription
-                                ? "Rx Required"
-                                : "OTC",
-                              specs: [
-                                {
-                                  label: "Generic",
-                                  value:
-                                    product.genericName ?? product.dosageForm,
-                                },
-                                { label: "Strength", value: product.strength },
-                                {
-                                  label: "Stock",
-                                  value: `${product.stockQty} units`,
-                                },
-                                {
-                                  label: "Pharmacy",
-                                  value: product.facilityName,
-                                },
-                              ],
-                            })
-                          }
-                          aria-label={`Inspect ${product.facilityName} dispensary`}
-                          className="mt-2.5 flex w-full items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-left transition-colors hover:border-teal-700 hover:bg-teal-50/40"
-                        >
-                          <img
-                            src={pharmacyInterior}
-                            alt={product.facilityName}
-                            className="h-8 w-10 shrink-0 rounded object-cover"
-                          />
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-[11px] font-semibold text-slate-800">
-                              {product.facilityName}
-                            </p>
-                            <p className="flex items-center gap-1 text-[10px] text-teal-800">
-                              <Building2
-                                className="h-3 w-3 shrink-0"
-                                aria-hidden="true"
-                              />
-                              <span>View dispensing pharmacy</span>
-                            </p>
-                          </div>
-                        </button>
-                      </div>
-
-                      <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3">
-                        <div>
-                          <p className="font-mono-tabular text-base font-bold text-slate-900">
-                            {formatMinorMoney(
-                              product.priceMinor,
-                              product.currencyCode,
-                            )}
-                          </p>
-                          <p className="font-mono-tabular text-[11px] text-slate-500">
-                            Stock: {product.stockQty} units
-                          </p>
-                        </div>
-
-                        <UiButton
-                          size="sm"
-                          disabled={product.stockQty === 0}
-                          onClick={() => addToCart(product)}
-                        >
-                          <ShoppingCart className="h-3.5 w-3.5" aria-hidden="true" />
-                          <span>{t("pharma.addToCart")}</span>
-                        </UiButton>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          <aside className="min-w-0 lg:col-span-4">
-            <form
-              onSubmit={(e) => void handleCheckoutAndPay(e)}
-              className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-4"
-            >
-              <div className="flex items-center justify-between">
-                <h2 className="flex items-center gap-2 text-base font-bold text-slate-900">
-                  <ShoppingCart className="h-4 w-4 text-teal-800" aria-hidden="true" />
-                  <span>{t("pharma.cartTitle")}</span>
-                </h2>
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 font-mono-tabular text-xs font-bold text-slate-700">
-                  {cart.reduce((sum, l) => sum + l.quantity, 0)} items
-                </span>
-              </div>
-
-              {cart.length === 0 ? (
-                <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
-                  {t("pharma.emptyCart")}
-                </p>
-              ) : (
-                <ul className="space-y-2.5">
-                  {cart.map((line) => (
-                    <li
-                      key={line.product.id}
-                      className="flex items-center justify-between gap-2.5 rounded-xl border border-slate-200 bg-slate-50 p-2.5"
-                    >
-                      <div className="flex min-w-0 items-center gap-2.5">
-                        <ProductThumbnail
-                          name={line.product.name}
-                          category={line.product.category}
-                          subtitle={line.product.facilityName}
-                          imageUrl={line.product.imageUrl}
-                          className="h-14 w-14 shrink-0 rounded-lg"
-                        />
-                        <div className="min-w-0">
-                          <p className="truncate text-xs font-semibold text-slate-900">
-                            {line.product.name}
-                          </p>
-                        <p className="font-mono-tabular text-[11px] text-slate-600">
-                          {formatMinorMoney(
-                            line.product.priceMinor * line.quantity,
-                            line.product.currencyCode,
-                          )}
-                        </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => updateCartQty(line.product.id, -1)}
-                          className="h-7 w-7 rounded-md border border-slate-300 bg-white text-xs font-bold"
-                        >
-                          -
-                        </button>
-                        <span className="w-6 text-center font-mono-tabular text-xs font-bold">
-                          {line.quantity}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => updateCartQty(line.product.id, 1)}
-                          className="h-7 w-7 rounded-md border border-slate-300 bg-white text-xs font-bold"
-                        >
-                          +
-                        </button>
-                        <button
-                          type="button"
-                          aria-label="Remove item"
-                          onClick={() =>
-                            updateCartQty(line.product.id, -line.quantity)
-                          }
-                          className="p-1 text-rose-600 hover:text-rose-800"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                        </button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              {cartRequiresRx ? (
-                <div>
-                  <label
-                    htmlFor="checkout-rx-select"
-                    className="block text-xs font-semibold uppercase tracking-wider text-amber-900"
-                  >
-                    Attach Issued E-Prescription (Rx Required)
-                  </label>
-                  <select
-                    id="checkout-rx-select"
-                    value={selectedRxId}
-                    onChange={(e) => setSelectedRxId(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-slate-900"
-                  >
-                    <option value="">-- Select patient prescription --</option>
-                    {prescriptions.map((rx) => (
-                      <option key={rx.id} value={rx.id}>
-                        {rx.medications[0]?.name ?? "Rx"} · Dr. {rx.doctorName} (
-                        {rx.status})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ) : null}
-
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setFulfillmentMode("PHARMACY_PICKUP")}
-                  className={`min-h-[38px] rounded-xl border px-2 py-1.5 text-xs font-semibold ${
-                    fulfillmentMode === "PHARMACY_PICKUP"
-                      ? "border-teal-800 bg-teal-50 text-teal-900"
-                      : "border-slate-200 bg-white text-slate-700"
-                  }`}
-                >
-                  Pharmacy Pickup
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFulfillmentMode("COURIER_DELIVERY")}
-                  className={`inline-flex min-h-[38px] items-center justify-center gap-1 rounded-xl border px-2 py-1.5 text-xs font-semibold ${
-                    fulfillmentMode === "COURIER_DELIVERY"
-                      ? "border-teal-800 bg-teal-50 text-teal-900"
-                      : "border-slate-200 bg-white text-slate-700"
-                  }`}
-                >
-                  <Truck className="h-3.5 w-3.5" aria-hidden="true" />
-                  <span>Courier Dispatch</span>
-                </button>
-              </div>
-
-              {fulfillmentMode === "COURIER_DELIVERY" ? (
-                <div>
-                  <label
-                    htmlFor="checkout-address"
-                    className="block text-xs font-semibold uppercase tracking-wider text-slate-700"
-                  >
-                    Courier Delivery Address
-                  </label>
-                  <input
-                    id="checkout-address"
-                    type="text"
-                    required
-                    value={deliveryAddress}
-                    onChange={(e) => setDeliveryAddress(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900"
-                  />
-                </div>
-              ) : null}
-
-              <div>
-                <label
-                  htmlFor="checkout-payment"
-                  className="block text-xs font-semibold uppercase tracking-wider text-slate-700"
-                >
-                  Payment Channel
-                </label>
-                <select
-                  id="checkout-payment"
-                  value={paymentMethod}
-                  onChange={(e) =>
-                    setPaymentMethod(e.target.value as PaymentMethod)
+                    )
                   }
-                  className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-900"
+                  className="rounded-full bg-amber-900 px-3 py-1 text-[11px] font-semibold text-white hover:bg-amber-950"
                 >
-                  <option value="CARD_SIMULATED">Online Card / Instant Receipt</option>
-                  <option value="INSURANCE_COPAY">Insurance Co-Pay Mutual</option>
-                  <option value="CASH_ON_DELIVERY">Cash / Counter Pickup</option>
-                </select>
+                  {copy.retryBtn}
+                </button>
               </div>
+            ) : null}
 
-              <div>
-                <label
-                  htmlFor="checkout-notes"
-                  className="block text-xs font-semibold uppercase tracking-wider text-slate-700"
-                >
-                  Pharmacist Note (Optional)
-                </label>
-                <input
-                  id="checkout-notes"
-                  type="text"
-                  value={checkoutNotes}
-                  onChange={(e) => setCheckoutNotes(e.target.value)}
-                  placeholder="Allergy or doorstep instructions"
-                  className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900"
-                />
-              </div>
-
-              <div className="space-y-1 border-t border-slate-100 pt-3 font-mono-tabular text-xs">
-                <div className="flex justify-between text-slate-600">
-                  <span>Subtotal</span>
-                  <span>
-                    {formatMinorMoney(
-                      cartSubtotalMinor,
-                      cart[0]?.product.currencyCode ?? currencyCode,
-                    )}
-                  </span>
-                </div>
-                <div className="flex justify-between text-slate-600">
-                  <span>Courier Fee</span>
-                  <span>
-                    {formatMinorMoney(
-                      deliveryFeeMinor,
-                      cart[0]?.product.currencyCode ?? currencyCode,
-                    )}
-                  </span>
-                </div>
-                <div className="flex justify-between text-sm font-bold text-slate-900">
-                  <span>Total</span>
-                  <span>
-                    {formatMinorMoney(
-                      cartSubtotalMinor + deliveryFeeMinor,
-                      cart[0]?.product.currencyCode ?? currencyCode,
-                    )}
-                  </span>
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={busy || cart.length === 0}
-                className="min-h-[44px] w-full rounded-xl bg-teal-800 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-teal-900 disabled:opacity-50"
-              >
-                {busy ? "Processing Checkout..." : t("pharma.placeOrder")}
-              </button>
-            </form>
-          </aside>
-        </div>
-      ) : null}
-
-      {activeMode === "orders" ? (
-        <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-xs">
-          <h2 className="text-lg font-bold text-slate-900">
-            {t("pharma.ordersTitle")}
-          </h2>
-
-          {printableOrder ? (
-            <div className="rounded-xl border-2 border-teal-700 bg-teal-50/40 p-4 space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <p className="font-mono-tabular text-xs font-bold text-teal-900">
-                  OFFICIAL PHARMACY RECEIPT ·{" "}
-                  {printableOrder.receiptNumber ?? printableOrder.id}
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => window.print()}
-                    className="inline-flex items-center gap-1 rounded-lg bg-teal-800 px-3 py-1 text-xs font-semibold text-white"
-                  >
-                    <Printer className="h-3.5 w-3.5" aria-hidden="true" />
-                    <span>Print Receipt</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPrintableOrder(null)}
-                    className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700"
-                  >
-                    Close
-                  </button>
-                </div>
-              </div>
-              <p className="text-xs text-slate-700">
-                Patient: <strong>{printableOrder.patientName}</strong> · Pharmacy:{" "}
-                <strong>{printableOrder.facilityName}</strong> · Method:{" "}
-                {printableOrder.paymentMethod ?? "PENDING"}
-              </p>
-              <ul className="divide-y divide-teal-200/60 text-xs">
-                {printableOrder.items.map((item) => (
-                  <li key={item.id} className="flex justify-between py-1">
-                    <span>
-                      {item.quantity}x {item.productName} ({item.sku})
-                    </span>
-                    <span className="font-mono-tabular font-semibold">
-                      {formatMinorMoney(
-                        item.lineTotalMinor,
-                        printableOrder.currencyCode,
-                      )}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-              <p className="font-mono-tabular text-sm font-bold text-slate-900">
-                Total Paid:{" "}
-                {formatMinorMoney(
-                  printableOrder.totalMinor,
-                  printableOrder.currencyCode,
-                )}
-              </p>
-            </div>
-          ) : null}
-
-          {orders.length === 0 ? (
-            <p className="text-sm text-slate-600">
-              No orders in this jurisdiction scope yet.
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {orders.map((order) => (
-                <div
-                  key={order.id}
-                  className="rounded-xl border border-slate-200 bg-slate-50 p-4"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <p className="text-sm font-bold text-slate-900">
-                        {order.facilityName} · {order.receiptNumber ?? "Unpaid"}
-                      </p>
-                      <p className="font-mono-tabular text-xs text-slate-600">
-                        {order.fulfillmentMode} ·{" "}
-                        {formatMinorMoney(order.totalMinor, order.currencyCode)}
-                        {order.dispatchRequestId
-                          ? ` · Dispatch ${order.dispatchRequestId.slice(0, 8)}`
-                          : ""}
-                      </p>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="rounded-full bg-white border border-slate-200 px-2.5 py-0.5 font-mono-tabular text-xs font-bold text-teal-900">
-                        {order.status}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setPrintableOrder(order)}
-                        className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:border-teal-700"
-                      >
-                        Receipt
-                      </button>
-                      {canManageStock && order.status === "PAID" ? (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            void handleAdvanceOrder(order, "PREPARING")
-                          }
-                          className="rounded-lg bg-teal-800 px-2.5 py-1 text-xs font-semibold text-white"
-                        >
-                          Prepare
-                        </button>
-                      ) : null}
-                      {canManageStock && order.status === "PREPARING" ? (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            void handleAdvanceOrder(order, "DELIVERED")
-                          }
-                          className="rounded-lg bg-teal-800 px-2.5 py-1 text-xs font-semibold text-white"
-                        >
-                          Mark Delivered
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+            {/* Streamlined Mode Tabs */}
+        <section className="flex flex-wrap items-center justify-between gap-2">
+          <UiTabBar
+            ariaLabel={copy.modesAria}
+            activeTab={activeMode}
+            onSelect={(nextMode) => {
+              setActiveMode(nextMode);
+              if (nextMode === "papers" && session) {
+                void loadPharmacistPapers(session);
+              }
+            }}
+            tabs={[
+              ...(!canManageStock
+                ? [
+                    {
+                      id: "store" as const,
+                      label: copy.tabStore,
+                      icon: <Pill className="h-3.5 w-3.5" aria-hidden="true" />,
+                    },
+                  ]
+                : []),
+              {
+                id: "orders" as const,
+                label: `${copy.tabOrders} (${orders.length})`,
+                icon: <Package className="h-3.5 w-3.5" aria-hidden="true" />,
+              },
+              ...(canManageStock
+                ? [
+                    {
+                      id: "dispense" as const,
+                      label: copy.tabDispense,
+                      icon: <QrCode className="h-3.5 w-3.5" aria-hidden="true" />,
+                    },
+                    {
+                      id: "manage" as const,
+                      label: copy.tabManage,
+                      icon: <Plus className="h-3.5 w-3.5" aria-hidden="true" />,
+                    },
+                    {
+                      id: "papers" as const,
+                      label: papersCopy.tabPapers,
+                      icon: <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />,
+                    },
+                  ]
+                : []),
+            ]}
+          />
         </section>
-      ) : null}
 
-      {activeMode === "manage" && canManageStock ? (
-        <div className="grid gap-6 lg:grid-cols-12">
-          <form
-            onSubmit={(e) => void handleAddCatalogProduct(e)}
-            className="space-y-3 rounded-2xl border border-slate-200 bg-white p-6 shadow-xs lg:col-span-5"
-          >
-            <h2 className="text-base font-bold text-slate-900">
-              Add Pharmacy Medication ({effectiveCountry})
-            </h2>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <UiInput
-                type="text"
-                required
-                placeholder="Product Code (e.g. MA-AZITH-500)"
-                value={newSku}
-                onChange={(e) => setNewSku(e.target.value)}
-                className="text-xs"
-              />
-              <UiSelect
-                value={newCategory}
-                onChange={(e) =>
-                  setNewCategory(e.target.value as PharmacyProductCategory)
-                }
-                className="text-xs"
-              >
-                {PharmacyProductCategorySchema.options.map((cat) => (
-                  <option key={cat} value={cat}>
-                    {CATEGORY_LABELS[cat]}
-                  </option>
-                ))}
-              </UiSelect>
-            </div>
-            <UiInput
-              type="text"
-              required
-              placeholder="Medication / Product Name"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              className="text-xs"
+        {activeMode === "store" && !canManageStock ? (
+          <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-12">
+            <PharmacyCatalogGrid
+              products={products}
+              facilities={facilities}
+              effectiveCountry={effectiveCountry}
+              loadingCatalog={loadingCatalog}
+              searchText={searchText}
+              selectedFacilityId={selectedFacilityId}
+              selectedCategory={selectedCategory}
+              safetyFilter={safetyFilter}
+              inStockOnly={inStockOnly}
+              sortBy={sortBy}
+              cartQuantities={cartQuantities}
+              onSearchChange={(next) => {
+                setSearchText(next);
+                void loadCatalogAndOrders(
+                  effectiveCountry,
+                  session,
+                  selectedFacilityId,
+                  selectedCategory,
+                  next,
+                );
+              }}
+              onFacilityChange={(nextFac) => {
+                setSelectedFacilityId(nextFac);
+                void loadCatalogAndOrders(
+                  effectiveCountry,
+                  session,
+                  nextFac,
+                  selectedCategory,
+                  searchText,
+                );
+              }}
+              onCategoryChange={(nextCat) => {
+                setSelectedCategory(nextCat);
+                void loadCatalogAndOrders(
+                  effectiveCountry,
+                  session,
+                  selectedFacilityId,
+                  nextCat,
+                  searchText,
+                );
+              }}
+              onSafetyFilterChange={setSafetyFilter}
+              onInStockOnlyChange={setInStockOnly}
+              onSortChange={setSortBy}
+              onAddToCart={(product) => addProductQuantity(product, 1)}
+              onUpdateCartQty={updateCartQty}
+              onInspectProduct={setInspectedProduct}
             />
-            <UiInput
-              type="text"
-              placeholder="Generic Active Ingredient (optional)"
-              value={newGeneric}
-              onChange={(e) => setNewGeneric(e.target.value)}
-              className="text-xs"
-            />
-            <div className="grid gap-3 sm:grid-cols-2">
-              <UiInput
-                type="number"
-                step="0.01"
-                required
-                placeholder={`Price (${currencyCode})`}
-                value={newPriceMajor}
-                onChange={(e) => setNewPriceMajor(e.target.value)}
-                className="font-mono-tabular text-xs"
-              />
-              <UiInput
-                type="number"
-                required
-                placeholder="Initial Stock Qty"
-                value={newStockQty}
-                onChange={(e) => setNewStockQty(e.target.value)}
-                className="font-mono-tabular text-xs"
-              />
-            </div>
-            <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
-              <input
-                type="checkbox"
-                checked={newRequiresRx}
-                onChange={(e) => setNewRequiresRx(e.target.checked)}
-              />
-              <span>Requires verified Doctor E-Prescription (Rx)</span>
-            </label>
-            <UiButton
-              type="submit"
-              disabled={busy}
-              className="w-full"
-            >
-              Add to Pharmacy Catalog
-            </UiButton>
-          </form>
 
-          <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-6 shadow-xs lg:col-span-7">
-            <h2 className="text-base font-bold text-slate-900">
-              Live Inventory Controls
-            </h2>
-            <div className="max-h-96 space-y-2 overflow-y-auto">
-              {products.map((prod) => (
-                <div
-                  key={prod.id}
-                  className="flex flex-wrap items-center justify-between gap-2.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs"
-                >
-                  <div className="flex min-w-0 items-center gap-2.5">
-                    <ProductThumbnail
-                      name={prod.name}
-                      category={prod.category}
-                      subtitle={prod.facilityName}
-                      imageUrl={prod.imageUrl}
-                      className="h-14 w-14 shrink-0 rounded-lg"
-                    />
-                    <div className="min-w-0">
-                      <p className="truncate font-semibold text-slate-900">{prod.name}</p>
-                      <p className="font-mono-tabular text-[11px] text-slate-600">
-                        {prod.sku} · {prod.facilityName} · Stock:{" "}
-                        <strong>{prod.stockQty}</strong>
-                      </p>
-                    </div>
-                  </div>
-                  <UiButton
-                    variant="secondary"
-                    size="sm"
-                    disabled={busy}
-                    onClick={() => void handleRestock(prod, 10)}
-                    className="text-teal-800"
-                  >
-                    +10 Units
-                  </UiButton>
-                </div>
-              ))}
-            </div>
-          </section>
-        </div>
-      ) : null}
+            <PharmacyCartSidebar
+              cart={cart}
+              pendingSwitchProduct={pendingSwitchProduct}
+              currencyCode={currencyCode}
+              sessionToken={sessionToken}
+              prescriptions={prescriptions}
+              patientInsurances={patientInsurances}
+              selectedRxId={selectedRxId}
+              fulfillmentMode={fulfillmentMode}
+              deliveryAddress={deliveryAddress}
+              gpsPinnedCoords={gpsPinnedCoords}
+              locatingGps={locatingGps}
+              paymentMethod={paymentMethod}
+              checkoutNotes={checkoutNotes}
+              cartSubtotalMinor={cartSubtotalMinor}
+              courierQuoteMinor={serverCourierFeeMinor}
+              deliveryFeeMinor={deliveryFeeMinor}
+              allowRxCourier={allowRxCourier}
+              pharmacyLawReference={effectivePack?.pharmacyLawReference ?? null}
+              busy={busy}
+              onUpdateCartQty={updateCartQty}
+              onClearCart={() => {
+                setCart([]);
+                setPendingSwitchProduct(null);
+              }}
+              onConfirmFacilitySwitch={() => {
+                if (!pendingSwitchProduct) return;
+                setCart([{ product: pendingSwitchProduct, quantity: 1 }]);
+                setBanner({
+                  tone: "info",
+                  text: `${copy.cartSwitchedPrefix} ${pendingSwitchProduct.facilityName}.`,
+                });
+                setPendingSwitchProduct(null);
+              }}
+              onDismissFacilitySwitch={() => setPendingSwitchProduct(null)}
+              onSelectRxId={setSelectedRxId}
+              onSelectFulfillmentMode={setFulfillmentMode}
+              onDeliveryAddressChange={(addr) => {
+                setDeliveryAddress(addr);
+                if (gpsPinnedCoords) setGpsPinnedCoords(null);
+              }}
+              onDetectGpsLocation={handleDetectGpsLocation}
+              onPaymentMethodChange={setPaymentMethod}
+              onCheckoutNotesChange={setCheckoutNotes}
+              onSubmitCheckout={(e) => void handleCheckoutAndPay(e)}
+            />
+          </div>
+        ) : null}
+
+        {activeMode === "orders" ? (
+          <PharmacyOrdersView
+            orders={orders}
+            printableOrder={printableOrder}
+            canManageStock={canManageStock}
+            busy={busy}
+            onSelectPrintableOrder={setPrintableOrder}
+            onAdvanceOrder={handleAdvanceOrder}
+          />
+        ) : null}
+
+        {activeMode === "dispense" && canManageStock ? (
+          <PharmacistDispenseDesk
+            qrInput={qrInput}
+            verifiedRx={verifiedRx}
+            allergyWarnings={rxAllergyWarnings}
+            dispenseNote={dispenseNote}
+            staffRxQueue={staffRxQueue}
+            busy={busy}
+            onQrInputChange={setQrInput}
+            onDispenseNoteChange={setDispenseNote}
+            onVerifyQr={(e) => void handleVerifyQr(e)}
+            onDispenseRx={(rxId) => void handleDispenseRx(rxId)}
+          />
+        ) : null}
+
+        {activeMode === "manage" && canManageStock ? (
+          <PharmacistInventoryDesk
+            effectiveCountry={effectiveCountry}
+            currencyCode={currencyCode}
+            products={products}
+            busy={busy}
+            newSku={newSku}
+            newName={newName}
+            newGeneric={newGeneric}
+            newDosageForm={newDosageForm}
+            newStrength={newStrength}
+            newCategory={newCategory}
+            newPriceMajor={newPriceMajor}
+            newStockQty={newStockQty}
+            newRequiresRx={newRequiresRx}
+            onNewSkuChange={setNewSku}
+            onNewNameChange={setNewName}
+            onNewGenericChange={setNewGeneric}
+            onNewDosageFormChange={setNewDosageForm}
+            onNewStrengthChange={setNewStrength}
+            onNewCategoryChange={setNewCategory}
+            onNewPriceMajorChange={setNewPriceMajor}
+            onNewStockQtyChange={setNewStockQty}
+            onNewRequiresRxChange={setNewRequiresRx}
+            onAddCatalogProduct={handleAddCatalogProduct}
+            onRestock={(prod, delta) =>
+              void handleUpdateProductPricingStock(prod, {
+                stockQty: Math.max(0, prod.stockQty + delta),
+              })
+            }
+            onUpdateProductPricingStock={(prod, patch) =>
+              void handleUpdateProductPricingStock(prod, patch)
+            }
+          />
+        ) : null}
+
+        {activeMode === "papers" && canManageStock && session?.user && sessionToken ? (
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <FacilityPapersCard
+              apiBaseUrl={apiBaseUrl}
+              token={sessionToken}
+              facilityId={session.user.facilityId ?? (selectedFacilityId || null)}
+              facilityName={
+                facilities.find(
+                  (f) => f.id === (session.user.facilityId ?? selectedFacilityId),
+                )?.name ?? null
+              }
+              facilityKind="PHARMACY"
+              documents={facilityDocs}
+              busy={busy}
+              onBusyChange={setBusy}
+              onDocumentsUpdated={() => loadPharmacistPapers(session)}
+              onFeedback={(tone, text) => setBanner({ tone, text })}
+            />
+            <ProfileCredentialsPanel
+              apiBaseUrl={apiBaseUrl}
+              token={sessionToken}
+              userRole={session.user.role}
+              documents={userDocs}
+              busy={busy}
+              onBusyChange={setBusy}
+              onDocumentsUpdated={() => loadPharmacistPapers(session)}
+              onFeedback={(tone, text) => setBanner({ tone, text })}
+            />
+          </div>
+        ) : null}
+
+            <ProductDetailModal
+              product={inspectedProduct}
+              facility={inspectedFacility}
+              inCartQty={
+                inspectedProduct
+                  ? (cartQuantities.get(inspectedProduct.id) ?? 0)
+                  : 0
+              }
+              onClose={() => setInspectedProduct(null)}
+              onAddQuantity={addProductQuantity}
+            />
+          </>
+        )}
+      </ConsumerWorkspaceGuard>
     </div>
   );
 }

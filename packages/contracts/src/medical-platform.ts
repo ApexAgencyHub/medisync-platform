@@ -84,6 +84,14 @@ export const PatientMedicalProfileSchema = z.object({
 });
 export type PatientMedicalProfile = z.infer<typeof PatientMedicalProfileSchema>;
 
+export const PatientMedicalProfileResponseSchema = z.object({
+  profile: PatientMedicalProfileSchema,
+});
+
+export type PatientMedicalProfileResponse = z.infer<
+  typeof PatientMedicalProfileResponseSchema
+>;
+
 export const CreatePatientInsuranceSchema = z.object({
   providerName: z.string().trim().min(2).max(120),
   policyNumber: z.string().trim().min(3).max(80),
@@ -120,6 +128,22 @@ export const PatientInsurancePolicySchema = z.object({
 });
 export type PatientInsurancePolicy = z.infer<
   typeof PatientInsurancePolicySchema
+>;
+
+export const PatientInsuranceResponseSchema = z.object({
+  policy: PatientInsurancePolicySchema,
+});
+
+export type PatientInsuranceResponse = z.infer<
+  typeof PatientInsuranceResponseSchema
+>;
+
+export const PatientInsuranceListResponseSchema = z.object({
+  policies: z.array(PatientInsurancePolicySchema),
+});
+
+export type PatientInsuranceListResponse = z.infer<
+  typeof PatientInsuranceListResponseSchema
 >;
 
 export const MedicalServiceCategorySchema = z.enum([
@@ -174,6 +198,10 @@ export const MedicalServiceSummarySchema = z.object({
   createdAtIso: z.string().datetime(),
 });
 export type MedicalServiceSummary = z.infer<typeof MedicalServiceSummarySchema>;
+
+export const MedicalServiceListResponseSchema = z.object({
+  services: z.array(MedicalServiceSummarySchema),
+});
 
 export const ListMedicalServicesQuerySchema = z.object({
   countryCode: z.string().regex(/^[A-Z]{2,4}$/).optional(),

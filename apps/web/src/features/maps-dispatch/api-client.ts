@@ -1,10 +1,14 @@
 import {
+  DeclineDispatchResponseSchema,
   DispatchListResponseSchema,
   DispatchResponseSchema,
   DriverResponseSchema,
+  FacilityOperationalStatusResponseSchema,
   FacilityViewportResponseSchema,
   NearbyDriversResponseSchema,
   type CreateDispatchRequestInput,
+  type DeclineDispatchResponse,
+  type DispatchListResponse,
   type DispatchRequestSummary,
   type DispatchStatus,
   type DriverPingInput,
@@ -12,6 +16,8 @@ import {
   type FacilityViewportResponse,
   type LiveDriverMarker,
   type NearbyDriversResponse,
+  type UpdateFacilityOperationalStatusInput,
+  type ViewportFacilityItem,
 } from "@medisync/contracts";
 import { requestTyped, type ApiResult } from "@/shared/api/http-client";
 import type { ViewportBox } from "./presets";
@@ -84,10 +90,14 @@ export async function sendDriverLocationPing(
 export async function listDispatchRequests(
   apiBaseUrl: string,
   token: string,
-  countryCode: string,
-): Promise<ApiResult<{ dispatches: DispatchRequestSummary[] }>> {
+  countryCode?: string,
+): Promise<ApiResult<DispatchListResponse>> {
+  const qs = new URLSearchParams({ limit: "25" });
+  if (countryCode) {
+    qs.set("countryCode", countryCode);
+  }
   return requestTyped(
-    `${apiBaseUrl}/v1/dispatch/requests?countryCode=${encodeURIComponent(countryCode)}&limit=25`,
+    `${apiBaseUrl}/v1/dispatch/requests?${qs.toString()}`,
     {
       method: "GET",
       headers: { authorization: `Bearer ${token}` },
@@ -132,5 +142,45 @@ export async function updateDispatchStatus(
       body: JSON.stringify({ status }),
     },
     DispatchResponseSchema,
+  );
+}
+
+export async function declineDispatchRequest(
+  apiBaseUrl: string,
+  token: string,
+  dispatchId: string,
+  reason?: string,
+): Promise<ApiResult<DeclineDispatchResponse>> {
+  return requestTyped(
+    `${apiBaseUrl}/v1/dispatch/requests/${encodeURIComponent(dispatchId)}/decline`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(reason ? { reason } : {}),
+    },
+    DeclineDispatchResponseSchema,
+  );
+}
+
+export async function updateFacilityOperationalStatus(
+  apiBaseUrl: string,
+  token: string,
+  facilityId: string,
+  input: UpdateFacilityOperationalStatusInput,
+): Promise<ApiResult<{ facility: ViewportFacilityItem }>> {
+  return requestTyped(
+    `${apiBaseUrl}/v1/maps/facilities/${encodeURIComponent(facilityId)}/operational-status`,
+    {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(input),
+    },
+    FacilityOperationalStatusResponseSchema,
   );
 }

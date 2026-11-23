@@ -1,6 +1,10 @@
 export { registerMapsDispatchRoutes } from "./routes.js";
-export { createDispatchRequest } from "./pg-store.js";
 export {
+  createDispatchRequest,
+  findActiveDriverDispatchId,
+} from "./pg-store.js";
+export {
+  clearDriverOffDuty,
   publishDispatchUpdate,
   readDriverStatuses,
   upsertDriverLocation,

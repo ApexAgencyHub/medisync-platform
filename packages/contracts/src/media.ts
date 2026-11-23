@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { UserRoleSchema } from "./roles.js";
 
 export const ALLOWED_CERTIFICATION_MIME_TYPES = [
   "application/pdf",
@@ -208,4 +209,37 @@ export const UserMediaListResponseSchema = z.object({
 });
 export type UserMediaListResponse = z.infer<
   typeof UserMediaListResponseSchema
+>;
+
+export const AdminUserMediaQuerySchema = z.object({
+  countryCode: z.string().regex(/^[A-Z]{2,4}$/).optional(),
+  userId: z.string().uuid().optional(),
+  reviewStatus: DocumentReviewStatusSchema.optional(),
+  category: UserMediaCategorySchema.optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+export type AdminUserMediaQuery = z.infer<typeof AdminUserMediaQuerySchema>;
+
+export const AdminUserMediaItemSchema = UserMediaDocumentSchema.extend({
+  userName: z.string(),
+  userEmail: z.string().nullable(),
+  userRole: UserRoleSchema,
+  accountStatus: z.enum(["ACTIVE", "PENDING_APPROVAL", "SUSPENDED"]),
+  credentialVerified: z.boolean(),
+});
+export type AdminUserMediaItem = z.infer<typeof AdminUserMediaItemSchema>;
+
+export const AdminUserMediaListResponseSchema = z.object({
+  documents: z.array(AdminUserMediaItemSchema),
+});
+export type AdminUserMediaListResponse = z.infer<
+  typeof AdminUserMediaListResponseSchema
+>;
+
+export const DeleteUserMediaResponseSchema = z.object({
+  deleted: z.literal(true),
+  mediaId: z.string().uuid(),
+});
+export type DeleteUserMediaResponse = z.infer<
+  typeof DeleteUserMediaResponseSchema
 >;

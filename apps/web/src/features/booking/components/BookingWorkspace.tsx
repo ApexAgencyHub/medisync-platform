@@ -1,158 +1,216 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import {
-  VisitModeSchema,
-  type AppointmentStatus,
-  type AppointmentSummary,
-  type AuthResponse,
-  type AvailableSlot,
-  type CountryPack,
-  type VisitMode,
+import { useEffect, useMemo, useRef, useState } from "react";
+import type {
+  AppointmentStatus,
+  AppointmentSummary,
+  AuthResponse,
+  AuthenticatedUser,
+  AvailableSlot,
+  CountryPack,
+  DirectoryDoctorSummary,
+  DirectoryFacilitySummary,
+  DoctorProfileSummary,
+  DoctorScheduleSummary,
+  VisitMode,
 } from "@medisync/contracts";
-import { checkBackendOnline } from "@/shared/api/directory-client";
+import {
+  checkBackendOnline,
+  fetchDirectoryDoctors,
+  fetchDirectoryFacilities,
+} from "@/shared/api/directory-client";
 import { ensureGuestPatientSession } from "@/shared/auth/guest-session";
 import {
   clearStoredSession,
   readStoredSession,
+  revokeClientSession,
 } from "@/shared/auth/session-storage";
-import { formatVisitMode } from "@/shared/i18n/human-labels";
-import { useLocale } from "@/shared/i18n/locale-store";
-import { addGuestActivityPass } from "@/shared/patient/patient-local-store";
-import { BookmarkButton } from "@/shared/ui/BookmarkButton";
 import {
-  resolveDefaultAvatar,
-  resolveFacilityPicture,
-  EntityAvatar,
-} from "@/shared/ui/EntityAvatar";
-import { EntityMediaPair } from "@/shared/ui/EntityMediaPair";
+  canCreateAppointment,
+  canReadAppointments,
+  isConsumerUserOrGuest,
+  syncPendingSessionStatus,
+} from "@/shared/auth/role-capabilities";
+import { ConsumerWorkspaceGuard } from "@/shared/auth/ConsumerWorkspaceGuard";
+import {
+  formatCountryDisplayName,
+  formatVisitMode,
+} from "@/shared/i18n/human-labels";
+import { useLocale } from "@/shared/i18n/locale-store";
+import {
+  buildSpecialtyFilterOptions,
+  formatSpecialtyLabel,
+  getSpecialtyKeywords,
+  matchesDoctorSpecialtyFilter,
+  resolveCanonicalSpecialtyValue,
+} from "@/shared/i18n/specialties";
+import { BOOKING_COPY, getLocalizedAppointmentStatusLabel } from "../booking-i18n";
+import {
+  removeGuestActivityPass,
+  useGuestActivityPasses,
+} from "@/shared/patient/patient-local-store";
+import {
+  isPendingStaffVerification,
+  VerificationGateNotice,
+} from "@/shared/ui/VerificationGateNotice";
 import {
   ACTIVE_COUNTRY_CODE,
   resolveActivePack,
+  resolveEffectiveCountryCode,
 } from "@/shared/config/deployment";
 import {
-  ActiveRegionPill,
-  SessionAccountBar,
-  StatusBanner,
+  expandMoroccanCityKeywords,
+  matchesAccentInsensitiveQuery,
+  matchesMoroccanCity,
+} from "@/shared/config/morocco-standards";
+import {
   UiBadge,
   UiButton,
-  UiInput,
-  UiSelect,
-  UiSwitch,
+  WorkspaceHeader,
+  useToastSetter,
 } from "@/shared/ui/primitives";
-import { CalendarClock, Search, Stethoscope, Video } from "lucide-react";
+import { CalendarClock, RefreshCw } from "lucide-react";
 import {
   createAppointment,
   fetchAppointments,
   fetchAvailableSlots,
+  fetchDoctorProfiles,
+  fetchSchedules,
   transitionAppointmentStatus,
 } from "../api-client";
+import {
+  buildRollingClinicDates,
+  findNextScheduledIsoDate,
+  getInitialBookingIsoDate,
+  getUtcDayOfWeek,
+  getWeekdayLabel,
+  isNurseSpecialty,
+  type BookingTab,
+  type ProviderCategoryFilter,
+} from "./booking-utils";
+import { AppointmentsListPanel } from "./AppointmentsListPanel";
+import { BookingToolbar } from "./BookingToolbar";
+import {
+  BookingScheduleModal,
+  type SelectedPractitionerInfo,
+} from "./BookingScheduleModal";
+import {
+  PractitionerSlotCard,
+  type EnrichedProviderGroup,
+} from "./PractitionerSlotCard";
 
 interface BookingWorkspaceProps {
   packs: readonly CountryPack[];
   apiBaseUrl: string;
 }
 
-type ProviderCategoryFilter = "ALL" | "DOCTORS" | "NURSES";
-
-interface GroupedProviderSlots {
-  key: string;
-  doctorUserId: string;
-  doctorName: string;
-  specialty: string;
-  facilityId: string;
-  facilityName: string;
-  consultationFeeMinor: number;
-  countryCode: string;
-  slots: AvailableSlot[];
-}
-
-const WEEKDAY_LABELS = [
-  "Sunday",
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-  "Saturday",
-] as const;
-
-const STATUS_BADGE_TONE: Record<
-  AppointmentStatus,
-  "teal" | "amber" | "emerald" | "slate" | "red"
-> = {
-  CONFIRMED: "teal",
-  CHECKED_IN: "amber",
-  COMPLETED: "emerald",
-  CANCELLED: "slate",
-  NO_SHOW: "red",
-};
-
-function getNextMondayIsoDate(): string {
-  const now = new Date();
-  const day = now.getUTCDay();
-  const offset = day === 1 ? 0 : (8 - day) % 7 || 7;
-  const target = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + offset),
-  );
-  return target.toISOString().slice(0, 10);
-}
-
-function getUtcDayOfWeek(dateStr: string): number {
-  const parsed = new Date(`${dateStr}T00:00:00.000Z`);
-  return Number.isNaN(parsed.getTime()) ? 1 : parsed.getUTCDay();
-}
-
-function isNurseSpecialty(specialty: string): boolean {
-  return /nursing|infirmier|nurse/i.test(specialty);
-}
-
+/** Industry-grade practitioner & nurse appointment scheduler enriched with insurances, direct slot grid & calendar sync. */
 export function BookingWorkspace({
   packs,
   apiBaseUrl,
 }: BookingWorkspaceProps) {
-  const { t } = useLocale();
+  const { locale, t, isRtl } = useLocale();
+  const copy = BOOKING_COPY[locale];
   const defaultCode = resolveActivePack(packs)?.code ?? ACTIVE_COUNTRY_CODE;
 
   const [selectedCountry, setSelectedCountry] = useState<string>(defaultCode);
   const [selectedDate, setSelectedDate] = useState<string>(
-    getNextMondayIsoDate,
+    getInitialBookingIsoDate,
   );
   const [providerFilter, setProviderFilter] =
     useState<ProviderCategoryFilter>("ALL");
+  const [specialtyFilter, setSpecialtyFilter] = useState<string>("ALL");
   const [doctorIdFilter, setDoctorIdFilter] = useState<string>("");
   const [facilityFilterId, setFacilityFilterId] = useState<string>("");
-  const [specialtyFilter, setSpecialtyFilter] = useState("");
+  const [cityFilter, setCityFilter] = useState<string>("");
+  const [insuranceFilter, setInsuranceFilter] = useState<string>("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [visitModeFilter, setVisitModeFilter] = useState<VisitMode | "ALL">(
     "ALL",
   );
   const [includeBooked, setIncludeBooked] = useState(true);
-  const [bookingReason, setBookingReason] = useState("");
+  const [activeTab, setActiveTab] = useState<BookingTab>("PRACTITIONERS");
+
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const searchContainerRef = useRef<HTMLDivElement | null>(null);
 
   const [slots, setSlots] = useState<AvailableSlot[]>([]);
-  const [selectedSlotByGroup, setSelectedSlotByGroup] = useState<
-    Record<string, string>
-  >({});
+  const [directoryDoctors, setDirectoryDoctors] = useState<
+    DirectoryDoctorSummary[]
+  >([]);
+  const [directoryFacilities, setDirectoryFacilities] = useState<
+    DirectoryFacilitySummary[]
+  >([]);
+  const [doctorProfiles, setDoctorProfiles] = useState<DoctorProfileSummary[]>(
+    [],
+  );
+  const [schedules, setSchedules] = useState<DoctorScheduleSummary[]>([]);
+  const [loadingSlots, setLoadingSlots] = useState(true);
+  const [backendChecked, setBackendChecked] = useState(false);
+  const [selectedPractitioner, setSelectedPractitioner] =
+    useState<SelectedPractitionerInfo | null>(null);
   const [appointments, setAppointments] = useState<AppointmentSummary[]>([]);
   const [apiOnline, setApiOnline] = useState(false);
 
   const [session, setSession] = useState<AuthResponse | null>(null);
+  const [sessionHydrated, setSessionHydrated] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [banner, setBanner] = useState<{
-    tone: "info" | "success" | "error";
-    text: string;
-  } | null>(null);
+  const actionLockRef = useRef(false);
+  const setBanner = useToastSetter();
 
+  const guestPasses = useGuestActivityPasses(selectedCountry).filter(
+    (item) => item.kind === "APPOINTMENT",
+  );
   const activePack =
     packs.find((pack) => pack.code === selectedCountry) ?? packs[0];
+  const currencyCode = activePack?.currencyCode ?? selectedCountry;
+  const rollingDates = useMemo(
+    () => buildRollingClinicDates(5, locale),
+    [locale],
+  );
+  const localeRef = useRef(locale);
+  localeRef.current = locale;
+
+  useEffect(() => {
+    function handlePointerDownOutside(event: PointerEvent) {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (
+        target.closest('[data-ui-select-menu="true"]') ||
+        target.closest('[aria-modal="true"]')
+      ) {
+        return;
+      }
+      if (!searchContainerRef.current?.contains(target)) {
+        setFiltersOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setFiltersOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDownOutside, true);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener(
+        "pointerdown",
+        handlePointerDownOutside,
+        true,
+      );
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
 
   useEffect(() => {
     const stored = readStoredSession();
     if (stored) {
       setSession(stored);
-      setSelectedCountry(stored.user.countryCode);
+      setSelectedCountry(resolveEffectiveCountryCode(stored.user.countryCode));
     }
+    setSessionHydrated(true);
 
     if (typeof window !== "undefined") {
       const qs = new URLSearchParams(window.location.search);
@@ -160,6 +218,8 @@ export function BookingWorkspace({
       const qFacility = qs.get("facilityId");
       const qDoctor = qs.get("doctorId");
       const qProvider = qs.get("provider");
+      const qMode = qs.get("mode");
+      const qSpecialty = qs.get("specialty");
       if (qCountry && packs.some((p) => p.code === qCountry.toUpperCase())) {
         setSelectedCountry(qCountry.toUpperCase());
       }
@@ -167,64 +227,259 @@ export function BookingWorkspace({
       if (qDoctor) setDoctorIdFilter(qDoctor);
       if (qProvider === "nurse") setProviderFilter("NURSES");
       if (qProvider === "doctor") setProviderFilter("DOCTORS");
+      if (
+        qMode === "IN_PERSON" ||
+        qMode === "TELEHEALTH" ||
+        qMode === "HOME_VISIT"
+      ) {
+        setVisitModeFilter(qMode);
+      }
+      if (qSpecialty) {
+        const canonical = resolveCanonicalSpecialtyValue(qSpecialty);
+        if (canonical === "Nursing") {
+          setProviderFilter("NURSES");
+        } else if (canonical) {
+          setProviderFilter("DOCTORS");
+          setSpecialtyFilter(canonical);
+        } else {
+          setSearchQuery(qSpecialty);
+        }
+      }
     }
 
     let cancelled = false;
     checkBackendOnline().then((online) => {
-      if (!cancelled) setApiOnline(online);
+      if (cancelled) return;
+      setApiOnline(online);
+      setBackendChecked(true);
+      if (!online) setLoadingSlots(false);
+      if (online && stored && isPendingStaffVerification(stored.user)) {
+        void syncPendingSessionStatus(apiBaseUrl, stored).then((syncRes) => {
+          if (cancelled) return;
+          if (syncRes.status === "expired") {
+            setSession(null);
+            setAppointments([]);
+          } else if (syncRes.status === "updated" && syncRes.session) {
+            setSession(syncRes.session);
+          }
+        });
+      }
     });
     return () => {
       cancelled = true;
     };
-  }, [packs]);
+  }, [apiBaseUrl, packs]);
+
+  const isStaffVisitor = Boolean(
+    session?.user && !isConsumerUserOrGuest(session.user),
+  );
+  const sessionToken = session?.token ?? null;
+  const sessionUserRole = session?.user.role ?? null;
+  const sessionUserId = session?.user.id ?? null;
 
   useEffect(() => {
-    if (!apiOnline) return;
+    if (!apiOnline || !sessionHydrated) return;
+    if (isStaffVisitor) {
+      setDirectoryDoctors([]);
+      setDirectoryFacilities([]);
+      setSchedules([]);
+      setDoctorProfiles([]);
+      return;
+    }
     let active = true;
+
+    Promise.all([
+      fetchDirectoryDoctors(apiBaseUrl, { countryCode: selectedCountry, limit: 100 }),
+      fetchDirectoryFacilities(apiBaseUrl, { countryCode: selectedCountry, limit: 100 }),
+      fetchSchedules(apiBaseUrl, { countryCode: selectedCountry }),
+      fetchDoctorProfiles(apiBaseUrl, selectedCountry),
+    ]).then(([docsRes, facsRes, schedRes, profRes]) => {
+      if (!active) return;
+      if (docsRes.ok) setDirectoryDoctors(docsRes.doctors);
+      if (facsRes.ok) setDirectoryFacilities(facsRes.facilities);
+      if (schedRes.ok) setSchedules(schedRes.data.schedules);
+      if (profRes.ok) setDoctorProfiles(profRes.data.profiles);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [apiOnline, sessionHydrated, apiBaseUrl, selectedCountry, isStaffVisitor]);
+
+  useEffect(() => {
+    if (!apiOnline || !sessionHydrated) return;
+    if (isStaffVisitor) {
+      setSlots([]);
+      setLoadingSlots(false);
+      return;
+    }
+    let active = true;
+    setLoadingSlots(true);
 
     fetchAvailableSlots(apiBaseUrl, {
       date: selectedDate,
       countryCode: selectedCountry,
       ...(facilityFilterId ? { facilityId: facilityFilterId } : {}),
-      ...(specialtyFilter.trim() ? { specialty: specialtyFilter.trim() } : {}),
       ...(visitModeFilter !== "ALL" ? { visitMode: visitModeFilter } : {}),
       includeBooked,
-    }).then((slotsRes) => {
-      if (!active || !slotsRes.ok) return;
-      setSlots(slotsRes.data.slots);
-    });
-
-    if (session?.token) {
-      fetchAppointments(apiBaseUrl, session.token, selectedCountry).then(
-        (res) => {
-          if (active && res.ok) setAppointments(res.data.appointments);
-        },
-      );
-    }
+    })
+      .then((slotsRes) => {
+        if (!active) return;
+        if (slotsRes.ok) setSlots(slotsRes.data.slots);
+      })
+      .finally(() => {
+        if (active) setLoadingSlots(false);
+      });
 
     return () => {
       active = false;
     };
   }, [
     apiOnline,
+    sessionHydrated,
     apiBaseUrl,
     selectedCountry,
     selectedDate,
     facilityFilterId,
-    specialtyFilter,
     visitModeFilter,
     includeBooked,
-    session?.token,
+    isStaffVisitor,
   ]);
 
-  const groupedProviders = useMemo<GroupedProviderSlots[]>(() => {
-    const map = new Map<string, GroupedProviderSlots>();
+  useEffect(() => {
+    if (!apiOnline || !sessionHydrated) return;
+    if (isStaffVisitor || !sessionToken || !session?.user || !canReadAppointments(session.user)) {
+      setAppointments([]);
+      return;
+    }
+    let active = true;
+
+    fetchAppointments(apiBaseUrl, sessionToken, selectedCountry).then((res) => {
+      if (!active) return;
+      if (res.ok) {
+        setAppointments(res.data.appointments);
+      } else if (res.status === 401) {
+        clearStoredSession();
+        setSession(null);
+        setAppointments([]);
+        setBanner({
+          tone: "error",
+          text: BOOKING_COPY[localeRef.current].sessionExpiredToast,
+        });
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [
+    apiOnline,
+    sessionHydrated,
+    apiBaseUrl,
+    selectedCountry,
+    isStaffVisitor,
+    sessionToken,
+    sessionUserRole,
+    sessionUserId,
+    session,
+    setBanner,
+  ]);
+
+  const doctorById = useMemo(() => {
+    const map = new Map<string, DirectoryDoctorSummary>();
+    for (const d of directoryDoctors) map.set(d.id, d);
+    return map;
+  }, [directoryDoctors]);
+
+  const facilityById = useMemo(() => {
+    const map = new Map<string, DirectoryFacilitySummary>();
+    for (const f of directoryFacilities) map.set(f.id, f);
+    return map;
+  }, [directoryFacilities]);
+
+  const profileByDoctorId = useMemo(() => {
+    const map = new Map<string, DoctorProfileSummary>();
+    for (const p of doctorProfiles) map.set(p.doctorUserId, p);
+    return map;
+  }, [doctorProfiles]);
+
+  const availableInsurances = useMemo(() => {
+    const set = new Set<string>();
+    for (const d of directoryDoctors) {
+      for (const ins of d.acceptedInsurances) set.add(ins);
+    }
+    return Array.from(set);
+  }, [directoryDoctors]);
+
+  const specialtyOptions = useMemo(
+    () =>
+      buildSpecialtyFilterOptions(
+        [
+          ...directoryDoctors.map((d) => d.specialty),
+          ...slots.map((s) => s.specialty),
+        ],
+        locale,
+        { includeNurse: false },
+      ),
+    [directoryDoctors, locale, slots],
+  );
+
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+
+  const groupedProviders = useMemo<EnrichedProviderGroup[]>(() => {
+    const map = new Map<string, EnrichedProviderGroup>();
 
     for (const slot of slots) {
       if (doctorIdFilter && slot.doctorUserId !== doctorIdFilter) continue;
       const nurseTrack = isNurseSpecialty(slot.specialty);
       if (providerFilter === "NURSES" && !nurseTrack) continue;
       if (providerFilter === "DOCTORS" && nurseTrack) continue;
+      if (
+        specialtyFilter !== "ALL" &&
+        !matchesDoctorSpecialtyFilter(slot.specialty, specialtyFilter)
+      ) {
+        continue;
+      }
+
+      const docMeta = doctorById.get(slot.doctorUserId);
+      const facMeta = facilityById.get(slot.facilityId);
+      const profileMeta = profileByDoctorId.get(slot.doctorUserId);
+      const insurances =
+        docMeta?.acceptedInsurances ?? facMeta?.acceptedInsurances ?? [];
+
+      if (insuranceFilter && !insurances.includes(insuranceFilter)) {
+        continue;
+      }
+
+      if (
+        cityFilter &&
+        !matchesMoroccanCity(
+          cityFilter,
+          docMeta?.facilityCity ?? facMeta?.city,
+          [slot.facilityName, facMeta?.address],
+        )
+      ) {
+        continue;
+      }
+
+      if (normalizedSearch) {
+        const specLocalized = formatSpecialtyLabel(slot.specialty, locale);
+        if (
+          !matchesAccentInsensitiveQuery(normalizedSearch, [
+            slot.doctorName,
+            slot.specialty,
+            specLocalized,
+            getSpecialtyKeywords(slot.specialty),
+            slot.facilityName,
+            docMeta?.facilityCity,
+            facMeta?.city,
+            expandMoroccanCityKeywords(docMeta?.facilityCity ?? facMeta?.city),
+            facMeta?.address,
+          ])
+        ) {
+          continue;
+        }
+      }
 
       const key = `${slot.doctorUserId}::${slot.facilityId}`;
       const existing = map.get(key);
@@ -238,6 +493,18 @@ export function BookingWorkspace({
           specialty: slot.specialty,
           facilityId: slot.facilityId,
           facilityName: slot.facilityName,
+          facilityAddress: facMeta?.address ?? null,
+          avatarUrl: docMeta?.avatarUrl ?? profileMeta?.avatarUrl ?? null,
+          licenseNumber: profileMeta?.licenseNumber ?? null,
+          bio: profileMeta?.bio ?? null,
+          acceptedInsurances: insurances,
+          languagesSpoken:
+            docMeta?.languagesSpoken ?? facMeta?.languagesSpoken ?? [],
+          credentialVerified: Boolean(docMeta?.credentialVerified),
+          telehealthEnabled:
+            docMeta?.telehealthEnabled ??
+            facMeta?.telehealthEnabled ??
+            !nurseTrack,
           consultationFeeMinor: slot.consultationFeeMinor,
           countryCode: slot.countryCode,
           slots: [slot],
@@ -246,20 +513,37 @@ export function BookingWorkspace({
     }
 
     return Array.from(map.values());
-  }, [slots, doctorIdFilter, providerFilter]);
+  }, [
+    slots,
+    doctorIdFilter,
+    providerFilter,
+    specialtyFilter,
+    cityFilter,
+    insuranceFilter,
+    normalizedSearch,
+    locale,
+    doctorById,
+    facilityById,
+    profileByDoctorId,
+  ]);
 
-  async function refreshSlotsAndAppointments(tokenOverride?: string | null) {
-    const activeToken = tokenOverride ?? session?.token;
+  async function refreshSlotsAndAppointments(
+    tokenOverride?: string | null,
+    userOverride?: AuthenticatedUser | null,
+  ) {
+    const activeToken = tokenOverride ?? session?.token ?? null;
+    const activeUser = userOverride ?? session?.user ?? null;
+    const allowAppointments =
+      Boolean(activeToken) && canReadAppointments(activeUser);
     const [slotsRes, apptsRes] = await Promise.all([
       fetchAvailableSlots(apiBaseUrl, {
         date: selectedDate,
         countryCode: selectedCountry,
         ...(facilityFilterId ? { facilityId: facilityFilterId } : {}),
-        ...(specialtyFilter.trim() ? { specialty: specialtyFilter.trim() } : {}),
         ...(visitModeFilter !== "ALL" ? { visitMode: visitModeFilter } : {}),
         includeBooked,
       }),
-      activeToken
+      allowAppointments && activeToken
         ? fetchAppointments(apiBaseUrl, activeToken, selectedCountry)
         : Promise.resolve(null),
     ]);
@@ -267,643 +551,454 @@ export function BookingWorkspace({
     if (slotsRes.ok) {
       setSlots(slotsRes.data.slots);
     }
-    if (apptsRes && apptsRes.ok) {
-      setAppointments(apptsRes.data.appointments);
+    if (apptsRes) {
+      if (apptsRes.ok) {
+        setAppointments(apptsRes.data.appointments);
+      } else if (apptsRes.status === 401) {
+        clearStoredSession();
+        setSession(null);
+        setAppointments([]);
+      }
+    } else {
+      setAppointments([]);
     }
     return slotsRes;
   }
 
-  async function handleSearchSlots() {
-    setBusy(true);
-    setBanner(null);
-    const res = await refreshSlotsAndAppointments();
-    setBusy(false);
-
-    if (!res.ok) {
-      setBanner({ tone: "error", text: `Slot search failed: ${res.error}` });
-      return;
-    }
-
-    const distinctCount = new Set(
-      res.data.slots.map((s) => `${s.doctorUserId}::${s.facilityId}`),
-    ).size;
-    setBanner({
-      tone: "info",
-      text: `Showing ${distinctCount} provider schedule(s) (${res.data.slots.length} time windows) for ${selectedDate}.`,
-    });
-  }
-
-  async function handleBookSlot(slot: AvailableSlot) {
-    let activeToken = session?.token ?? null;
-    if (!activeToken) {
-      if (apiOnline) {
-        setBusy(true);
-        const guestSession = await ensureGuestPatientSession(
-          apiBaseUrl,
-          selectedCountry,
-        );
-        if (guestSession) {
-          setSession(guestSession);
-          activeToken = guestSession.token;
-        }
-      }
-      if (!activeToken) {
-        const trackingCode = `VISIT-${Math.floor(1000 + Math.random() * 9000)}`;
-        addGuestActivityPass({
-          id: `appt-${slot.scheduleId}-${slot.slotStartIso}`,
-          kind: "APPOINTMENT",
-          countryCode: slot.countryCode,
-          title: `${slot.doctorName} (${formatVisitMode(slot.visitMode)})`,
-          landmarkOrFacility: slot.facilityName,
-          scheduledAtIso: slot.slotStartIso,
-          trackingCode,
-          statusLabel: "Guest Visit Pass Held",
-        });
-        setBusy(false);
-        setBanner({
-          tone: "success",
-          text: `Saved Guest Visit Pass ${trackingCode} for ${slot.doctorName} (${slot.facilityName}). Check countdown & details in My Care.`,
-        });
-        return;
-      }
-    }
-
-    setBusy(true);
-    const trimmedReason = bookingReason.trim();
-    const res = await createAppointment(apiBaseUrl, activeToken, {
-      scheduleId: slot.scheduleId,
-      slotStartIso: slot.slotStartIso,
-      visitMode: slot.visitMode,
-      ...(trimmedReason ? { reason: trimmedReason } : {}),
-    });
-    setBusy(false);
-
-    if (!res.ok) {
+  async function handleConfirmReservation(
+    slot: AvailableSlot,
+    reason: string,
+    guestContact?: { fullName: string; phone: string },
+  ): Promise<string | null> {
+    if (actionLockRef.current) return null;
+    if (session?.user && !canCreateAppointment(session.user)) {
+      setSelectedPractitioner(null);
+      const errMsg = isPendingStaffVerification(session.user)
+        ? copy.pendingApprovalError
+        : copy.roleRestrictionError;
       setBanner({
         tone: "error",
-        text:
-          res.status === 409
-            ? "That time window was just reserved by another patient. Please choose another time pill."
-            : `Booking failed: ${res.error}`,
+        text: errMsg,
       });
-      await refreshSlotsAndAppointments();
-      return;
+      return errMsg;
     }
 
-    setBanner({
-      tone: "success",
-      text: `Confirmed ${formatVisitMode(res.data.appointment.visitMode)} booking with ${res.data.appointment.doctorName} at ${res.data.appointment.facilityName}.`,
-    });
-    await refreshSlotsAndAppointments(activeToken);
+    actionLockRef.current = true;
+    try {
+      let activeToken = session?.token ?? null;
+      let bookedByUser = session?.user ?? null;
+      if (!activeToken) {
+        if (!apiOnline) {
+          const offlineMsg = copy.bookingOfflineError;
+          setBanner({ tone: "error", text: offlineMsg });
+          return offlineMsg;
+        }
+        setBusy(true);
+        const guestResult = await ensureGuestPatientSession(
+          apiBaseUrl,
+          selectedCountry,
+          guestContact,
+        );
+        if (!guestResult.ok) {
+          setBanner({ tone: "error", text: guestResult.message });
+          return guestResult.message;
+        }
+        setSession(guestResult.session);
+        activeToken = guestResult.session.token;
+        bookedByUser = guestResult.session.user;
+      }
+
+      setBusy(true);
+      const trimmedReason = reason.trim();
+      const res = await createAppointment(apiBaseUrl, activeToken, {
+        scheduleId: slot.scheduleId,
+        slotStartIso: slot.slotStartIso,
+        visitMode: slot.visitMode,
+        ...(trimmedReason ? { reason: trimmedReason } : {}),
+      });
+
+      if (!res.ok) {
+        if (res.status === 401) {
+          clearStoredSession();
+          setSession(null);
+          setAppointments([]);
+        }
+        const errorText =
+          res.status === 409
+            ? copy.conflictError
+            : res.status === 401
+              ? copy.bookingExpiredError
+              : `${copy.bookingFailedPrefix} ${res.error}`;
+        setBanner({ tone: "error", text: errorText });
+        await refreshSlotsAndAppointments(
+          res.status === 401 ? null : activeToken,
+          res.status === 401 ? null : bookedByUser,
+        );
+        return errorText;
+      }
+
+      setSelectedPractitioner(null);
+      setActiveTab("APPOINTMENTS");
+      setBanner({
+        tone: "success",
+        text: `${copy.confirmedPrefix} ${formatVisitMode(res.data.appointment.visitMode, locale)} ${copy.confirmedWith} ${res.data.appointment.doctorName} ${copy.confirmedAt} ${res.data.appointment.facilityName}.`,
+      });
+      await refreshSlotsAndAppointments(activeToken, bookedByUser);
+      return null;
+    } finally {
+      setBusy(false);
+      actionLockRef.current = false;
+    }
   }
 
   async function handleTransitionStatus(
     appointmentId: string,
     status: AppointmentStatus,
   ) {
-    if (!session?.token) return;
+    if (!session?.token || actionLockRef.current) return;
+    actionLockRef.current = true;
     setBusy(true);
-    const res = await transitionAppointmentStatus(
-      apiBaseUrl,
-      session.token,
-      appointmentId,
-      { status },
-    );
-    setBusy(false);
+    try {
+      const res = await transitionAppointmentStatus(
+        apiBaseUrl,
+        session.token,
+        appointmentId,
+        { status },
+      );
 
-    if (!res.ok) {
-      setBanner({ tone: "error", text: `Status update failed: ${res.error}` });
-      return;
+      if (!res.ok) {
+        setBanner({
+          tone: "error",
+          text: `${copy.statusUpdateFailedPrefix} ${res.error}`,
+        });
+        if (res.status === 409) {
+          await refreshSlotsAndAppointments();
+        }
+        return;
+      }
+
+      setBanner({
+        tone: "success",
+        text: `${copy.statusUpdatedPrefix} ${getLocalizedAppointmentStatusLabel(res.data.appointment.status, locale)}.`,
+      });
+      await refreshSlotsAndAppointments();
+    } finally {
+      setBusy(false);
+      actionLockRef.current = false;
     }
-
-    setBanner({
-      tone: "success",
-      text: `Appointment updated to ${res.data.appointment.status}.`,
-    });
-    await refreshSlotsAndAppointments();
   }
 
   const currentUser = session?.user ?? null;
   const canManageStatus =
     currentUser !== null &&
-    ["DOCTOR", "CLINIC_STAFF", "HOSPITAL_ADMIN", "OPS_ADMIN"].includes(
+    !isPendingStaffVerification(currentUser) &&
+    ["DOCTOR", "NURSE", "CLINIC_STAFF", "HOSPITAL_ADMIN", "OPS_ADMIN"].includes(
       currentUser.role,
     );
 
+  const defaultCountryForUser = resolveEffectiveCountryCode(
+    currentUser?.countryCode ?? defaultCode,
+  );
+  const hasPopoverFilter =
+    Boolean(cityFilter) ||
+    Boolean(insuranceFilter) ||
+    !includeBooked ||
+    selectedCountry !== defaultCountryForUser ||
+    Boolean(doctorIdFilter) ||
+    Boolean(facilityFilterId);
+  const hasActiveFilter = Boolean(
+    searchQuery.trim() ||
+      hasPopoverFilter ||
+      visitModeFilter !== "ALL" ||
+      providerFilter !== "ALL" ||
+      specialtyFilter !== "ALL",
+  );
+  const totalSavedVisits = appointments.length + guestPasses.length;
+  const selectedWeekdayLabel = getWeekdayLabel(
+    getUtcDayOfWeek(selectedDate),
+    locale,
+  );
+
+  function resetAllFilters() {
+    setSearchQuery("");
+    setVisitModeFilter("ALL");
+    setProviderFilter("ALL");
+    setSpecialtyFilter("ALL");
+    setCityFilter("");
+    setInsuranceFilter("");
+    setIncludeBooked(true);
+    setDoctorIdFilter("");
+    setFacilityFilterId("");
+    setSelectedCountry(defaultCountryForUser);
+    setSelectedDate(getInitialBookingIsoDate());
+  }
+
+  const nextDaySuggestionForModal = selectedPractitioner
+    ? findNextScheduledIsoDate(
+        selectedPractitioner.doctorUserId,
+        selectedPractitioner.facilityId,
+        schedules,
+        selectedDate,
+        locale,
+      )
+    : null;
+
   return (
-    <div dir={activePack?.direction ?? "ltr"} className="space-y-6">
-      <SessionAccountBar
-        session={session}
+    <div dir={isRtl ? "rtl" : "ltr"} className="space-y-4">
+      <WorkspaceHeader
+        title={t("booking.heading")}
+        countryCode={selectedCountry}
+        countryName={formatCountryDisplayName(
+          selectedCountry,
+          activePack?.name ?? selectedCountry,
+          locale,
+        )}
+        currencyCode={currencyCode}
+        emergencyHotline={activePack?.emergencyHotlines.ambulance ?? ""}
+        user={currentUser}
+        guestLabel={copy.guestLabel}
         onSignOut={() => {
-          clearStoredSession();
+          revokeClientSession(apiBaseUrl);
           setSession(null);
           setAppointments([]);
         }}
-        prompt="Sign in via Portal to reserve appointments or check visit updates."
-      />
-
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs sm:p-6">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0 space-y-1">
-            <p className="font-mono-tabular text-xs font-semibold uppercase tracking-wider text-teal-800">
-              {t("booking.eyebrow")}
-            </p>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-              {t("booking.heading")}
-            </h1>
-            <p className="text-sm text-slate-600">
-              {t("booking.subtitle")} ({activePack?.name ?? selectedCountry})
-            </p>
-          </div>
-
-          <ActiveRegionPill
-            code={selectedCountry}
-            name={activePack?.name ?? "Morocco"}
-            currencyCode={activePack?.currencyCode}
-            emergencyHotline={activePack?.emergencyHotlines.ambulance}
-          />
-        </div>
-
-        <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-4">
-          {(
-            [
-              { id: "ALL", label: "All Practitioners" },
-              { id: "DOCTORS", label: "Doctors & Specialists" },
-              { id: "NURSES", label: "Nurses (Infirmiers)" },
-            ] as const
-          ).map((tab) => {
-            const active = providerFilter === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                aria-pressed={active}
-                onClick={() => setProviderFilter(tab.id)}
-                className={
-                  active
-                    ? "min-h-[34px] rounded-lg bg-teal-800 px-3 py-1 text-xs font-semibold text-white"
-                    : "min-h-[34px] rounded-lg border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700 hover:border-teal-700"
-                }
-              >
-                {tab.label}
-              </button>
-            );
-          })}
-
-          {doctorIdFilter ? (
+        actions={
+          currentUser && !isConsumerUserOrGuest(currentUser) ? null : (
             <button
               type="button"
-              onClick={() => setDoctorIdFilter("")}
-              className="rounded-lg border border-teal-200 bg-teal-50 px-2.5 py-1 text-xs font-semibold text-teal-900 hover:bg-teal-100"
-            >
-              Filtered from Profiles · Show All
-            </button>
-          ) : null}
-        </div>
-
-        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-12">
-          <div className="min-w-0 lg:col-span-3">
-            <label
-              htmlFor="booking-date"
-              className="mb-1 block text-xs font-semibold text-slate-700"
-            >
-              Preferred Date
-            </label>
-            <UiInput
-              id="booking-date"
-              type="date"
-              value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              className="font-mono-tabular"
-            />
-          </div>
-
-          <div className="min-w-0 lg:col-span-3">
-            <label
-              htmlFor="specialty-filter"
-              className="mb-1 block text-xs font-semibold text-slate-700"
-            >
-              Specialty or Care Type
-            </label>
-            <UiInput
-              id="specialty-filter"
-              type="text"
-              placeholder="Cardiology, Nursing..."
-              value={specialtyFilter}
-              onChange={(e) => setSpecialtyFilter(e.target.value)}
-            />
-          </div>
-
-          <div className="min-w-0 lg:col-span-2">
-            <label
-              htmlFor="visit-mode-filter"
-              className="mb-1 block text-xs font-semibold text-slate-700"
-            >
-              Visit Format
-            </label>
-            <UiSelect
-              id="visit-mode-filter"
-              value={visitModeFilter}
-              onChange={(e) =>
-                setVisitModeFilter(
-                  e.target.value === "ALL"
-                    ? "ALL"
-                    : VisitModeSchema.parse(e.target.value),
-                )
-              }
-            >
-              <option value="ALL">All Formats</option>
-              <option value="IN_PERSON">Clinic Visit</option>
-              <option value="TELEHEALTH">Video Visit</option>
-            </UiSelect>
-          </div>
-
-          <div className="flex items-end lg:col-span-2">
-            <UiSwitch
-              id="booking-include-booked"
-              checked={includeBooked}
-              onChange={setIncludeBooked}
-              label="Show booked"
-            />
-          </div>
-
-          <div className="flex items-end lg:col-span-2">
-            <UiButton
               disabled={busy}
-              onClick={() => void handleSearchSlots()}
-              className="w-full"
+              onClick={() => void refreshSlotsAndAppointments()}
+              aria-label={copy.refreshAria}
+              className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 shadow-2xs transition hover:border-teal-700 hover:text-teal-900 disabled:opacity-50"
             >
-              <Search className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>Find Slots</span>
-            </UiButton>
+              <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+              <span className="hidden sm:inline">{copy.refreshLabel}</span>
+            </button>
+          )
+        }
+      />
+
+      <ConsumerWorkspaceGuard
+        user={currentUser}
+        hydrated={sessionHydrated}
+        surfaceTitle={copy.surfaceTitle}
+        onSignOut={() => {
+          revokeClientSession(apiBaseUrl);
+          setSession(null);
+          setAppointments([]);
+        }}
+      >
+        <VerificationGateNotice user={currentUser} />
+
+        {backendChecked && !apiOnline ? (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+            <span>{copy.apiOfflineText}</span>
+            <button
+              type="button"
+              onClick={() => {
+                setBackendChecked(false);
+                setLoadingSlots(true);
+                void checkBackendOnline().then((online) => {
+                  setApiOnline(online);
+                  setBackendChecked(true);
+                  if (!online) setLoadingSlots(false);
+                });
+              }}
+              className="rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-semibold text-rose-800 transition hover:bg-rose-100"
+            >
+              {copy.retryConnection}
+            </button>
           </div>
-        </div>
-
-        {banner ? (
-          <StatusBanner
-            tone={banner.tone}
-            message={banner.text}
-            className="mt-4"
-          />
         ) : null}
-      </section>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-        <div className="min-w-0 space-y-4 lg:col-span-7">
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-3">
-              <div>
-                <h2 className="text-base font-bold text-slate-900">
-                  Available Practitioners & Time Windows
+        <BookingToolbar
+          packs={packs}
+          selectedCountry={selectedCountry}
+          selectedDate={selectedDate}
+          searchQuery={searchQuery}
+          providerFilter={providerFilter}
+          specialtyFilter={specialtyFilter}
+          specialtyOptions={specialtyOptions}
+          visitModeFilter={visitModeFilter}
+          cityFilter={cityFilter}
+          insuranceFilter={insuranceFilter}
+          availableInsurances={availableInsurances}
+          includeBooked={includeBooked}
+          activeTab={activeTab}
+          providerCount={groupedProviders.length}
+          totalSavedVisits={totalSavedVisits}
+          rollingDates={rollingDates}
+          filtersOpen={filtersOpen}
+          hasPopoverFilter={hasPopoverFilter}
+          hasActiveFilter={hasActiveFilter}
+          searchContainerRef={searchContainerRef}
+          onSearchChange={setSearchQuery}
+          onToggleFilters={() => setFiltersOpen((prev) => !prev)}
+          onCloseFilters={() => setFiltersOpen(false)}
+          onCountryChange={(country) => {
+            setSelectedCountry(country);
+            setDoctorIdFilter("");
+            setFacilityFilterId("");
+          }}
+          onVisitModeChange={setVisitModeFilter}
+          onProviderFilterChange={setProviderFilter}
+          onSpecialtyFilterChange={setSpecialtyFilter}
+          onCityFilterChange={setCityFilter}
+          onInsuranceFilterChange={setInsuranceFilter}
+          onIncludeBookedChange={setIncludeBooked}
+          onSelectDate={setSelectedDate}
+          onSelectTab={setActiveTab}
+          onResetAllFilters={resetAllFilters}
+        />
+
+        {activeTab === "APPOINTMENTS" ? (
+          <AppointmentsListPanel
+            appointments={appointments}
+            guestPasses={guestPasses}
+            countryCode={selectedCountry}
+            hasSession={Boolean(session)}
+            canManageStatus={canManageStatus}
+            busy={busy}
+            onRefresh={() => void refreshSlotsAndAppointments()}
+            onTransitionStatus={(id, status) =>
+              void handleTransitionStatus(id, status)
+            }
+            onRemoveGuestPass={(id) => removeGuestActivityPass(id)}
+            onBrowseSlots={() => setActiveTab("PRACTITIONERS")}
+          />
+        ) : (
+          <section className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-baseline gap-2">
+                <h2 className="text-sm font-bold text-slate-900 sm:text-base">
+                  {copy.availableHeading}
                 </h2>
-                <p className="text-xs text-slate-600">
-                  {WEEKDAY_LABELS[getUtcDayOfWeek(selectedDate)]} ·{" "}
-                  {selectedDate} · Currency:{" "}
-                  <span className="font-mono-tabular font-semibold">
-                    {activePack?.currencyCode ?? selectedCountry}
-                  </span>
-                </p>
+                <span className="font-mono-tabular text-xs text-slate-500">
+                  {selectedWeekdayLabel} · {selectedDate} · {currencyCode}
+                </span>
               </div>
-              <UiBadge tone="teal">
-                {groupedProviders.length} provider
-                {groupedProviders.length === 1 ? "" : "s"}
-              </UiBadge>
+
+              <div className="flex items-center gap-2">
+                {doctorIdFilter || specialtyFilter !== "ALL" ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDoctorIdFilter("");
+                      setSpecialtyFilter("ALL");
+                    }}
+                    className="rounded-lg border border-[#CBDDF0] bg-[#F3F8FD] px-3 py-1 text-xs font-semibold text-[#0066CC] hover:bg-emerald-50"
+                  >
+                    {copy.filteredShowAll}
+                  </button>
+                ) : null}
+                <UiBadge tone="emerald">
+                  {groupedProviders.length}{" "}
+                  {groupedProviders.length === 1
+                    ? copy.providerSingular
+                    : copy.providerPlural}
+                </UiBadge>
+              </div>
             </div>
 
-            <div className="mt-3">
-              <label
-                htmlFor="visit-reason"
-                className="mb-1 block text-xs font-semibold text-slate-700"
-              >
-                Consultation Note (optional)
-              </label>
-              <UiInput
-                id="visit-reason"
-                type="text"
-                placeholder="Symptoms, vitals, or follow-up purpose"
-                value={bookingReason}
-                onChange={(e) => setBookingReason(e.target.value)}
-              />
-            </div>
-
-            {groupedProviders.length === 0 ? (
-              <div className="mt-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
+            {loadingSlots && groupedProviders.length === 0 ? (
+              <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-2">
+                {[0, 1, 2, 3].map((idx) => (
+                  <div
+                    key={idx}
+                    className="h-44 animate-pulse rounded-xl border border-[#D7E4F2] bg-white"
+                  />
+                ))}
+              </div>
+            ) : groupedProviders.length === 0 ? (
+              <div className="rounded-2xl border border-[#D7E4F2] bg-white p-8 text-center">
                 <CalendarClock
-                  className="mx-auto h-6 w-6 text-slate-400"
+                  className="mx-auto h-7 w-7 text-slate-400"
                   aria-hidden="true"
                 />
-                <p className="mt-2 text-xs font-medium text-slate-700">
-                  No open practitioner windows matched your filters on{" "}
-                  {WEEKDAY_LABELS[getUtcDayOfWeek(selectedDate)]}. Try picking a
-                  weekday or clearing filters.
+                <p className="mt-2.5 text-sm font-semibold text-slate-800">
+                  {copy.noSlotsMatchedPrefix} {selectedWeekdayLabel}.
                 </p>
-              </div>
-            ) : (
-              <ul className="mt-4 space-y-3.5">
-                {groupedProviders.map((group) => {
-                  const firstAvailable =
-                    group.slots.find((s) => s.isAvailable) ?? group.slots[0]!;
-                  const activeSlotId = selectedSlotByGroup[group.key];
-                  const selectedSlot =
-                    group.slots.find(
-                      (s) =>
-                        `${s.scheduleId}-${s.slotStartIso}` === activeSlotId,
-                    ) ?? firstAvailable;
-
-                  const nurseTrack = isNurseSpecialty(group.specialty);
-                  const primaryPhoto = resolveDefaultAvatar(
-                    group.doctorName,
-                    "DOCTOR",
-                    group.specialty,
-                  );
-                  const workplacePhoto = resolveFacilityPicture(
-                    nurseTrack ? "HOSPITAL" : "CLINIC",
-                  );
-
-                  return (
-                    <li
-                      key={group.key}
-                      className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4"
+                <p className="mt-1 text-xs text-slate-500">
+                  {copy.noSlotsMatchedHint}
+                </p>
+                {hasActiveFilter ? (
+                  <div className="mt-3.5">
+                    <UiButton
+                      size="sm"
+                      variant="secondary"
+                      onClick={resetAllFilters}
                     >
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="flex min-w-0 items-start gap-3">
-                          <EntityMediaPair
-                            primarySrc={primaryPhoto}
-                            primaryAlt={group.doctorName}
-                            primaryLabel={
-                              nurseTrack ? "Infirmier Portrait" : "Doctor Portrait"
-                            }
-                            secondarySrc={workplacePhoto}
-                            secondaryAlt={group.facilityName}
-                            secondaryLabel={
-                              nurseTrack ? "Care Hub" : "Clinic Interior"
-                            }
-                            title={group.doctorName}
-                            subtitle={`${group.specialty} · ${group.facilityName}`}
-                            badge={group.specialty}
-                            specs={[
-                              { label: "Specialty", value: group.specialty },
-                              {
-                                label: "Facility",
-                                value: group.facilityName,
-                              },
-                              {
-                                label: "Visit Fee",
-                                value: `${(
-                                  group.consultationFeeMinor / 100
-                                ).toFixed(2)} ${
-                                  activePack?.currencyCode ?? group.countryCode
-                                }`,
-                              },
-                            ]}
-                          />
-                          <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <h3 className="truncate text-sm font-bold text-slate-900">
-                                <bdi dir="auto">{group.doctorName}</bdi>
-                              </h3>
-                              <UiBadge tone={nurseTrack ? "emerald" : "teal"}>
-                                {group.specialty}
-                              </UiBadge>
-                            </div>
-                            <p className="mt-0.5 truncate text-xs text-slate-600">
-                              <bdi dir="auto">{group.facilityName}</bdi>
-                            </p>
-                            <p className="mt-1 font-mono-tabular text-xs font-semibold text-teal-800">
-                              {(group.consultationFeeMinor / 100).toFixed(2)}{" "}
-                              {activePack?.currencyCode ?? group.countryCode}
-                            </p>
-                          </div>
-                        </div>
-
-                        <BookmarkButton
-                          compact
-                          entry={{
-                            id: group.doctorUserId,
-                            kind: nurseTrack ? "NURSE" : "DOCTOR",
-                            countryCode: group.countryCode,
-                            title: group.doctorName,
-                            subtitle: `${group.specialty} · ${group.facilityName}`,
-                            facilityId: group.facilityId,
-                            facilityName: group.facilityName,
-                            href: `/booking?doctorId=${encodeURIComponent(group.doctorUserId)}`,
-                          }}
-                        />
-                      </div>
-
-                      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 border-t border-slate-200/80 pt-3">
-                        {group.slots.map((slot) => {
-                          const slotKey = `${slot.scheduleId}-${slot.slotStartIso}`;
-                          const isSelected =
-                            `${selectedSlot.scheduleId}-${selectedSlot.slotStartIso}` ===
-                            slotKey;
-                          const timeRange = `${slot.slotStartIso.slice(11, 16)}–${slot.slotEndIso.slice(11, 16)}`;
-
-                          return (
-                            <button
-                              key={slotKey}
-                              type="button"
-                              disabled={!slot.isAvailable}
-                              onClick={() =>
-                                setSelectedSlotByGroup((prev) => ({
-                                  ...prev,
-                                  [group.key]: slotKey,
-                                }))
-                              }
-                              aria-pressed={isSelected}
-                              className={
-                                !slot.isAvailable
-                                  ? "inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-100 px-2.5 py-1.5 font-mono-tabular text-[11px] font-medium text-slate-400 line-through"
-                                  : isSelected
-                                    ? "inline-flex items-center gap-1 rounded-lg border border-teal-800 bg-teal-800 px-2.5 py-1.5 font-mono-tabular text-[11px] font-semibold text-white shadow-xs"
-                                    : "inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 font-mono-tabular text-[11px] font-semibold text-slate-800 hover:border-teal-700"
-                              }
-                            >
-                              {slot.visitMode === "TELEHEALTH" ? (
-                                <Video className="h-3 w-3" aria-hidden="true" />
-                              ) : (
-                                <Stethoscope
-                                  className="h-3 w-3"
-                                  aria-hidden="true"
-                                />
-                              )}
-                              <span>{timeRange}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-
-                      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200/80 pt-3">
-                        <p className="text-xs text-slate-600">
-                          {selectedSlot.isAvailable ? (
-                            <>
-                              Selected:{" "}
-                              <span className="font-mono-tabular font-semibold text-slate-900">
-                                {selectedSlot.slotStartIso.slice(11, 16)}–
-                                {selectedSlot.slotEndIso.slice(11, 16)}
-                              </span>{" "}
-                              · {formatVisitMode(selectedSlot.visitMode)}
-                            </>
-                          ) : (
-                            "All shown windows are currently reserved"
-                          )}
-                        </p>
-
-                        <UiButton
-                          size="sm"
-                          disabled={busy || !selectedSlot.isAvailable}
-                          onClick={() => void handleBookSlot(selectedSlot)}
-                        >
-                          Reserve Visit
-                        </UiButton>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </section>
-        </div>
-
-        <aside className="min-w-0 space-y-5 lg:col-span-5 lg:sticky lg:top-20 self-start">
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
-            <div className="flex items-center justify-between gap-2 border-b border-slate-200 pb-3">
-              <h2 className="text-base font-bold text-slate-900">
-                Your Appointments
-              </h2>
-              {session ? (
-                <UiButton
-                  size="sm"
-                  variant="secondary"
-                  disabled={busy}
-                  onClick={() => void refreshSlotsAndAppointments()}
-                >
-                  Refresh
-                </UiButton>
-              ) : null}
-            </div>
-
-            {!session ? (
-              <div className="mt-4 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
-                <p>
-                  Tap any time slot on the left and hit{" "}
-                  <strong className="font-semibold text-slate-900">Reserve Visit</strong>{" "}
-                  immediately without creating an account, or sign in via the Care Portal to sync history across devices.
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  <Link
-                    href="/patient"
-                    className="inline-flex min-h-[36px] items-center rounded-lg bg-teal-800 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-teal-900"
-                  >
-                    Open My Care & Deadlines
-                  </Link>
-                  <Link
-                    href="/portal"
-                    className="inline-flex min-h-[36px] items-center rounded-lg border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-800 hover:border-teal-700"
-                  >
-                    Care Portal Sign-In
-                  </Link>
-                </div>
+                      {copy.clearFilters}
+                    </UiButton>
+                  </div>
+                ) : null}
               </div>
-            ) : appointments.length === 0 ? (
-              <p className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
-                No scheduled appointments found in {selectedCountry}. Select a
-                time window on the left to book.
-              </p>
             ) : (
-              <ul className="mt-4 space-y-2.5">
-                {appointments.map((appt) => (
-                  <li
-                    key={appt.id}
-                    className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-mono-tabular font-bold text-slate-900">
-                        {appt.slotStartIso.slice(0, 16).replace("T", " ")}
-                      </span>
-                      <UiBadge tone={STATUS_BADGE_TONE[appt.status]}>
-                        {appt.status}
-                      </UiBadge>
-                    </div>
-                    <div className="mt-2 flex items-center gap-2.5">
-                      <EntityAvatar
-                        name={appt.doctorName}
-                        role="DOCTOR"
-                        size="xs"
-                      />
-                      <div className="min-w-0">
-                        <p className="truncate font-semibold text-slate-800">
-                          <bdi dir="auto">{appt.doctorName}</bdi> ·{" "}
-                          <bdi dir="auto">{appt.facilityName}</bdi>
-                        </p>
-                        <p className="truncate text-slate-600">
-                          {formatVisitMode(appt.visitMode)} ·{" "}
-                          <bdi dir="auto">{appt.patientName}</bdi>
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="mt-2.5 flex flex-wrap gap-1.5">
-                      {appt.status === "CONFIRMED" ? (
-                        <UiButton
-                          size="sm"
-                          variant="secondary"
-                          disabled={busy}
-                          onClick={() =>
-                            void handleTransitionStatus(appt.id, "CANCELLED")
-                          }
-                        >
-                          Cancel Visit
-                        </UiButton>
-                      ) : null}
-                      {canManageStatus && appt.status === "CONFIRMED" ? (
-                        <UiButton
-                          size="sm"
-                          disabled={busy}
-                          onClick={() =>
-                            void handleTransitionStatus(appt.id, "CHECKED_IN")
-                          }
-                        >
-                          Check In
-                        </UiButton>
-                      ) : null}
-                      {canManageStatus && appt.status === "CHECKED_IN" ? (
-                        <UiButton
-                          size="sm"
-                          disabled={busy}
-                          onClick={() =>
-                            void handleTransitionStatus(appt.id, "COMPLETED")
-                          }
-                        >
-                          Complete Visit
-                        </UiButton>
-                      ) : null}
-                    </div>
-                  </li>
+              <ul className="grid grid-cols-1 gap-3.5 lg:grid-cols-2">
+                {groupedProviders.map((group) => (
+                  <PractitionerSlotCard
+                    key={group.key}
+                    group={group}
+                    currencyCode={currencyCode}
+                    selectedWeekdayLabel={selectedWeekdayLabel}
+                    onOpenSchedule={(initialSlotKey, preferredMode) =>
+                      setSelectedPractitioner({
+                        key: group.key,
+                        doctorUserId: group.doctorUserId,
+                        doctorName: group.doctorName,
+                        specialty: group.specialty,
+                        facilityId: group.facilityId,
+                        facilityName: group.facilityName,
+                        facilityAddress: group.facilityAddress,
+                        acceptedInsurances: group.acceptedInsurances,
+                        languagesSpoken: group.languagesSpoken,
+                        credentialVerified: group.credentialVerified,
+                        telehealthEnabled: group.telehealthEnabled,
+                        consultationFeeMinor: group.consultationFeeMinor,
+                        countryCode: group.countryCode,
+                        avatarUrl: group.avatarUrl,
+                        licenseNumber: group.licenseNumber,
+                        bio: group.bio,
+                        initialSlotKey,
+                        preferredVisitMode:
+                          preferredMode ??
+                          (visitModeFilter !== "ALL"
+                            ? visitModeFilter
+                            : undefined),
+                      })
+                    }
+                  />
                 ))}
               </ul>
             )}
           </section>
+        )}
 
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
-            <h3 className="text-sm font-bold text-slate-900">
-              Clinicians & Clinic Coordinators
-            </h3>
-            <p className="mt-1 text-xs leading-relaxed text-slate-600">
-              Practitioner shift publishing, clinic schedules, and consultation
-              fees are managed in the dedicated Clinical Workspace.
-            </p>
-            <div className="mt-3">
-              <Link
-                href="/clinical"
-                className="inline-flex min-h-[36px] items-center rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 hover:border-teal-700 hover:text-teal-900"
-              >
-                Open Clinical Schedule Portal
-              </Link>
-            </div>
-          </section>
-        </aside>
-      </div>
+        {selectedPractitioner ? (
+          <BookingScheduleModal
+            practitioner={selectedPractitioner}
+            slots={slots.filter(
+              (s) =>
+                s.doctorUserId === selectedPractitioner.doctorUserId &&
+                s.facilityId === selectedPractitioner.facilityId,
+            )}
+            currencyCode={currencyCode}
+            selectedDate={selectedDate}
+            weekdayLabel={selectedWeekdayLabel}
+            rollingDates={rollingDates}
+            nextAvailableSuggestion={nextDaySuggestionForModal}
+            signedInUserName={currentUser?.fullName ?? null}
+            busy={busy}
+            onSelectDate={setSelectedDate}
+            onConfirm={(slot, reason, guestContact) =>
+              handleConfirmReservation(slot, reason, guestContact)
+            }
+            onClose={() => {
+              if (!busy) setSelectedPractitioner(null);
+            }}
+          />
+        ) : null}
+      </ConsumerWorkspaceGuard>
     </div>
   );
 }

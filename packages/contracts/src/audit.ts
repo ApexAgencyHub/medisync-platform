@@ -9,6 +9,7 @@ export const AuditEventSchema = z.object({
   action: z.string().min(2),
   resourceType: z.string().min(2),
   resourceId: z.string().min(1),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   occurredAtIso: z.string().datetime(),
 });
 

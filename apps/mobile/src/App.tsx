@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   Pressable,
   ScrollView,
@@ -14,7 +14,7 @@ import {
   type DisputeCategory,
   type VisitMode,
 } from "@medisync/contracts";
-import { listCountryPacks, resolveCountryPack } from "@medisync/country-packs";
+import { resolveCountryPack } from "@medisync/country-packs";
 import { mobileTheme } from "./theme";
 import {
   AdminOpsScreen,
@@ -28,6 +28,7 @@ import {
   NativeClinicalPanel,
   NativeMapDriverPanel,
 } from "./screens/NativeCapabilitiesPanel";
+import { resolveMobileApiBaseUrl } from "./services/native-adapters";
 
 export interface MobileShellProps {
   countryCode?: string;
@@ -45,13 +46,11 @@ const MOBILE_TABS: ReadonlyArray<{ id: MobileTabId; label: string }> = [
 ];
 
 export function MobileAppShell({
-  countryCode = "INTL",
-  apiBaseUrl = "http://127.0.0.1:4100",
+  countryCode = "MA",
+  apiBaseUrl = resolveMobileApiBaseUrl(),
   initialUser = null,
   authToken = null,
 }: MobileShellProps) {
-  const packs = listCountryPacks();
-  const [selectedCountry, setSelectedCountry] = useState(countryCode);
   const [activeTab, setActiveTab] = useState<MobileTabId>("map");
 
   const [urgency, setUrgency] = useState<DispatchUrgency>("URGENT");
@@ -62,44 +61,53 @@ export function MobileAppShell({
     useState<DisputeCategory>("DISPATCH_DELAY");
   const [disputeSubject, setDisputeSubject] = useState("");
   const [statusBanner, setStatusBanner] = useState<string | null>(null);
+  const dispatchSubmitLockRef = useRef(false);
 
-  const activePack = resolveCountryPack(selectedCountry);
+  const activePack = resolveCountryPack(countryCode);
 
   async function submitValidatedDispatch() {
-    const parsed = CreateDispatchRequestSchema.safeParse({
-      pickupLat: activePack.code === "MA" ? 33.5731 : 40.7128,
-      pickupLng: activePack.code === "MA" ? -7.5898 : -74.006,
-      pickupAddress,
-      urgency,
-    });
-    if (!parsed.success) {
-      setStatusBanner("Enter a pickup address (minimum 4 characters).");
-      return;
-    }
-
-    if (!authToken) {
-      setStatusBanner(
-        `Dispatch contract validated for ${activePack.code} (${urgency}); configure authToken to transmit to ${apiBaseUrl}.`,
-      );
-      return;
-    }
-
+    if (dispatchSubmitLockRef.current) return;
+    dispatchSubmitLockRef.current = true;
     try {
-      const response = await fetch(`${apiBaseUrl}/v1/dispatch/requests`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${authToken}`,
-        },
-        body: JSON.stringify(parsed.data),
+      const parsed = CreateDispatchRequestSchema.safeParse({
+        pickupLat: 33.5731,
+        pickupLng: -7.5898,
+        pickupAddress,
+        urgency,
       });
-      setStatusBanner(
-        response.ok
-          ? "Emergency dispatch request queued via API."
-          : `Dispatch rejected (${response.status}).`,
-      );
-    } catch {
-      setStatusBanner(`Network unreachable at ${apiBaseUrl}.`);
+      if (!parsed.success) {
+        setStatusBanner("Enter a pickup address (minimum 4 characters).");
+        return;
+      }
+
+      if (!authToken) {
+        setStatusBanner(
+          `Dispatch contract validated for ${activePack.code} (${urgency}); configure authToken to transmit to ${apiBaseUrl}.`,
+        );
+        return;
+      }
+
+      try {
+        const response = await fetch(`${apiBaseUrl}/v1/dispatch/requests`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${authToken}`,
+          },
+          body: JSON.stringify(parsed.data),
+        });
+        setStatusBanner(
+          response.ok
+            ? "Emergency dispatch request queued via API."
+            : response.status === 409
+              ? "An identical active dispatch request is already queued."
+              : `Dispatch rejected (${response.status}).`,
+        );
+      } catch {
+        setStatusBanner(`Network unreachable at ${apiBaseUrl}.`);
+      }
+    } finally {
+      dispatchSubmitLockRef.current = false;
     }
   }
 
@@ -146,35 +154,12 @@ export function MobileAppShell({
       contentContainerStyle={styles.scrollContent}
     >
       <View style={styles.headerCard}>
-        <Text style={styles.brandEyebrow}>MEDISYNC GLOBAL · EXPO SHELL</Text>
-        <Text style={styles.title}>8-Actor Mobile Care & Ops</Text>
+        <Text style={styles.brandEyebrow}>MEDISYNC MOROCCO · CARE RADAR</Text>
+        <Text style={styles.title}>Live Map &amp; Mobile Care</Text>
         <Text style={styles.subtitle}>
-          Jurisdiction: {activePack.name} ({activePack.currencyCode}) · Dir:{" "}
-          {activePack.direction.toUpperCase()} · Emergency:{" "}
+          Care Network: {activePack.name} ({activePack.currencyCode}) · Emergency:{" "}
           {activePack.emergencyHotlines.ambulance}
         </Text>
-
-        <View style={styles.countryRow}>
-          {packs.map((pack) => {
-            const active = pack.code === activePack.code;
-            return (
-              <Pressable
-                key={pack.code}
-                onPress={() => setSelectedCountry(pack.code)}
-                style={[styles.countryPill, active && styles.countryPillActive]}
-              >
-                <Text
-                  style={[
-                    styles.countryPillText,
-                    active && styles.countryPillTextActive,
-                  ]}
-                >
-                  {pack.code}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
       </View>
 
       <View style={styles.tabBar}>
@@ -292,32 +277,6 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     color: mobileTheme.colors.inkSecondary,
   },
-  countryRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: mobileTheme.spacing.xs,
-    marginTop: mobileTheme.spacing.xs,
-  },
-  countryPill: {
-    borderRadius: mobileTheme.radii.sm,
-    borderWidth: 1,
-    borderColor: mobileTheme.colors.borderSubtle,
-    backgroundColor: mobileTheme.colors.bgSubtle,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  countryPillActive: {
-    borderColor: mobileTheme.colors.brandPrimary,
-    backgroundColor: mobileTheme.colors.brandPrimary,
-  },
-  countryPillText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: mobileTheme.colors.inkSecondary,
-  },
-  countryPillTextActive: {
-    color: mobileTheme.colors.bgSurface,
-  },
   tabBar: {
     flexDirection: "row",
     gap: mobileTheme.spacing.xs,
@@ -357,3 +316,5 @@ const styles = StyleSheet.create({
     color: mobileTheme.colors.inkPrimary,
   },
 });
+
+export default MobileAppShell;

@@ -3,56 +3,88 @@
 import Link from "next/link";
 import type {
   ButtonHTMLAttributes,
+  ComponentPropsWithoutRef,
   InputHTMLAttributes,
   ReactNode,
-  SelectHTMLAttributes,
 } from "react";
 import type { AuthResponse } from "@medisync/contracts";
-import {
-  AlertCircle,
-  CheckCircle2,
-  Globe,
-  Info,
-  LogOut,
-  UserCheck,
-} from "lucide-react";
+import { LogOut, UserCheck } from "lucide-react";
 import { formatRoleLabel } from "../i18n/human-labels";
+import { useLocale } from "../i18n/locale-store";
 import { EntityAvatar } from "./EntityAvatar";
+
+export { UiSelect, type UiSelectProps } from "./UiSelect";
+export {
+  ToastProvider,
+  useToast,
+  useToastSetter,
+  type ToastInput,
+  type ToastTone,
+} from "./ToastProvider";
+export { WorkspaceHeader, type WorkspaceHeaderProps } from "./WorkspaceHeader";
 
 export type UiButtonVariant =
   | "primary"
+  | "obsidian"
+  | "phosphor"
   | "secondary"
   | "outline"
+  | "chassis"
   | "danger"
-  | "ghost";
+  | "ghost"
+  | "soft";
 export type UiButtonSize = "sm" | "md" | "lg";
 
 const BUTTON_VARIANTS: Record<UiButtonVariant, string> = {
   primary:
-    "bg-teal-800 text-white border border-teal-800 hover:bg-teal-900 shadow-xs",
+    "bg-[#0066CC] text-white border border-[#0058B0] shadow-[0_6px_16px_-6px_rgba(0,102,204,0.4)] hover:bg-[#0052A3]",
+  obsidian:
+    "bg-[#0F243E] text-white border border-[#0F243E] hover:bg-[#1B375B]",
+  phosphor:
+    "bg-[#0066CC] text-white border border-[#0058B0] shadow-[0_6px_16px_-6px_rgba(0,102,204,0.4)] hover:bg-[#0052A3]",
   secondary:
-    "border border-slate-300 bg-white text-slate-800 hover:border-teal-700 hover:text-teal-900",
+    "border border-[#D7E4F2] bg-[#E8F1FA] text-[#0F243E] hover:bg-[#DCE9F7]",
   outline:
-    "border border-teal-700 bg-teal-50/40 text-teal-900 hover:bg-teal-100/70",
-  danger: "bg-red-700 text-white border border-red-700 hover:bg-red-800",
-  ghost: "text-slate-700 border border-transparent hover:bg-slate-100",
+    "border border-[#CBDDF0] bg-white text-[#0F243E] hover:border-[#0066CC] hover:bg-[#F3F8FD]",
+  chassis:
+    "border border-[#CBDDF0] bg-white text-[#0F243E] hover:border-[#0066CC] hover:bg-[#F3F8FD]",
+  danger:
+    "bg-[#DC2626] text-white border border-[#B91C1C] hover:bg-[#B91C1C]",
+  ghost:
+    "text-[#4A627D] border border-transparent hover:bg-[#E8F1FA] hover:text-[#0F243E]",
+  soft: "border border-[#D7E4F2] bg-[#F3F8FD] text-[#0F243E] hover:bg-[#E8F1FA]",
 };
 
 const BUTTON_SIZES: Record<UiButtonSize, string> = {
-  sm: "min-h-[34px] px-3 py-1.5 text-xs",
-  md: "min-h-[40px] px-4 py-2 text-xs",
+  sm: "min-h-[36px] px-3.5 py-1.5 text-xs",
+  md: "min-h-[40px] px-4 py-2 text-[13px]",
   lg: "min-h-[44px] px-5 py-2.5 text-sm",
 };
+
+function buttonClassNames({
+  variant = "primary",
+  size = "md",
+  pill = false,
+  className = "",
+}: {
+  variant?: UiButtonVariant | undefined;
+  size?: UiButtonSize | undefined;
+  pill?: boolean | undefined;
+  className?: string | undefined;
+}) {
+  return `inline-flex items-center justify-center gap-1.5 whitespace-nowrap ${pill ? "rounded-full" : "rounded-xl"} font-semibold tracking-[-0.01em] transition-[background-color,border-color,color,box-shadow,transform] duration-150 active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0066CC]/30 disabled:pointer-events-none disabled:opacity-50 ${BUTTON_VARIANTS[variant]} ${BUTTON_SIZES[size]} ${className}`;
+}
 
 interface UiButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: UiButtonVariant;
   size?: UiButtonSize;
+  pill?: boolean;
 }
 
-/** Standardized clinical button with crisp hover, focus, and tactile press feedback. */
 export function UiButton({
   variant = "primary",
   size = "md",
+  pill = false,
   type = "button",
   className = "",
   ...rest
@@ -60,33 +92,40 @@ export function UiButton({
   return (
     <button
       type={type}
-      className={`inline-flex items-center justify-center gap-1.5 rounded-lg font-semibold transition-colors active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-teal-700/40 disabled:cursor-not-allowed disabled:opacity-50 ${BUTTON_VARIANTS[variant]} ${BUTTON_SIZES[size]} ${className}`}
+      className={buttonClassNames({ variant, size, pill, className })}
       {...rest}
     />
   );
 }
 
-/** Standardized single-line clinical form input. */
+interface UiLinkButtonProps extends ComponentPropsWithoutRef<typeof Link> {
+  variant?: UiButtonVariant;
+  size?: UiButtonSize;
+  pill?: boolean;
+}
+
+export function UiLinkButton({
+  variant = "primary",
+  size = "md",
+  pill = false,
+  className = "",
+  ...rest
+}: UiLinkButtonProps) {
+  return (
+    <Link
+      className={buttonClassNames({ variant, size, pill, className })}
+      {...rest}
+    />
+  );
+}
+
 export function UiInput({
   className = "",
   ...rest
 }: InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
-      className={`h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-700/15 disabled:bg-slate-100 disabled:text-slate-500 ${className}`}
-      {...rest}
-    />
-  );
-}
-
-/** Standardized accessible select dropdown across all clinical workspaces. */
-export function UiSelect({
-  className = "",
-  ...rest
-}: SelectHTMLAttributes<HTMLSelectElement>) {
-  return (
-    <select
-      className={`h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-700/15 disabled:bg-slate-100 disabled:text-slate-500 ${className}`}
+      className={`h-10 w-full rounded-xl border border-[#CBDDF0] bg-white px-3.5 text-sm text-[#0F243E] placeholder:text-[#7D96B2] focus:border-[#0066CC] focus:outline-none focus:ring-2 focus:ring-[#0066CC]/18 disabled:bg-[#E8F1FA] disabled:text-[#6B829D] ${className}`}
       {...rest}
     />
   );
@@ -101,7 +140,6 @@ interface UiSwitchProps {
   disabled?: boolean;
 }
 
-/** Accessible pill toggle switch replacing unstyled browser checkboxes. */
 export function UiSwitch({
   id,
   checked,
@@ -118,26 +156,26 @@ export function UiSwitch({
       aria-checked={checked}
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      className="inline-flex min-h-[38px] items-center gap-2.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-left transition-colors hover:border-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-700/30 disabled:opacity-50"
+      className="inline-flex min-h-[40px] items-center gap-2.5 rounded-xl border border-[#CBDDF0] bg-white px-3 py-1.5 text-left transition-colors hover:border-[#0066CC] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0066CC]/30 disabled:opacity-50"
     >
       <span
         aria-hidden="true"
         className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
-          checked ? "bg-teal-800" : "bg-slate-300"
+          checked ? "bg-[#0066CC]" : "bg-[#B7CDE4]"
         }`}
       >
         <span
-          className={`inline-block h-4 w-4 rounded-full bg-white shadow-xs transition-transform ${
-            checked ? "translate-x-4" : "translate-x-0.5"
+          className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-xs transition-transform ${
+            checked ? "translate-x-4.5" : "translate-x-0.5"
           }`}
         />
       </span>
       <span className="min-w-0">
-        <span className="block text-xs font-semibold text-slate-800">
+        <span className="block text-xs font-semibold text-[#0F243E]">
           {label}
         </span>
         {caption ? (
-          <span className="block text-[11px] text-slate-500">{caption}</span>
+          <span className="block text-[11px] text-[#6B829D]">{caption}</span>
         ) : null}
       </span>
     </button>
@@ -147,14 +185,13 @@ export function UiSwitch({
 export type UiBadgeTone = "teal" | "emerald" | "amber" | "red" | "slate";
 
 const BADGE_TONES: Record<UiBadgeTone, string> = {
-  teal: "border-teal-200 bg-teal-50 text-teal-900",
-  emerald: "border-emerald-200 bg-emerald-50 text-emerald-900",
-  amber: "border-amber-200 bg-amber-50 text-amber-900",
-  red: "border-red-200 bg-red-50 text-red-900",
-  slate: "border-slate-200 bg-slate-100 text-slate-700",
+  teal: "border border-[#BFDBFE] bg-[#EBF4FF] text-[#0052A3]",
+  emerald: "border border-[#B2E5DC] bg-[#E6F7F4] text-[#0B6B5C]",
+  amber: "border border-amber-200 bg-amber-50 text-amber-900",
+  red: "border border-rose-200 bg-rose-50 text-[#B91C1C]",
+  slate: "border border-[#D7E4F2] bg-[#F3F8FD] text-[#2F4661]",
 };
 
-/** Compact clinical status pill badge. */
 export function UiBadge({
   tone = "slate",
   children,
@@ -166,201 +203,358 @@ export function UiBadge({
 }) {
   return (
     <span
-      className={`inline-flex max-w-full items-center truncate rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${BADGE_TONES[tone]} ${className}`}
+      className={`inline-flex max-w-full items-center truncate rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${BADGE_TONES[tone]} ${className}`}
     >
       {children}
     </span>
   );
 }
 
-export type StatusBannerTone = "success" | "error" | "warning" | "info";
-
-const BANNER_STYLES: Record<StatusBannerTone, string> = {
-  success: "border-emerald-200 bg-emerald-50 text-emerald-950",
-  error: "border-red-200 bg-red-50 text-red-950",
-  warning: "border-amber-200 bg-amber-50 text-amber-950",
-  info: "border-teal-200 bg-teal-50 text-teal-950",
-};
-
-/** Unified status feedback alert displayed inline above workflow actions. */
-export function StatusBanner({
-  tone = "info",
-  message,
+export function SectionCard({
+  title,
+  actions,
+  children,
   className = "",
 }: {
-  tone?: StatusBannerTone;
-  message: string;
+  title?: ReactNode;
+  actions?: ReactNode;
+  children: ReactNode;
   className?: string;
 }) {
-  const Icon =
-    tone === "success"
-      ? CheckCircle2
-      : tone === "error" || tone === "warning"
-        ? AlertCircle
-        : Info;
   return (
-    <div
-      role={tone === "error" ? "alert" : "status"}
-      className={`flex items-start gap-2 rounded-xl border px-3.5 py-2.5 text-xs font-medium ${BANNER_STYLES[tone]} ${className}`}
+    <section
+      className={`rounded-2xl border border-[#D7E4F2] bg-white p-5 shadow-[0_4px_20px_-10px_rgba(15,36,62,0.08)] ${className}`}
     >
-      <Icon className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-      <p className="min-w-0 leading-relaxed">{message}</p>
-    </div>
+      {title || actions ? (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-[#E8F1FA] pb-3">
+          {title ? (
+            <h2 className="font-editorial text-[15px] font-bold tracking-[-0.015em] text-[#0F243E]">
+              {title}
+            </h2>
+          ) : (
+            <span />
+          )}
+          {actions}
+        </div>
+      ) : null}
+      {children}
+    </section>
   );
 }
 
-export interface RegionTabOption {
-  code: string;
+export interface StatStripItem {
   label: string;
+  value: string;
+  detail?: string | undefined;
+  tone?: "neutral" | "emerald" | "amber" | "crimson" | undefined;
 }
 
 /**
- * Compact read-only active region indicator for single-country deployments (Morocco MA default).
- * Replaces multi-button country switchers to keep workspace chrome clean and focused.
+ * Pure White Medical KPI Summary Strip.
  */
-export function ActiveRegionPill({
-  code,
-  name,
-  currencyCode,
-  emergencyHotline,
+export function StatStrip({
+  items,
+  ariaLabel,
+  columns = 4,
 }: {
-  code: string;
-  name: string;
-  currencyCode?: string | undefined;
-  emergencyHotline?: string | undefined;
+  items: readonly StatStripItem[];
+  ariaLabel?: string;
+  columns?: 2 | 3 | 4;
 }) {
+  const colClass =
+    columns === 2
+      ? "grid-cols-2"
+      : columns === 3
+        ? "grid-cols-1 sm:grid-cols-3"
+        : "grid-cols-2 md:grid-cols-4";
+
   return (
-    <div className="inline-flex flex-wrap items-center gap-2 rounded-full border border-teal-200 bg-teal-50/70 px-3 py-1 text-xs font-medium text-teal-950">
-      <Globe className="h-3.5 w-3.5 shrink-0 text-teal-800" aria-hidden="true" />
-      <span>
-        Care Region: <strong className="font-semibold">{name}</strong> ({code})
-      </span>
-      {currencyCode ? (
-        <span className="font-mono-tabular text-teal-800">· {currencyCode}</span>
-      ) : null}
-      {emergencyHotline ? (
-        <span className="font-mono-tabular font-semibold text-red-700">
-          · Emergency {emergencyHotline}
-        </span>
-      ) : null}
-    </div>
+    <section
+      aria-label={ariaLabel}
+      className={`grid gap-2 sm:gap-2.5 ${colClass}`}
+    >
+      {items.map((item) => {
+        const valueColor =
+          item.tone === "emerald"
+            ? "text-[#0F9D88]"
+            : item.tone === "amber"
+              ? "text-amber-700"
+              : item.tone === "crimson"
+                ? "text-[#DC2626]"
+                : "text-[#0066CC]";
+        const dotColor =
+          item.tone === "emerald"
+            ? "bg-[#0F9D88]"
+            : item.tone === "amber"
+              ? "bg-amber-500"
+              : item.tone === "crimson"
+                ? "bg-[#DC2626]"
+                : "bg-[#0066CC]";
+
+        return (
+          <article
+            key={item.label}
+            className="flex flex-col justify-between rounded-xl border border-[#D7E4F2] bg-white px-3 py-2.5 shadow-[0_4px_16px_-10px_rgba(15,36,62,0.08)] sm:rounded-2xl sm:px-3.5 sm:py-3 xl:px-4 xl:py-3.5"
+          >
+            <div className="flex items-center gap-1.5">
+              <span
+                aria-hidden="true"
+                className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotColor}`}
+              />
+              <p className="truncate text-[11px] font-semibold leading-tight text-[#556E89] xl:text-xs">
+                {item.label}
+              </p>
+            </div>
+            <p
+              dir="ltr"
+              className={`mt-1.5 font-editorial font-mono-tabular text-lg font-bold leading-none tracking-tight sm:text-xl xl:text-2xl ${valueColor}`}
+            >
+              {item.value}
+            </p>
+            {item.detail ? (
+              <p className="mt-1 truncate text-[10.5px] leading-tight text-[#6B829D] xl:text-[11px]">
+                {item.detail}
+              </p>
+            ) : null}
+          </article>
+        );
+      })}
+    </section>
   );
 }
 
-export const DEFAULT_REGION_TABS: readonly RegionTabOption[] = [
-  { code: "MA", label: "MA · Morocco" },
-  { code: "INTL", label: "INTL · Global" },
-  { code: "FR", label: "FR · France" },
-  { code: "US", label: "US · USA" },
-];
-
-/** Standardized region selector bar shared across directory, booking, map, and pharmacy pages. */
-export function RegionTabs({
+export function KpiMetricTile({
+  label,
   value,
-  onChange,
-  options = DEFAULT_REGION_TABS,
+  detail,
+  tone = "neutral",
+}: StatStripItem) {
+  const valueColor =
+    tone === "emerald"
+      ? "text-[#0F9D88]"
+      : tone === "amber"
+        ? "text-amber-700"
+        : tone === "crimson"
+          ? "text-[#DC2626]"
+          : "text-[#0066CC]";
+
+  return (
+    <article className="rounded-xl border border-[#D7E4F2] bg-white px-3 py-2.5 shadow-[0_4px_16px_-10px_rgba(15,36,62,0.08)] sm:rounded-2xl sm:px-3.5 sm:py-3">
+      <p className="truncate text-[11px] font-semibold leading-tight text-[#556E89] xl:text-xs">
+        {label}
+      </p>
+      <p
+        dir="ltr"
+        className={`mt-1.5 font-editorial font-mono-tabular text-lg font-bold leading-none tracking-tight sm:text-xl xl:text-2xl ${valueColor}`}
+      >
+        {value}
+      </p>
+      {detail ? (
+        <p className="mt-1 truncate text-[10.5px] leading-tight text-[#6B829D] xl:text-[11px]">
+          {detail}
+        </p>
+      ) : null}
+    </article>
+  );
+}
+
+export interface UiTabItem<T extends string = string> {
+  id: T;
+  label: string;
+  icon?: ReactNode;
+}
+
+export function UiTabBar<T extends string>({
+  tabs,
+  activeTab,
+  onSelect,
+  ariaLabel,
   className = "",
 }: {
-  value: string;
-  onChange: (countryCode: string) => void;
-  options?: readonly RegionTabOption[];
+  tabs: readonly UiTabItem<T>[];
+  activeTab: T;
+  onSelect: (id: T) => void;
+  ariaLabel: string;
   className?: string;
 }) {
   return (
-    <div
-      role="group"
-      aria-label="Care region filter"
-      className={`inline-flex flex-wrap items-center gap-1.5 ${className}`}
-    >
-      {options.map((region) => {
-        const active = region.code === value;
-        return (
-          <button
-            key={region.code}
-            type="button"
-            onClick={() => onChange(region.code)}
-            aria-pressed={active}
-            className={
-              active
-                ? "min-h-[36px] rounded-lg bg-teal-800 px-3 py-1.5 text-xs font-semibold text-white shadow-xs transition-colors"
-                : "min-h-[36px] rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition-colors hover:border-teal-700 hover:text-teal-900"
-            }
-          >
-            {region.label}
-          </button>
-        );
-      })}
+    <div className={`relative max-w-full ${className}`}>
+      <div
+        role="tablist"
+        aria-label={ariaLabel}
+        className="atlas-no-scrollbar flex max-w-full snap-x snap-mandatory items-center gap-1 overflow-x-auto rounded-2xl border border-[#D7E4F2] bg-white p-1 pe-7 shadow-2xs lg:flex-wrap lg:overflow-visible lg:pe-1"
+      >
+        {tabs.map((tab) => {
+          const selected = tab.id === activeTab;
+          return (
+            <button
+              key={tab.id}
+              role="tab"
+              type="button"
+              aria-selected={selected}
+              onClick={() => onSelect(tab.id)}
+              className={
+                selected
+                  ? "inline-flex min-h-[32px] shrink-0 snap-start items-center gap-1.5 whitespace-nowrap rounded-xl bg-[#0066CC] px-2.5 py-1 text-[11.5px] font-semibold text-white shadow-xs transition-transform duration-100 hover:bg-[#0052A3] active:scale-[0.97] xl:min-h-[36px] xl:px-3.5 xl:text-xs"
+                  : "inline-flex min-h-[32px] shrink-0 snap-start items-center gap-1.5 whitespace-nowrap rounded-xl bg-transparent px-2.5 py-1 text-[11.5px] font-semibold text-[#4A627D] transition-transform duration-100 hover:bg-[#F3F8FD] hover:text-[#0F243E] active:scale-[0.97] xl:min-h-[36px] xl:px-3.5 xl:text-xs"
+              }
+            >
+              {tab.icon}
+              <span>{tab.label}</span>
+            </button>
+          );
+        })}
+      </div>
+      {/* Subtle scroll-cue fade on narrow screens so hidden tabs are discoverable */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-y-1 end-1 w-8 rounded-e-xl bg-gradient-to-l from-white via-white/80 to-transparent lg:hidden rtl:bg-gradient-to-r"
+      />
     </div>
   );
 }
 
-/** Compact authenticated account bar linking identity actions cleanly to /portal. */
 export function SessionAccountBar({
   session,
   onSignOut,
-  portalHref = "/portal",
-  prompt = "Sign in on the Care Portal to book visits, request medical transport, or submit orders.",
+  portalHref,
+  prompt,
 }: {
   session: AuthResponse | null;
   onSignOut?: () => void;
   portalHref?: string;
   prompt?: string;
 }) {
+  const { locale, isRtl } = useLocale();
+  const resolvedPortalHref =
+    portalHref ??
+    (session &&
+    session.user.role !== "PATIENT" &&
+    session.user.role !== "CAREGIVER"
+      ? "/pro"
+      : "/portal");
+  const labels =
+    locale === "ar"
+      ? {
+          defaultPrompt: "سجّل الدخول للمتابعة.",
+          signInPortal: "تسجيل الدخول",
+          pendingVerify: "قيد المراجعة",
+          switchAccount: "تبديل",
+          signOut: "خروج",
+        }
+      : locale === "fr"
+        ? {
+            defaultPrompt: "Connectez-vous pour continuer.",
+            signInPortal: "Connexion",
+            pendingVerify: "Validation en attente",
+            switchAccount: "Changer",
+            signOut: "Sortir",
+          }
+        : {
+            defaultPrompt: "Sign in to continue.",
+            signInPortal: "Sign In",
+            pendingVerify: "Pending Verification",
+            switchAccount: "Switch",
+            signOut: "Sign Out",
+          };
+  const resolvedPrompt = prompt ?? labels.defaultPrompt;
+
   if (!session) {
     return (
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5">
-        <div className="flex min-w-0 items-center gap-2 text-xs text-slate-700">
-          <UserCheck className="h-4 w-4 shrink-0 text-teal-800" aria-hidden="true" />
-          <span className="truncate">{prompt}</span>
+      <div
+        dir={isRtl ? "rtl" : "ltr"}
+        className="flex flex-wrap items-center justify-between gap-2.5 rounded-2xl border border-[#D7E4F2] bg-white px-4 py-3"
+      >
+        <div className="flex min-w-0 items-center gap-2 text-xs text-[#4A627D]">
+          <UserCheck className="h-4 w-4 shrink-0 text-[#0066CC]" aria-hidden="true" />
+          <span className="truncate">{resolvedPrompt}</span>
         </div>
         <Link
-          href={portalHref}
-          className="inline-flex min-h-[34px] shrink-0 items-center rounded-lg bg-teal-800 px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-teal-900"
+          href={resolvedPortalHref}
+          className="inline-flex min-h-[34px] shrink-0 items-center rounded-xl bg-[#0066CC] px-4 py-1.5 text-xs font-semibold text-white hover:bg-[#0052A3]"
         >
-          Sign In via Portal
+          {labels.signInPortal}
         </Link>
       </div>
     );
   }
 
+  const isPendingStaff =
+    session.user.accountStatus === "PENDING_APPROVAL" ||
+    (session.user.role !== "PATIENT" &&
+      session.user.role !== "CAREGIVER" &&
+      session.user.role !== "OPS_ADMIN" &&
+      !session.user.credentialVerified);
+
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-teal-200 bg-teal-50/50 px-4 py-2">
+    <div
+      dir={isRtl ? "rtl" : "ltr"}
+      className={`flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-4 py-3 ${
+        isPendingStaff
+          ? "border-amber-200 bg-amber-50/80"
+          : "border-[#D7E4F2] bg-white"
+      }`}
+    >
       <div className="flex min-w-0 items-center gap-2.5">
         <EntityAvatar
           name={session.user.fullName}
           role={session.user.role}
           avatarUrl={session.user.avatarUrl}
-          subtitle={`${formatRoleLabel(session.user.role)} · ${session.user.countryCode}`}
+          subtitle={`${formatRoleLabel(session.user.role, locale)} · ${session.user.countryCode}`}
           size="xs"
         />
         <div className="min-w-0">
-          <p className="truncate text-xs font-bold text-slate-900">
-            <bdi dir="auto">{session.user.fullName}</bdi>
-          </p>
-          <p className="truncate text-[11px] font-medium text-slate-600">
-            {formatRoleLabel(session.user.role)} · {session.user.countryCode}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <p className="truncate text-xs font-bold text-[#0F243E]">
+              <bdi dir="auto">{session.user.fullName}</bdi>
+            </p>
+            {isPendingStaff ? (
+              <Link
+                href={resolvedPortalHref}
+                className="rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[10.5px] font-semibold text-amber-950"
+              >
+                {labels.pendingVerify}
+              </Link>
+            ) : null}
+          </div>
+          <p className="truncate text-[11.5px] font-medium text-[#6B829D]">
+            {formatRoleLabel(session.user.role, locale)} · {session.user.countryCode}
           </p>
         </div>
       </div>
 
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="flex shrink-0 items-center gap-1.5">
         <Link
-          href={portalHref}
-          className="inline-flex min-h-[32px] items-center rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 transition-colors hover:border-teal-700 hover:text-teal-900"
+          href={resolvedPortalHref}
+          className="inline-flex min-h-[32px] items-center rounded-xl border border-[#D7E4F2] bg-[#F3F8FD] px-3 py-1 text-xs font-semibold text-[#0F243E] hover:bg-white"
         >
-          Switch Account
+          {labels.switchAccount}
         </Link>
         {onSignOut ? (
           <button
             type="button"
             onClick={onSignOut}
-            className="inline-flex min-h-[32px] items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 transition-colors hover:border-red-600 hover:text-red-700"
+            className="inline-flex min-h-[32px] items-center gap-1 rounded-xl border border-[#D7E4F2] bg-white px-3 py-1 text-xs font-semibold text-[#4A627D] hover:border-rose-300 hover:bg-rose-50 hover:text-[#DC2626]"
           >
             <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>Sign Out</span>
+            <span>{labels.signOut}</span>
           </button>
         ) : null}
       </div>
     </div>
   );
+}
+
+export function formatPractitionerDisplayName(
+  name: string,
+  specialty?: string,
+): string {
+  const clean = name.trim();
+  if (!clean) {
+    return "Practitioner";
+  }
+  if (specialty && /nursing|infirmier|nurse/i.test(specialty)) {
+    return clean;
+  }
+  return /^dr\.?(?=\s|$)/i.test(clean) ? clean : `Dr. ${clean}`;
 }

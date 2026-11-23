@@ -8,6 +8,7 @@ export interface S3PresignConfig {
   accessKeyId: string;
   secretAccessKey: string;
   expiresInSeconds: number;
+  urlStyle?: "path" | "virtual-host";
 }
 
 export const DEFAULT_DEV_S3_CONFIG: S3PresignConfig = {
@@ -74,15 +75,40 @@ function encodePathSegments(rawPath: string): string {
     .join("/");
 }
 
+const SIGNING_KEY_CACHE = new Map<string, Buffer>();
+
 function deriveSigningKey(
   secretAccessKey: string,
   dateStamp: string,
   region: string,
 ): Buffer {
+  const cacheKey = `${dateStamp}:${region}:${secretAccessKey}`;
+  const cached = SIGNING_KEY_CACHE.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
   const kDate = hmacSha256(`AWS4${secretAccessKey}`, dateStamp);
   const kRegion = hmacSha256(kDate, region);
   const kService = hmacSha256(kRegion, "s3");
-  return hmacSha256(kService, "aws4_request");
+  const kSigning = hmacSha256(kService, "aws4_request");
+  if (SIGNING_KEY_CACHE.size >= 32) {
+    const oldest = SIGNING_KEY_CACHE.keys().next().value;
+    if (oldest) SIGNING_KEY_CACHE.delete(oldest);
+  }
+  SIGNING_KEY_CACHE.set(cacheKey, kSigning);
+  return kSigning;
+}
+
+export function hydrateAvatarUrl(
+  objectKey: string | null | undefined,
+  s3Config?: S3PresignConfig,
+): string | null {
+  if (!objectKey || !s3Config) return null;
+  return createSigV4PresignedUrl({
+    config: s3Config,
+    method: "GET",
+    objectKey,
+  });
 }
 
 export function sanitizeUploadFileName(fileName: string): string {
@@ -240,6 +266,39 @@ function isSafeTextualPayload(sample: Buffer, expectedMimeType: string): boolean
   return true;
 }
 
+function resolveS3Target(params: {
+  endpoint: string;
+  bucket: string;
+  pathSuffix: string;
+  urlStyle?: "path" | "virtual-host";
+}): { origin: string; hostHeader: string; canonicalUri: string } {
+  const endpointUrl = new URL(params.endpoint);
+  const basePath = endpointUrl.pathname.replace(/\/+$/, "");
+  const cleanSuffix = params.pathSuffix.replace(/^\/+/, "");
+
+  if (params.urlStyle === "virtual-host") {
+    const hostHeader = `${params.bucket}.${endpointUrl.host}`;
+    const origin = `${endpointUrl.protocol}//${hostHeader}`;
+    const rawPath = `${basePath}/${cleanSuffix}`.replace(/\/+/g, "/");
+    return {
+      origin,
+      hostHeader,
+      canonicalUri: encodePathSegments(rawPath),
+    };
+  }
+
+  const rawPath =
+    `${basePath}/${params.bucket}${cleanSuffix ? `/${cleanSuffix}` : ""}`.replace(
+      /\/+/g,
+      "/",
+    );
+  return {
+    origin: endpointUrl.origin,
+    hostHeader: endpointUrl.host,
+    canonicalUri: encodePathSegments(rawPath),
+  };
+}
+
 export function createSigV4PresignedUrl(params: {
   config: S3PresignConfig;
   method: "PUT" | "GET";
@@ -248,24 +307,32 @@ export function createSigV4PresignedUrl(params: {
   now?: Date;
 }): string {
   const { config, method, objectKey, contentType } = params;
-  const now = params.now ?? new Date();
+  // Quantize presigned GET timestamps to 5-minute buckets so browsers hit HTTP disk cache
+  // across route transitions while the signed URL remains valid for 10-15 minutes.
+  const now =
+    params.now ??
+    (method === "GET"
+      ? new Date(Math.floor(Date.now() / 300_000) * 300_000)
+      : new Date());
 
-  const endpointUrl = new URL(config.publicEndpoint ?? config.endpoint);
-  const basePath = endpointUrl.pathname.replace(/\/+$/, "");
-  const cleanKey = objectKey.replace(/^\/+/, "");
-  const canonicalUri = encodePathSegments(
-    `${basePath}/${config.bucket}/${cleanKey}`.replace(/\/+/g, "/"),
-  );
+  const target = resolveS3Target({
+    endpoint: config.publicEndpoint ?? config.endpoint,
+    bucket: config.bucket,
+    pathSuffix: objectKey,
+    ...(config.urlStyle ? { urlStyle: config.urlStyle } : {}),
+  });
+  const canonicalUri = target.canonicalUri;
 
   const isoBasic = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
   const dateStamp = isoBasic.slice(0, 8);
   const credentialScope = `${dateStamp}/${config.region}/s3/aws4_request`;
-  const expires = Math.max(
-    60,
-    Math.min(86400, Math.floor(config.expiresInSeconds)),
-  );
+  const effectiveExpires =
+    method === "GET"
+      ? Math.max(900, Math.floor(config.expiresInSeconds))
+      : Math.floor(config.expiresInSeconds);
+  const expires = Math.max(60, Math.min(86400, effectiveExpires));
 
-  const hostHeader = endpointUrl.host;
+  const hostHeader = target.hostHeader;
   const signedHeadersMap = new Map<string, string>();
   signedHeadersMap.set("host", hostHeader);
   if (method === "PUT" && contentType) {
@@ -318,33 +385,40 @@ export function createSigV4PresignedUrl(params: {
     .update(stringToSign, "utf8")
     .digest("hex");
 
-  return `${endpointUrl.origin}${canonicalUri}?${canonicalQuery}&X-Amz-Signature=${signature}`;
+  return `${target.origin}${canonicalUri}?${canonicalQuery}&X-Amz-Signature=${signature}`;
 }
 
 async function signedS3Request(params: {
   config: S3PresignConfig;
   method: "HEAD" | "PUT" | "GET" | "DELETE";
   pathSuffix: string;
+  queryParams?: Record<string, string>;
   headers?: Record<string, string>;
   body?: Buffer;
+  timeoutMs?: number;
 }): Promise<Response> {
-  const { config, method, pathSuffix, body } = params;
+  const { config, method, pathSuffix, queryParams, body, timeoutMs = 4000 } =
+    params;
   const now = new Date();
   const isoBasic = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
   const dateStamp = isoBasic.slice(0, 8);
-  const endpointUrl = new URL(config.endpoint);
-  const basePath = endpointUrl.pathname.replace(/\/+$/, "");
-  const cleanSuffix = pathSuffix.replace(/^\/+/, "");
-  const canonicalUri = encodePathSegments(
-    `${basePath}/${config.bucket}${cleanSuffix ? `/${cleanSuffix}` : ""}`.replace(
-      /\/+/g,
-      "/",
-    ),
-  );
+  const target = resolveS3Target({
+    endpoint: config.endpoint,
+    bucket: config.bucket,
+    pathSuffix,
+    ...(config.urlStyle ? { urlStyle: config.urlStyle } : {}),
+  });
+  const canonicalUri = target.canonicalUri;
+  const canonicalQuery = queryParams
+    ? Object.entries(queryParams)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([k, v]) => `${encodeRfc3986(k)}=${encodeRfc3986(v)}`)
+        .join("&")
+    : "";
 
   const payloadHash = sha256Hex(body ?? Buffer.alloc(0));
   const requestHeaders = new Map<string, string>();
-  requestHeaders.set("host", endpointUrl.host);
+  requestHeaders.set("host", target.hostHeader);
   requestHeaders.set("x-amz-content-sha256", payloadHash);
   requestHeaders.set("x-amz-date", isoBasic);
   if (params.headers) {
@@ -362,7 +436,7 @@ async function signedS3Request(params: {
   const canonicalRequest = [
     method,
     canonicalUri,
-    "",
+    canonicalQuery,
     canonicalHeaders,
     signedHeaders,
     payloadHash,
@@ -396,12 +470,87 @@ async function signedS3Request(params: {
   }
   fetchHeaders.authorization = authorization;
 
-  return fetch(`${endpointUrl.origin}${canonicalUri}`, {
+  const targetUrl = `${target.origin}${canonicalUri}${
+    canonicalQuery ? `?${canonicalQuery}` : ""
+  }`;
+  return fetch(targetUrl, {
     method,
     headers: fetchHeaders,
-    signal: AbortSignal.timeout(4000),
+    signal: AbortSignal.timeout(timeoutMs),
     ...(body ? { body: new Uint8Array(body) } : {}),
   });
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
+}
+
+export function buildS3CorsXml(allowedOrigins: readonly string[]): string {
+  const uniqueOrigins = Array.from(
+    new Set(
+      allowedOrigins
+        .map((origin) => origin.trim().replace(/\/+$/, ""))
+        .filter((origin) => origin.length > 0),
+    ),
+  );
+  const originTags = uniqueOrigins
+    .map((origin) => `    <AllowedOrigin>${escapeXml(origin)}</AllowedOrigin>`)
+    .join("\n");
+
+  return [
+    `<?xml version="1.0" encoding="UTF-8"?>`,
+    `<CORSConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`,
+    `  <CORSRule>`,
+    originTags,
+    `    <AllowedMethod>GET</AllowedMethod>`,
+    `    <AllowedMethod>PUT</AllowedMethod>`,
+    `    <AllowedMethod>HEAD</AllowedMethod>`,
+    `    <AllowedHeader>Content-Type</AllowedHeader>`,
+    `    <AllowedHeader>Content-Length</AllowedHeader>`,
+    `    <AllowedHeader>x-amz-*</AllowedHeader>`,
+    `    <ExposeHeader>ETag</ExposeHeader>`,
+    `    <MaxAgeSeconds>3600</MaxAgeSeconds>`,
+    `  </CORSRule>`,
+    `</CORSConfiguration>`,
+  ].join("\n");
+}
+
+export async function ensureS3BucketCors(
+  config: S3PresignConfig,
+  allowedOrigins: readonly string[],
+): Promise<boolean> {
+  const cleanOrigins = allowedOrigins
+    .map((origin) => origin.trim().replace(/\/+$/, ""))
+    .filter((origin) => origin.length > 0);
+  if (cleanOrigins.length === 0) return false;
+
+  try {
+    const xmlBody = Buffer.from(buildS3CorsXml(cleanOrigins), "utf8");
+    const contentMd5 = crypto
+      .createHash("md5")
+      .update(xmlBody)
+      .digest("base64");
+    const putRes = await signedS3Request({
+      config,
+      method: "PUT",
+      pathSuffix: "",
+      queryParams: { cors: "" },
+      headers: {
+        "content-type": "application/xml",
+        "content-md5": contentMd5,
+      },
+      body: xmlBody,
+      timeoutMs: 5000,
+    });
+    return putRes.ok;
+  } catch {
+    return false;
+  }
 }
 
 export async function ensureS3BucketExists(
@@ -483,6 +632,7 @@ export async function inspectUploadedS3Object(params: {
     config,
     method: "GET",
     pathSuffix: objectKey,
+    timeoutMs: inspectEntireForHash ? 15_000 : 6_000,
     ...(inspectEntireForHash ? {} : { headers: { range: "bytes=0-1023" } }),
   });
 

@@ -1,40 +1,47 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
-import Link from "next/link";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
-  ALLOWED_MEDIA_MIME_TYPES,
-  ClinicalMediaMimeTypeSchema,
   CreateScheduleSchema,
-  LabUrgencySchema,
-  MAX_CLINICAL_UPLOAD_BYTES,
-  VisitModeSchema,
+  type AppointmentSummary,
   type AuthenticatedUser,
+  type ClinicalMediaCategory,
   type ClinicalMediaMimeType,
   type ClinicalMediaObjectSummary,
   type CountryPack,
+  type CreateLabOrderInput,
+  type CreatePrescriptionInput,
+  type CreateVisitNoteInput,
   type DirectoryDoctorSummary,
   type DirectoryFacilitySummary,
   type DirectoryPatientSummary,
   type DoctorScheduleSummary,
+  type FacilityMediaDocument,
   type FacilitySummary,
   type LabOrderSummary,
-  type LabUrgency,
+  type LocaleCode,
+  type PatientMedicalProfile,
   type PresignedUploadResponse,
   type PrescriptionSummary,
+  type UpdateScheduleInput,
+  type UserMediaDocument,
+  type UserRole,
   type VisitMode,
   type VisitNoteSummary,
 } from "@medisync/contracts";
 import { listFacilities } from "@/features/auth-portal";
 import {
   createSchedule,
+  deleteSchedule,
+  fetchAppointments,
   fetchSchedules,
+  transitionAppointmentStatus,
+  updateSchedule,
   upsertDoctorProfile,
 } from "@/features/booking";
 import {
-  FileUploadDropzone,
-  formatByteSize,
-  inferUploadMimeType,
+  listFacilityMedia,
+  listMyUserMedia,
   uploadClinicalMediaEndToEnd,
 } from "@/features/media-certifications";
 import {
@@ -43,83 +50,176 @@ import {
   fetchDirectoryFacilities,
   fetchDirectoryPatients,
 } from "@/shared/api/directory-client";
-import { formatClinicalFileType } from "@/shared/i18n/human-labels";
+import {
+  formatCountryDisplayName,
+  formatFacilityKind,
+  formatOpenStatus,
+} from "@/shared/i18n/human-labels";
+import { formatSpecialtyLabel } from "@/shared/i18n/specialties";
 import { useLocale } from "@/shared/i18n/locale-store";
-import { EntityAvatar } from "@/shared/ui/EntityAvatar";
-import { EntityPicker } from "@/shared/ui/EntityPicker";
-import { useImageLightbox } from "@/shared/ui/ImageLightboxProvider";
-import { QrPrescriptionCard } from "@/shared/ui/QrPrescriptionCard";
+import { CLINICAL_COPY } from "../clinical-i18n";
+import { VerificationGateNotice, isPendingStaffVerification } from "@/shared/ui/VerificationGateNotice";
 import {
   ACTIVE_COUNTRY_CODE,
   resolveActivePack,
+  resolveEffectiveCountryCode,
 } from "@/shared/config/deployment";
 import {
-  ActiveRegionPill,
-  SessionAccountBar,
-  StatusBanner,
   UiButton,
-  UiInput,
-  UiSelect,
+  UiTabBar,
+  WorkspaceHeader,
+  useToastSetter,
 } from "@/shared/ui/primitives";
 import {
-  clearStoredSession,
   readStoredSession,
+  revokeClientSession,
 } from "@/shared/auth/session-storage";
+import { WorkspaceRoleGuard } from "@/shared/auth/WorkspaceRoleGuard";
 import {
+  BOOKING_VIEWER_ROLES,
+  EHR_ACCESS_ROLES,
+  LAB_ORDER_VIEWER_ROLES,
+  PATIENT_DIRECTORY_VIEWER_ROLES,
+  RX_VIEWER_ROLES,
+  VISIT_NOTE_VIEWER_ROLES,
+  hasRoleCapability,
+  syncPendingSessionStatus,
+} from "@/shared/auth/role-capabilities";
+import {
+  Calendar,
   CalendarClock,
   ClipboardList,
-  Eye,
-  FileText,
-  FileUp,
   FlaskConical,
-  ImageIcon,
-  Pill,
-  QrCode,
+  ShieldCheck,
 } from "lucide-react";
 import {
   createLabOrder,
   createPrescription,
   createVisitNote,
-  dispensePrescription,
   fetchClinicalMedia,
   fetchLabOrders,
+  fetchPatientMedicalProfile,
   fetchPrescriptions,
   fetchVisitNotes,
   updateLabOrderStatus,
-  verifyPrescriptionQr,
 } from "../api-client";
+import { ClinicalConsultationDesk } from "./ClinicalConsultationDesk";
+import { ClinicalLabsImagingDesk } from "./ClinicalLabsImagingDesk";
+import { ClinicalPapersPanel } from "./ClinicalPapersPanel";
+import { DoctorCalendarAgenda } from "./DoctorCalendarAgenda";
+import { VisualScheduleBuilder } from "./VisualScheduleBuilder";
 
-type ClinicalTab = "doctor" | "schedule" | "pharmacy" | "labs";
+type ClinicalTab = "calendar" | "doctor" | "schedule" | "labs" | "papers";
 
-const WEEKDAY_LABELS = [
-  "Sunday",
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-  "Saturday",
-] as const;
+const EXTRA_CLINICAL_COPY: Record<
+  LocaleCode,
+  {
+    tabPapers: string;
+    nurseCareHeading: string;
+    nurseRxNotice: string;
+    publishWeekdaysLabel: string;
+    activeStatus: string;
+    pausedStatus: string;
+    pauseBtn: string;
+    resumeBtn: string;
+    deleteBtn: string;
+    scheduleUpdated: (active: boolean) => string;
+    scheduleDeleted: string;
+    profileSaved: string;
+    batchShiftsPublished: (count: number) => string;
+  }
+> = {
+  en: {
+    tabPapers: "Papers & Licenses",
+    nurseCareHeading: "Nursing Care, Vitals & Chart Note",
+    nurseRxNotice:
+      "Nursing care & vitals notes save directly to the patient EHR. Prescription issuing (E-Rx) is reserved for physicians.",
+    publishWeekdaysLabel: "Apply across Mon–Fri weekdays",
+    activeStatus: "Active",
+    pausedStatus: "Paused",
+    pauseBtn: "Pause",
+    resumeBtn: "Resume",
+    deleteBtn: "Delete",
+    scheduleUpdated: (active) => (active ? "Shift resumed and visible for booking." : "Shift paused."),
+    scheduleDeleted: "Shift deleted from roster.",
+    profileSaved: "Practitioner profile updated.",
+    batchShiftsPublished: (count) => `Published ${count} weekly shift windows.`,
+  },
+  fr: {
+    tabPapers: "Justificatifs & Ordre",
+    nurseCareHeading: "Soins Infirmiers, Constantes & Dossier",
+    nurseRxNotice:
+      "Les notes de soins et constantes sont enregistrées au dossier patient. La prescription E-Rx est réservée aux médecins.",
+    publishWeekdaysLabel: "Publier sur Lun–Ven (5 jours)",
+    activeStatus: "Actif",
+    pausedStatus: "En pause",
+    pauseBtn: "Pause",
+    resumeBtn: "Reprendre",
+    deleteBtn: "Supprimer",
+    scheduleUpdated: (active) => (active ? "Créneau réactivé." : "Créneau mis en pause."),
+    scheduleDeleted: "Créneau supprimé du planning.",
+    profileSaved: "Fiche praticien mise à jour.",
+    batchShiftsPublished: (count) => `${count} créneaux hebdomadaires publiés.`,
+  },
+  ar: {
+    tabPapers: "الوثائق والتراخيص",
+    nurseCareHeading: "العناية التمريضية، المؤشرات الحيوية والتقرير",
+    nurseRxNotice:
+      "تحفظ ملاحظات التمريض والمؤشرات الحيوية في الملف الطبي للمريض، بينما إصدار الوصفة الرقمية E-Rx مخصص للأطباء.",
+    publishWeekdaysLabel: "نشر طيلة أيام الأسبوع (الإثنين - الجمعة)",
+    activeStatus: "نشط",
+    pausedStatus: "متوقف مؤقتاً",
+    pauseBtn: "إيقاف مؤقت",
+    resumeBtn: "تفعيل",
+    deleteBtn: "حذف",
+    scheduleUpdated: (active) => (active ? "تم تفعيل المداومة." : "تم إيقاف المداومة مؤقتاً."),
+    scheduleDeleted: "تم حذف المداومة من الجدول.",
+    profileSaved: "تم تحديث ملف المزاولة.",
+    batchShiftsPublished: (count) => `تم نشر ${count} فترات عمل أسبوعية.`,
+  },
+};
 
 interface ClinicalWorkspaceProps {
   packs: readonly CountryPack[];
   apiBaseUrl: string;
+  initialTab?: ClinicalTab;
+  roleFocus?: "DOCTOR" | "LAB_TECH";
 }
 
 export function ClinicalWorkspace({
   packs,
   apiBaseUrl,
+  initialTab,
+  roleFocus,
 }: ClinicalWorkspaceProps) {
-  const { t } = useLocale();
-  const { openImage } = useImageLightbox();
+  const { locale, t, isRtl } = useLocale();
+  const c = CLINICAL_COPY[locale];
+  const m = c.messages;
   const defaultCode = resolveActivePack(packs)?.code ?? ACTIVE_COUNTRY_CODE;
   const [selectedCountry, setSelectedCountry] = useState<string>(defaultCode);
-  const [activeTab, setActiveTab] = useState<ClinicalTab>("doctor");
+  const [activeTab, setActiveTab] = useState<ClinicalTab>(
+    initialTab ?? "doctor",
+  );
 
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<AuthenticatedUser | null>(
     null,
   );
+  const [sessionHydrated, setSessionHydrated] = useState(false);
+  const isPendingStaff = isPendingStaffVerification(currentUser);
+  const allowedWorkspaceRoles = useMemo<readonly UserRole[]>(
+    () => ["DOCTOR"],
+    [],
+  );
+  const isAuthorizedClinicalViewer = Boolean(
+    currentUser && allowedWorkspaceRoles.includes(currentUser.role),
+  );
+  const actionLockRef = useRef(false);
+
+  const [appointments, setAppointments] = useState<AppointmentSummary[]>([]);
+  const [patientProfile, setPatientProfile] =
+    useState<PatientMedicalProfile | null>(null);
+  const [patientProfileLoading, setPatientProfileLoading] = useState(false);
 
   const [visitNotes, setVisitNotes] = useState<VisitNoteSummary[]>([]);
   const [prescriptions, setPrescriptions] = useState<PrescriptionSummary[]>([]);
@@ -135,10 +235,13 @@ export function ClinicalWorkspace({
   const [directoryClinics, setDirectoryClinics] = useState<
     DirectoryFacilitySummary[]
   >([]);
+  const [userDocs, setUserDocs] = useState<UserMediaDocument[]>([]);
+  const [facilityDocs, setFacilityDocs] = useState<FacilityMediaDocument[]>([]);
+  const [publishWeekdays, setPublishWeekdays] = useState(false);
 
   // Clinic & Practitioner Shift Publishing
   const [specialtyInput, setSpecialtyInput] = useState("Cardiology");
-  const [mdLicenseInput, setMdLicenseInput] = useState("INTL-MD-44021");
+  const [mdLicenseInput, setMdLicenseInput] = useState("MA-MD-44021");
   const [feeMinorInput, setFeeMinorInput] = useState("35000");
   const [schedFacilityId, setSchedFacilityId] = useState("");
   const [schedDoctorId, setSchedDoctorId] = useState("");
@@ -148,36 +251,9 @@ export function ClinicalWorkspace({
   const [schedDuration, setSchedDuration] = useState("30");
   const [schedMode, setSchedMode] = useState<VisitMode>("IN_PERSON");
 
-  // Doctor SOAP + Order Forms
+  // Active Patient & Diagnostic Lab Selection
   const [patientUuid, setPatientUuid] = useState("");
-  const [icd10Input, setIcd10Input] = useState("J06.9");
-  const [subjective, setSubjective] = useState("");
-  const [objective, setObjective] = useState("");
-  const [assessment, setAssessment] = useState("");
-  const [plan, setPlan] = useState("");
-
-  const [rxMedName, setRxMedName] = useState("Amoxicillin");
-  const [rxDosage, setRxDosage] = useState("500 mg");
-  const [rxFrequency, setRxFrequency] = useState("Twice daily");
-  const [rxDurationDays, setRxDurationDays] = useState("7");
-
-  // Pharmacy QR Verification
-  const [qrInput, setQrInput] = useState("");
-  const [verifiedRx, setVerifiedRx] = useState<PrescriptionSummary | null>(
-    null,
-  );
-  const [dispenseNote, setDispenseNote] = useState("");
-
-  // Lab Order & Real Binary S3/MinIO Upload
   const [labFacilityId, setLabFacilityId] = useState("");
-  const [labPanelName, setLabPanelName] = useState("Complete Blood Count (CBC)");
-  const [labUrgency, setLabUrgency] = useState<LabUrgency>("ROUTINE");
-
-  const [selectedUploadFile, setSelectedUploadFile] = useState<File | null>(null);
-  const [selectedLabOrderForUpload, setSelectedLabOrderForUpload] =
-    useState<string>("");
-  const [uploadMime, setUploadMime] =
-    useState<ClinicalMediaMimeType>("application/pdf");
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [latestPresigned, setLatestPresigned] =
     useState<PresignedUploadResponse | null>(null);
@@ -190,10 +266,7 @@ export function ClinicalWorkspace({
   const [apiOnline, setApiOnline] = useState(false);
 
   const [busy, setBusy] = useState(false);
-  const [banner, setBanner] = useState<{
-    tone: "info" | "success" | "error";
-    text: string;
-  } | null>(null);
+  const setBanner = useToastSetter();
 
   const activePack =
     packs.find((pack) => pack.code === selectedCountry) ?? packs[0];
@@ -203,25 +276,111 @@ export function ClinicalWorkspace({
     if (stored) {
       setSessionToken(stored.token);
       setCurrentUser(stored.user);
-      setSelectedCountry(stored.user.countryCode);
+      setSelectedCountry(resolveEffectiveCountryCode(stored.user.countryCode));
       if (stored.user.role === "PATIENT") {
         setPatientUuid(stored.user.id);
       }
-      if (stored.user.role === "DOCTOR") {
+      if (stored.user.role === "DOCTOR" || stored.user.role === "NURSE") {
         setSchedDoctorId(stored.user.id);
       }
+      if (stored.user.role === "NURSE") {
+        setSpecialtyInput("Home Nursing & Wound Care");
+        setMdLicenseInput("MA-RN-20418");
+        setFeeMinorInput("20000");
+        setSchedMode("HOME_VISIT");
+      }
+      if (roleFocus === "LAB_TECH" || stored.user.role === "LAB_TECH") {
+        setActiveTab("labs");
+      } else if (
+        !initialTab &&
+        (stored.user.role === "DOCTOR" ||
+          stored.user.role === "NURSE" ||
+          stored.user.role === "CLINIC_STAFF")
+      ) {
+        setActiveTab("calendar");
+      }
     }
+    setSessionHydrated(true);
 
     let cancelled = false;
     checkBackendOnline().then((online) => {
-      if (!cancelled) setApiOnline(online);
+      if (cancelled) return;
+      setApiOnline(online);
+      if (online && stored && isPendingStaffVerification(stored.user)) {
+        void syncPendingSessionStatus(apiBaseUrl, stored).then((syncRes) => {
+          if (cancelled) return;
+          if (syncRes.status === "expired") {
+            setSessionToken(null);
+            setCurrentUser(null);
+          } else if (syncRes.status === "updated" && syncRes.session) {
+            setCurrentUser(syncRes.session.user);
+          }
+        });
+      }
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [apiBaseUrl]);
 
-  async function refreshClinicalData(token: string, countryCode: string) {
+  const ec = EXTRA_CLINICAL_COPY[locale];
+
+  async function refreshPapersData(
+    token: string,
+    actor: AuthenticatedUser | null,
+  ) {
+    const [myRes, facRes] = await Promise.all([
+      listMyUserMedia(apiBaseUrl, token),
+      actor?.facilityId
+        ? listFacilityMedia(apiBaseUrl, token, actor.facilityId)
+        : Promise.resolve({ ok: true as const, data: { documents: [] } }),
+    ]);
+    if (myRes.ok) setUserDocs(myRes.data.documents);
+    if (facRes.ok) setFacilityDocs(facRes.data.documents);
+  }
+
+  async function refreshClinicalData(
+    token: string,
+    countryCode: string,
+    explicitRole?: UserRole | null,
+  ) {
+    const stored = readStoredSession();
+    const pendingNow =
+      isPendingStaff || Boolean(stored && isPendingStaffVerification(stored.user));
+    const papersPromise = refreshPapersData(token, stored?.user ?? currentUser);
+    if (pendingNow) {
+      await papersPromise;
+      return;
+    }
+
+    const effectiveRole =
+      explicitRole ?? currentUser?.role ?? stored?.user.role ?? null;
+    const canReadVisitNotes = hasRoleCapability(
+      effectiveRole,
+      pendingNow,
+      VISIT_NOTE_VIEWER_ROLES,
+    );
+    const canReadPrescriptions = hasRoleCapability(
+      effectiveRole,
+      pendingNow,
+      RX_VIEWER_ROLES,
+    );
+    const canReadLabOrders = hasRoleCapability(
+      effectiveRole,
+      pendingNow,
+      LAB_ORDER_VIEWER_ROLES,
+    );
+    const canReadPatientDir = hasRoleCapability(
+      effectiveRole,
+      pendingNow,
+      PATIENT_DIRECTORY_VIEWER_ROLES,
+    );
+    const canReadAppointments = hasRoleCapability(
+      effectiveRole,
+      pendingNow,
+      BOOKING_VIEWER_ROLES,
+    );
+
     const [
       notesRes,
       rxRes,
@@ -233,12 +392,23 @@ export function ClinicalWorkspace({
       clinicsRes,
       facListRes,
       schedRes,
+      apptsRes,
     ] = await Promise.all([
-      fetchVisitNotes(apiBaseUrl, token, countryCode),
-      fetchPrescriptions(apiBaseUrl, token, countryCode),
-      fetchLabOrders(apiBaseUrl, token, countryCode),
-      fetchClinicalMedia(apiBaseUrl, token, countryCode),
-      fetchDirectoryPatients(apiBaseUrl, token, { countryCode }),
+      canReadVisitNotes
+        ? fetchVisitNotes(apiBaseUrl, token, countryCode)
+        : Promise.resolve({ ok: true as const, data: { visitNotes: [] } }),
+      canReadPrescriptions
+        ? fetchPrescriptions(apiBaseUrl, token, countryCode)
+        : Promise.resolve({ ok: true as const, data: { prescriptions: [] } }),
+      canReadLabOrders
+        ? fetchLabOrders(apiBaseUrl, token, countryCode)
+        : Promise.resolve({ ok: true as const, data: { labOrders: [] } }),
+      canReadLabOrders
+        ? fetchClinicalMedia(apiBaseUrl, token, countryCode)
+        : Promise.resolve({ ok: true as const, data: { mediaObjects: [] } }),
+      canReadPatientDir
+        ? fetchDirectoryPatients(apiBaseUrl, token, { countryCode })
+        : Promise.resolve({ ok: true as const, patients: [] }),
       fetchDirectoryFacilities(apiBaseUrl, {
         countryCode,
         kind: "DIAGNOSTIC_LAB",
@@ -246,7 +416,10 @@ export function ClinicalWorkspace({
       fetchDirectoryDoctors(apiBaseUrl, { countryCode }),
       fetchDirectoryFacilities(apiBaseUrl, { countryCode }),
       listFacilities(apiBaseUrl, token, countryCode),
-      fetchSchedules(apiBaseUrl, { countryCode }),
+      fetchSchedules(apiBaseUrl, { countryCode, includeInactive: true }),
+      canReadAppointments
+        ? fetchAppointments(apiBaseUrl, token, countryCode)
+        : Promise.resolve({ ok: true as const, data: { appointments: [] } }),
     ]);
 
     if (notesRes.ok) setVisitNotes(notesRes.data.visitNotes);
@@ -255,8 +428,23 @@ export function ClinicalWorkspace({
     if (mediaRes.ok) setMediaObjects(mediaRes.data.mediaObjects);
     if (patDirRes.ok) {
       setDirectoryPatients(patDirRes.patients);
-      if (!patientUuid && patDirRes.patients[0]) {
-        setPatientUuid(patDirRes.patients[0].id);
+    }
+    if (!patientUuid) {
+      const preferredPatientId =
+        (apptsRes.ok
+          ? (apptsRes.data.appointments.find(
+              (a) =>
+                a.status !== "CANCELLED" &&
+                a.status !== "NO_SHOW" &&
+                a.patientName !== "Guest Care Pass",
+            )?.patientUserId ??
+            apptsRes.data.appointments.find(
+              (a) => a.patientName !== "Guest Care Pass",
+            )?.patientUserId)
+          : undefined) ??
+        (patDirRes.ok ? patDirRes.patients[0]?.id : undefined);
+      if (preferredPatientId) {
+        setPatientUuid(preferredPatientId);
       }
     }
     if (labFacRes.ok) {
@@ -270,27 +458,170 @@ export function ClinicalWorkspace({
       if (!schedDoctorId && docsDirRes.doctors[0]) {
         setSchedDoctorId(docsDirRes.doctors[0].id);
       }
+      const actorId = stored?.user.id ?? currentUser?.id;
+      const ownDoc = actorId
+        ? docsDirRes.doctors.find((d) => d.id === actorId)
+        : undefined;
+      if (ownDoc) {
+        if (ownDoc.specialty) setSpecialtyInput(ownDoc.specialty);
+        if (typeof ownDoc.consultationFeeMinor === "number") {
+          setFeeMinorInput(String(ownDoc.consultationFeeMinor));
+        }
+      }
     }
     if (clinicsRes.ok) {
       setDirectoryClinics(clinicsRes.facilities);
-      if (!schedFacilityId && clinicsRes.facilities[0]) {
-        setSchedFacilityId(clinicsRes.facilities[0].id);
+      if (!schedFacilityId) {
+        const actorFacilityId = stored?.user.facilityId ?? currentUser?.facilityId;
+        const preferred =
+          (actorFacilityId
+            ? clinicsRes.facilities.find((f) => f.id === actorFacilityId)
+            : undefined) ??
+          clinicsRes.facilities.find(
+            (f) => f.kind === "CLINIC" || f.kind === "HOSPITAL",
+          ) ??
+          clinicsRes.facilities[0];
+        if (preferred) {
+          setSchedFacilityId(preferred.id);
+        }
       }
     }
     if (facListRes.ok) {
       setFacilities(facListRes.data.facilities);
-      if (!schedFacilityId && facListRes.data.facilities[0]) {
-        setSchedFacilityId(facListRes.data.facilities[0].id);
+      if (!schedFacilityId && (!clinicsRes.ok || clinicsRes.facilities.length === 0)) {
+        const actorFacilityId = stored?.user.facilityId ?? currentUser?.facilityId;
+        const preferred =
+          (actorFacilityId
+            ? facListRes.data.facilities.find((f) => f.id === actorFacilityId)
+            : undefined) ??
+          facListRes.data.facilities.find(
+            (f) => f.kind === "CLINIC" || f.kind === "HOSPITAL",
+          ) ??
+          facListRes.data.facilities[0];
+        if (preferred) {
+          setSchedFacilityId(preferred.id);
+        }
       }
     }
     if (schedRes.ok) {
       setSchedules(schedRes.data.schedules);
     }
+    if (apptsRes.ok) {
+      setAppointments(apptsRes.data.appointments);
+    }
+    await papersPromise;
+  }
+
+  useEffect(() => {
+    const sessionRole = readStoredSession()?.user.role ?? null;
+    if (
+      !apiOnline ||
+      !sessionToken ||
+      isPendingStaff ||
+      !isAuthorizedClinicalViewer ||
+      !sessionRole ||
+      !EHR_ACCESS_ROLES.has(sessionRole) ||
+      !patientUuid.trim()
+    ) {
+      setPatientProfile(null);
+      return;
+    }
+    let cancelled = false;
+    setPatientProfileLoading(true);
+    fetchPatientMedicalProfile(apiBaseUrl, sessionToken, patientUuid.trim())
+      .then((res) => {
+        if (cancelled) return;
+        setPatientProfile(res.ok ? res.data.profile : null);
+      })
+      .finally(() => {
+        if (!cancelled) setPatientProfileLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    apiBaseUrl,
+    apiOnline,
+    isAuthorizedClinicalViewer,
+    isPendingStaff,
+    patientUuid,
+    sessionToken,
+  ]);
+
+  async function handleTransitionAppointment(
+    appointmentId: string,
+    status: "CHECKED_IN" | "COMPLETED" | "CANCELLED" | "NO_SHOW",
+  ) {
+    if (!sessionToken || actionLockRef.current) return;
+    actionLockRef.current = true;
+    const snapshot = appointments;
+    setAppointments((prev) =>
+      prev.map((a) => (a.id === appointmentId ? { ...a, status } : a)),
+    );
+    try {
+      const res = await transitionAppointmentStatus(
+        apiBaseUrl,
+        sessionToken,
+        appointmentId,
+        { status },
+      );
+      if (!res.ok) {
+        setAppointments(snapshot);
+        setBanner({
+          tone: "error",
+          text:
+            res.status === 409
+              ? m.conflictRefreshed
+              : m.apptUpdateFailed(res.error),
+        });
+        if (res.status === 409) {
+          const synced = await fetchAppointments(apiBaseUrl, sessionToken, selectedCountry);
+          if (synced.ok) setAppointments(synced.data.appointments);
+        }
+      } else {
+        setAppointments((prev) =>
+          prev.map((a) => (a.id === appointmentId ? res.data.appointment : a)),
+        );
+        setBanner({
+          tone: "success",
+          text: m.apptUpdated(
+            res.data.appointment.patientName,
+            c.enums.appointmentStatus[res.data.appointment.status] ??
+              res.data.appointment.status,
+          ),
+        });
+      }
+    } finally {
+      actionLockRef.current = false;
+    }
   }
 
   useEffect(() => {
     if (!apiOnline) return;
+    if (
+      sessionToken &&
+      currentUser &&
+      !isPendingStaff &&
+      !allowedWorkspaceRoles.includes(currentUser.role)
+    ) {
+      return;
+    }
     let active = true;
+
+    if (
+      sessionToken &&
+      currentUser &&
+      allowedWorkspaceRoles.includes(currentUser.role)
+    ) {
+      if (isPendingStaff) {
+        void refreshPapersData(sessionToken, currentUser);
+      } else {
+        void refreshClinicalData(sessionToken, selectedCountry);
+      }
+      return () => {
+        active = false;
+      };
+    }
 
     Promise.all([
       fetchDirectoryFacilities(apiBaseUrl, {
@@ -325,24 +656,135 @@ export function ClinicalWorkspace({
       }
     });
 
-    if (sessionToken) {
-      void refreshClinicalData(sessionToken, selectedCountry);
-    }
-
     return () => {
       active = false;
     };
-  }, [apiOnline, apiBaseUrl, selectedCountry, sessionToken]);
+  }, [
+    apiOnline,
+    apiBaseUrl,
+    allowedWorkspaceRoles,
+    currentUser,
+    isPendingStaff,
+    selectedCountry,
+    sessionToken,
+  ]);
 
-  const patientPickerOptions = useMemo(
-    () =>
-      directoryPatients.map((p) => ({
-        id: p.id,
-        label: p.fullName,
-        sublabel: `${p.email} · ${p.countryCode}`,
-      })),
-    [directoryPatients],
-  );
+  const patientPickerOptions = useMemo(() => {
+    const byId = new Map<
+      string,
+      { id: string; label: string; sublabel: string; priority: number }
+    >();
+    const dirById = new Map(directoryPatients.map((p) => [p.id, p] as const));
+
+    const statusRank = (s: AppointmentSummary["status"]) =>
+      s === "CHECKED_IN"
+        ? 0
+        : s === "CONFIRMED"
+          ? 1
+          : s === "COMPLETED"
+            ? 2
+            : 3;
+
+    const sortedAppointments = [...appointments].sort((a, b) => {
+      const diff = statusRank(a.status) - statusRank(b.status);
+      if (diff !== 0) return diff;
+      return b.slotStartIso.localeCompare(a.slotStartIso);
+    });
+
+    for (const appt of sortedAppointments) {
+      if (
+        appt.patientName === "Guest Care Pass" &&
+        appt.patientUserId !== patientUuid
+      ) {
+        continue;
+      }
+      if (!byId.has(appt.patientUserId)) {
+        const dirInfo = dirById.get(appt.patientUserId);
+        const contactHint = dirInfo?.email ?? dirInfo?.phone;
+        const dateTag = appt.slotStartIso.slice(0, 10);
+        const statusLabel =
+          c.enums.appointmentStatus[appt.status] ?? appt.status;
+        byId.set(appt.patientUserId, {
+          id: appt.patientUserId,
+          label: appt.patientName,
+          sublabel: contactHint
+            ? `${statusLabel} (${dateTag}) · ${contactHint}`
+            : `${statusLabel} (${dateTag}) · ${appt.countryCode}`,
+          priority: statusRank(appt.status),
+        });
+      }
+    }
+    for (const note of visitNotes) {
+      if (!byId.has(note.patientUserId)) {
+        const dirInfo = dirById.get(note.patientUserId);
+        byId.set(note.patientUserId, {
+          id: note.patientUserId,
+          label: note.patientName,
+          sublabel: `${dirInfo?.email ?? c.enums.patientAccount} · ${note.countryCode}`,
+          priority: 2,
+        });
+      }
+    }
+    for (const rx of prescriptions) {
+      if (!byId.has(rx.patientUserId)) {
+        const dirInfo = dirById.get(rx.patientUserId);
+        byId.set(rx.patientUserId, {
+          id: rx.patientUserId,
+          label: rx.patientName,
+          sublabel: `${dirInfo?.email ?? c.enums.patientAccount} · ${rx.countryCode}`,
+          priority: 2,
+        });
+      }
+    }
+    for (const order of labOrders) {
+      if (!byId.has(order.patientUserId)) {
+        const dirInfo = dirById.get(order.patientUserId);
+        byId.set(order.patientUserId, {
+          id: order.patientUserId,
+          label: order.patientName,
+          sublabel: `${dirInfo?.email ?? c.enums.patientAccount} · ${order.countryCode}`,
+          priority: 2,
+        });
+      }
+    }
+    for (const p of directoryPatients) {
+      if (!byId.has(p.id)) {
+        byId.set(p.id, {
+          id: p.id,
+          label: p.fullName,
+          sublabel: `${p.email ?? p.phone ?? c.enums.patientAccount} · ${p.countryCode}`,
+          priority: 4,
+        });
+      }
+    }
+
+    // Collapse redundant historical cancelled/no-show duplicates with the exact same name unless currently selected
+    const seenByName = new Set<string>();
+    return Array.from(byId.values())
+      .sort((a, b) => a.priority - b.priority)
+      .filter((opt) => {
+        const norm = opt.label.trim().toLowerCase();
+        if (opt.id === patientUuid) {
+          seenByName.add(norm);
+          return true;
+        }
+        if (opt.priority >= 3 && seenByName.has(norm)) {
+          return false;
+        }
+        seenByName.add(norm);
+        return true;
+      })
+      .map(({ id, label, sublabel }) => ({ id, label, sublabel }));
+  }, [
+    appointments,
+    c.enums.appointmentStatus,
+    c.enums.patientAccount,
+    directoryPatients,
+    labOrders,
+    patientUuid,
+    prescriptions,
+    visitNotes,
+  ]);
 
   const labFacilityPickerOptions = useMemo(
     () =>
@@ -359,66 +801,198 @@ export function ClinicalWorkspace({
       directoryDoctors.map((d) => ({
         id: d.id,
         label: d.fullName,
-        sublabel: `${d.specialty}${d.facilityName ? ` · ${d.facilityName}` : ""}`,
+        sublabel: `${formatSpecialtyLabel(d.specialty, locale)}${d.facilityName ? ` · ${d.facilityName}` : ""}`,
       })),
-    [directoryDoctors],
+    [directoryDoctors, locale],
   );
 
   const clinicFacilityPickerOptions = useMemo(() => {
+    const isClinicalSite = (kind: string) =>
+      kind === "CLINIC" || kind === "HOSPITAL";
     if (facilities.length > 0) {
-      return facilities.map((fac) => ({
+      const clinicalOnly = facilities.filter((f) => isClinicalSite(f.kind));
+      const list = clinicalOnly.length > 0 ? clinicalOnly : facilities;
+      return list.map((fac) => ({
         id: fac.id,
         label: fac.name,
-        sublabel: `${fac.kind} · ${fac.verificationStatus}`,
+        sublabel: `${formatFacilityKind(fac.kind, locale)} · ${
+          c.enums.verifiedStatus[fac.verificationStatus] ?? fac.verificationStatus
+        }`,
       }));
     }
-    return directoryClinics.map((fac) => ({
+    const clinicalOnly = directoryClinics.filter((f) => isClinicalSite(f.kind));
+    const list = clinicalOnly.length > 0 ? clinicalOnly : directoryClinics;
+    return list.map((fac) => ({
       id: fac.id,
       label: fac.name,
-      sublabel: `${fac.kind} · ${fac.openStatus}`,
+      sublabel: `${formatFacilityKind(fac.kind, locale)} · ${formatOpenStatus(
+        fac.openStatus,
+        locale,
+      )}`,
     }));
-  }, [facilities, directoryClinics]);
+  }, [c.enums.verifiedStatus, directoryClinics, facilities, locale]);
 
   const canManageSchedule =
     currentUser !== null &&
-    ["DOCTOR", "CLINIC_STAFF", "HOSPITAL_ADMIN", "OPS_ADMIN"].includes(
+    ["DOCTOR", "NURSE", "CLINIC_STAFF", "HOSPITAL_ADMIN", "OPS_ADMIN"].includes(
       currentUser.role,
     );
+
+  async function handleSavePracticeProfile(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!sessionToken || !currentUser) return;
+    setBusy(true);
+    const res = await upsertDoctorProfile(apiBaseUrl, sessionToken, {
+      specialty: specialtyInput.trim() || "General Practice",
+      licenseNumber: mdLicenseInput.trim() || "LIC-PENDING",
+      consultationFeeMinor: Number(feeMinorInput) || 0,
+    });
+    setBusy(false);
+    if (!res.ok) {
+      setBanner({ tone: "error", text: m.shiftPublishFailed(res.error) });
+      return;
+    }
+    setBanner({ tone: "success", text: ec.profileSaved });
+    await refreshClinicalData(sessionToken, selectedCountry);
+  }
+
+  async function handleToggleSchedule(sched: DoctorScheduleSummary) {
+    if (!sessionToken) return;
+    const snapshot = schedules;
+    setSchedules((prev) =>
+      prev.map((item) =>
+        item.id === sched.id ? { ...item, isActive: !item.isActive } : item,
+      ),
+    );
+    const res = await updateSchedule(apiBaseUrl, sessionToken, sched.id, {
+      isActive: !sched.isActive,
+    });
+    if (!res.ok) {
+      setSchedules(snapshot);
+      setBanner({ tone: "error", text: m.shiftPublishFailed(res.error) });
+      return;
+    }
+    setSchedules((prev) =>
+      prev.map((item) => (item.id === sched.id ? res.data.schedule : item)),
+    );
+    setBanner({ tone: "success", text: ec.scheduleUpdated(res.data.schedule.isActive) });
+  }
+
+  async function handleUpdateSchedule(
+    scheduleId: string,
+    patch: UpdateScheduleInput,
+  ) {
+    if (!sessionToken) return;
+    const snapshot = schedules;
+    setSchedules((prev) =>
+      prev.map((item) =>
+        item.id === scheduleId
+          ? {
+              ...item,
+              ...(patch.dayOfWeek !== undefined ? { dayOfWeek: patch.dayOfWeek } : {}),
+              ...(patch.startTimeUtc !== undefined ? { startTimeUtc: patch.startTimeUtc } : {}),
+              ...(patch.endTimeUtc !== undefined ? { endTimeUtc: patch.endTimeUtc } : {}),
+              ...(patch.slotDurationMinutes !== undefined
+                ? { slotDurationMinutes: patch.slotDurationMinutes }
+                : {}),
+              ...(patch.visitMode !== undefined ? { visitMode: patch.visitMode } : {}),
+              ...(patch.isActive !== undefined ? { isActive: patch.isActive } : {}),
+            }
+          : item,
+      ),
+    );
+    const res = await updateSchedule(apiBaseUrl, sessionToken, scheduleId, patch);
+    if (!res.ok) {
+      setSchedules(snapshot);
+      setBanner({ tone: "error", text: m.shiftPublishFailed(res.error) });
+      return;
+    }
+    setSchedules((prev) =>
+      prev.map((item) => (item.id === scheduleId ? res.data.schedule : item)),
+    );
+    setBanner({
+      tone: "success",
+      text: `${res.data.schedule.startTimeUtc}–${res.data.schedule.endTimeUtc} · ${res.data.schedule.facilityName}`,
+    });
+  }
+
+  async function handleDuplicateSchedule(
+    sched: DoctorScheduleSummary,
+    targetDayOfWeek: number,
+  ) {
+    if (!sessionToken || !currentUser) return;
+    const isSelfPractitioner =
+      currentUser.role === "DOCTOR" || currentUser.role === "NURSE";
+    const res = await createSchedule(apiBaseUrl, sessionToken, {
+      facilityId: sched.facilityId,
+      doctorUserId: isSelfPractitioner ? undefined : sched.doctorUserId,
+      dayOfWeek: targetDayOfWeek,
+      startTimeUtc: sched.startTimeUtc,
+      endTimeUtc: sched.endTimeUtc,
+      slotDurationMinutes: sched.slotDurationMinutes,
+      visitMode: sched.visitMode,
+    });
+    if (!res.ok) {
+      setBanner({ tone: "error", text: m.shiftPublishFailed(res.error) });
+      return;
+    }
+    setSchedules((prev) => [...prev, res.data.schedule]);
+    setBanner({
+      tone: "success",
+      text: m.shiftPublished(res.data.schedule.doctorName, res.data.schedule.facilityName),
+    });
+  }
+
+  async function handleDeleteSchedule(sched: DoctorScheduleSummary) {
+    if (!sessionToken) return;
+    const snapshot = schedules;
+    setSchedules((prev) => prev.filter((item) => item.id !== sched.id));
+    const res = await deleteSchedule(apiBaseUrl, sessionToken, sched.id);
+    if (!res.ok) {
+      setSchedules(snapshot);
+      setBanner({ tone: "error", text: m.shiftPublishFailed(res.error) });
+      return;
+    }
+    setBanner({ tone: "success", text: ec.scheduleDeleted });
+  }
 
   async function handlePublishSchedule(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!sessionToken || !currentUser) {
       setBanner({
         tone: "error",
-        text: "Sign in on the Care Portal as a Doctor or Coordinator to publish shifts.",
+        text: m.signInToPublish,
       });
       return;
     }
 
-    const parsedSchedule = CreateScheduleSchema.safeParse({
+    const isSelfPractitioner =
+      currentUser.role === "DOCTOR" || currentUser.role === "NURSE";
+    const targetDays = publishWeekdays ? [1, 2, 3, 4, 5] : [schedDay];
+
+    const firstParsed = CreateScheduleSchema.safeParse({
       facilityId: schedFacilityId,
-      doctorUserId:
-        currentUser.role === "DOCTOR"
-          ? undefined
-          : schedDoctorId.trim() || undefined,
-      dayOfWeek: schedDay,
+      doctorUserId: isSelfPractitioner
+        ? undefined
+        : schedDoctorId.trim() || undefined,
+      dayOfWeek: targetDays[0],
       startTimeUtc: schedStart,
       endTimeUtc: schedEnd,
       slotDurationMinutes: Number(schedDuration),
       visitMode: schedMode,
     });
 
-    if (!parsedSchedule.success) {
+    if (!firstParsed.success) {
       setBanner({
         tone: "error",
         text:
-          parsedSchedule.error.issues[0]?.message ?? "Invalid shift window.",
+          firstParsed.error.issues[0]?.message ?? m.invalidShiftWindow,
       });
       return;
     }
 
     setBusy(true);
-    if (currentUser.role === "DOCTOR") {
+    if (isSelfPractitioner) {
       await upsertDoctorProfile(apiBaseUrl, sessionToken, {
         specialty: specialtyInput,
         licenseNumber: mdLicenseInput,
@@ -426,187 +1000,139 @@ export function ClinicalWorkspace({
       });
     }
 
-    const res = await createSchedule(
-      apiBaseUrl,
-      sessionToken,
-      parsedSchedule.data,
+    const createdResults = await Promise.all(
+      targetDays.map((day) =>
+        createSchedule(apiBaseUrl, sessionToken, {
+          ...firstParsed.data,
+          dayOfWeek: day,
+        }),
+      ),
     );
     setBusy(false);
 
-    if (!res.ok) {
+    const createdSchedules: DoctorScheduleSummary[] = [];
+    for (const res of createdResults) {
+      if (!res.ok) {
+        if (createdSchedules.length > 0) {
+          setSchedules((prev) => [...prev, ...createdSchedules]);
+        }
+        setBanner({
+          tone: "error",
+          text: m.shiftPublishFailed(res.error),
+        });
+        return;
+      }
+      createdSchedules.push(res.data.schedule);
+    }
+
+    setSchedules((prev) => [...prev, ...createdSchedules]);
+    const publishedCount = createdSchedules.length;
+    const lastSchedule = createdSchedules[createdSchedules.length - 1] ?? null;
+
+    if (publishedCount > 1) {
       setBanner({
-        tone: "error",
-        text: `Failed to publish shift: ${res.error}`,
+        tone: "success",
+        text: ec.batchShiftsPublished(publishedCount),
       });
-      return;
-    }
-
-    setBanner({
-      tone: "success",
-      text: `Published shift for ${res.data.schedule.doctorName} at ${res.data.schedule.facilityName}.`,
-    });
-    await refreshClinicalData(sessionToken, selectedCountry);
-  }
-
-  async function handleSaveSoapNote(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!sessionToken) return;
-
-    setBusy(true);
-    const res = await createVisitNote(apiBaseUrl, sessionToken, {
-      patientUserId: patientUuid.trim(),
-      icd10Codes: icd10Input
-        .split(",")
-        .map((c) => c.trim())
-        .filter(Boolean),
-      subjective,
-      objective,
-      assessment,
-      plan,
-    });
-    setBusy(false);
-
-    if (!res.ok) {
-      setBanner({ tone: "error", text: `Visit note error: ${res.error}` });
-      return;
-    }
-
-    setSubjective("");
-    setObjective("");
-    setAssessment("");
-    setPlan("");
-    setBanner({
-      tone: "success",
-      text: `Consultation visit note saved for ${res.data.visitNote.patientName}.`,
-    });
-    await refreshClinicalData(sessionToken, selectedCountry);
-  }
-
-  async function handleIssueRx(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!sessionToken) return;
-
-    setBusy(true);
-    const res = await createPrescription(apiBaseUrl, sessionToken, {
-      patientUserId: patientUuid.trim(),
-      medications: [
-        {
-          name: rxMedName.trim(),
-          dosage: rxDosage.trim(),
-          frequency: rxFrequency.trim(),
-          durationDays: Number(rxDurationDays) || 7,
-        },
-      ],
-    });
-    setBusy(false);
-
-    if (!res.ok) {
-      setBanner({ tone: "error", text: `E-Rx error: ${res.error}` });
-      return;
-    }
-
-    setQrInput(res.data.prescription.qrToken);
-    setBanner({
-      tone: "success",
-      text: `Issued signed QR e-prescription (${res.data.prescription.id.slice(0, 8)}).`,
-    });
-    await refreshClinicalData(sessionToken, selectedCountry);
-  }
-
-  async function handleVerifyQr(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!sessionToken) return;
-
-    setBusy(true);
-    const res = await verifyPrescriptionQr(
-      apiBaseUrl,
-      sessionToken,
-      qrInput.trim(),
-    );
-    setBusy(false);
-
-    if (!res.ok) {
-      setVerifiedRx(null);
-      setBanner({ tone: "error", text: `QR rejected: ${res.error}` });
-      return;
-    }
-
-    setVerifiedRx(res.data.prescription);
-    setBanner({
-      tone: "success",
-      text: `Prescription signature verified for ${res.data.prescription.patientName}.`,
-    });
-  }
-
-  async function handleDispense(prescriptionId: string) {
-    if (!sessionToken) return;
-    setBusy(true);
-    const res = await dispensePrescription(
-      apiBaseUrl,
-      sessionToken,
-      prescriptionId,
-      {
-        ...(dispenseNote.trim()
-          ? { dispensingNote: dispenseNote.trim() }
-          : {}),
-      },
-    );
-    setBusy(false);
-
-    if (!res.ok) {
+    } else if (lastSchedule) {
       setBanner({
-        tone: "error",
-        text:
-          res.status === 409
-            ? "Double-dispensing blocked: prescription has already been fulfilled."
-            : `Dispense failed: ${res.error}`,
+        tone: "success",
+        text: m.shiftPublished(
+          lastSchedule.doctorName,
+          lastSchedule.facilityName,
+        ),
       });
-      return;
     }
-
-    setVerifiedRx(res.data.prescription);
-    setBanner({
-      tone: "success",
-      text: `Medication prescription marked as dispensed.`,
-    });
-    await refreshClinicalData(sessionToken, selectedCountry);
   }
 
-  async function handleCreateLabOrder(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!sessionToken) return;
+  async function handleSaveSoapNote(
+    input: CreateVisitNoteInput,
+  ): Promise<boolean> {
+    if (!sessionToken) return false;
+
     setBusy(true);
-    const res = await createLabOrder(apiBaseUrl, sessionToken, {
-      patientUserId: patientUuid.trim(),
-      facilityId: labFacilityId.trim(),
-      panelName: labPanelName.trim(),
-      urgency: labUrgency,
-    });
+    const res = await createVisitNote(apiBaseUrl, sessionToken, input);
     setBusy(false);
 
     if (!res.ok) {
-      setBanner({ tone: "error", text: `Lab order error: ${res.error}` });
-      return;
+      setBanner({ tone: "error", text: m.visitNoteError(res.error) });
+      return false;
     }
+
+    setVisitNotes((prev) => [res.data.visitNote, ...prev]);
     setBanner({
       tone: "success",
-      text: `Lab order queued for ${res.data.labOrder.panelName}.`,
+      text: m.visitNoteSaved(res.data.visitNote.patientName),
     });
-    await refreshClinicalData(sessionToken, selectedCountry);
+    return true;
   }
 
-  async function handlePresignUpload(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!sessionToken || !selectedUploadFile) return;
+  async function handleIssueRx(
+    input: CreatePrescriptionInput,
+  ): Promise<boolean> {
+    if (!sessionToken) return false;
+
+    setBusy(true);
+    const res = await createPrescription(apiBaseUrl, sessionToken, input);
+    setBusy(false);
+
+    if (!res.ok) {
+      setBanner({ tone: "error", text: m.rxError(res.error) });
+      return false;
+    }
+
+    setPrescriptions((prev) => [res.data.prescription, ...prev]);
+    const warnings = res.data.allergyWarnings ?? [];
+    if (warnings.length > 0) {
+      setBanner({
+        tone: "info",
+        text: `${m.rxIssued(res.data.prescription.id.slice(0, 8))} — ${warnings[0]!.message}`,
+      });
+    } else {
+      setBanner({
+        tone: "success",
+        text: m.rxIssued(res.data.prescription.id.slice(0, 8)),
+      });
+    }
+    return true;
+  }
+
+  async function handleCreateLabOrder(
+    input: CreateLabOrderInput,
+  ): Promise<boolean> {
+    if (!sessionToken) return false;
+    setBusy(true);
+    const res = await createLabOrder(apiBaseUrl, sessionToken, input);
+    setBusy(false);
+
+    if (!res.ok) {
+      setBanner({ tone: "error", text: m.labOrderError(res.error) });
+      return false;
+    }
+    setLabOrders((prev) => [res.data.labOrder, ...prev]);
+    setBanner({
+      tone: "success",
+      text: m.labOrderQueued(res.data.labOrder.panelName),
+    });
+    return true;
+  }
+
+  async function handleUploadClinicalFile(params: {
+    file: File;
+    mimeType: ClinicalMediaMimeType;
+    mediaCategory: ClinicalMediaCategory;
+    labOrderId?: string;
+  }): Promise<boolean> {
+    if (!sessionToken) return false;
 
     const effectivePatientId =
       patientUuid.trim() || currentUser?.id || "";
     if (!effectivePatientId) {
       setBanner({
         tone: "error",
-        text: "Select a patient (or sign in as a patient) before uploading a medical file.",
+        text: m.selectPatientForUpload,
       });
-      return;
+      return false;
     }
 
     setBusy(true);
@@ -615,28 +1141,27 @@ export function ClinicalWorkspace({
       apiBaseUrl,
       token: sessionToken,
       patientUserId: effectivePatientId,
-      ...(selectedLabOrderForUpload
-        ? { labOrderId: selectedLabOrderForUpload }
-        : {}),
-      file: selectedUploadFile,
-      mimeType: uploadMime,
+      ...(params.labOrderId ? { labOrderId: params.labOrderId } : {}),
+      mediaCategory: params.mediaCategory,
+      file: params.file,
+      mimeType: params.mimeType,
       onProgress: (pct) => setUploadProgress(pct),
     });
     setBusy(false);
     setUploadProgress(null);
 
     if (!res.ok) {
-      setBanner({ tone: "error", text: `Binary upload failed: ${res.error}` });
-      return;
+      setBanner({ tone: "error", text: m.binaryUploadFailed(res.error) });
+      return false;
     }
 
     setLatestPresigned(res.presigned);
-    setSelectedUploadFile(null);
+    setMediaObjects((prev) => [res.confirmed.mediaObject, ...prev]);
     setBanner({
       tone: "success",
-      text: `Uploaded & verified diagnostic file ${res.confirmed.mediaObject.fileName}.`,
+      text: m.uploadedDiagnosticFile(res.confirmed.mediaObject.fileName),
     });
-    await refreshClinicalData(sessionToken, selectedCountry);
+    return true;
   }
 
   async function handleCompleteLab(orderId: string) {
@@ -651,1023 +1176,494 @@ export function ClinicalWorkspace({
     });
     setBusy(false);
     if (!res.ok) {
-      setBanner({ tone: "error", text: `Lab update failed: ${res.error}` });
+      setBanner({ tone: "error", text: m.labUpdateFailed(res.error) });
       return;
     }
+    setLabOrders((prev) =>
+      prev.map((order) => (order.id === orderId ? res.data.labOrder : order)),
+    );
     setBanner({
       tone: "success",
-      text: `Lab order ${res.data.labOrder.panelName} completed.`,
+      text: m.labCompleted(res.data.labOrder.panelName),
     });
-    await refreshClinicalData(sessionToken, selectedCountry);
+  }
+
+  async function handleSelectPatientFromCalendar(
+    nextPatientId: string,
+    patientName: string,
+  ) {
+    setPatientUuid(nextPatientId);
+    setActiveTab("doctor");
+    setBanner({
+      tone: "info",
+      text: m.loadedPatientIntoComposer(patientName),
+    });
+  }
+
+  const signedInDirectorySpecialty = useMemo(() => {
+    if (!currentUser) return null;
+    const match = directoryDoctors.find((d) => d.id === currentUser.id);
+    return match?.specialty ?? null;
+  }, [currentUser, directoryDoctors]);
+
+  const isNursePractitioner = useMemo(() => {
+    if (!currentUser) return false;
+    if (currentUser.role === "NURSE" || currentUser.role === "CLINIC_STAFF") {
+      return true;
+    }
+    return Boolean(
+      currentUser.role === "DOCTOR" &&
+        signedInDirectorySpecialty &&
+        /nursing|infirmier|nurse/i.test(signedInDirectorySpecialty),
+    );
+  }, [currentUser, signedInDirectorySpecialty]);
+
+  const isHomeNursePractitioner = Boolean(
+    isNursePractitioner &&
+      (currentUser?.role === "NURSE" ||
+        (signedInDirectorySpecialty &&
+          /home|domicile/i.test(signedInDirectorySpecialty))),
+  );
+
+  const visibleTabs = useMemo<readonly ClinicalTab[]>(() => {
+    void roleFocus;
+    return ["calendar", "doctor", "schedule", "labs", "papers"];
+  }, [roleFocus]);
+
+  const headerTitle =
+    roleFocus === "LAB_TECH" || currentUser?.role === "LAB_TECH"
+      ? t("lab.heading")
+      : isHomeNursePractitioner
+        ? c.header.homeNursingTitle
+        : isNursePractitioner
+          ? c.header.nursingTitle
+          : currentUser?.role === "DOCTOR"
+            ? c.header.doctorTitle
+            : t("clinical.heading");
+
+  function handleSignOut() {
+    revokeClientSession(apiBaseUrl);
+    setSessionToken(null);
+    setCurrentUser(null);
+    setAppointments([]);
+    setPatientProfile(null);
+    setVisitNotes([]);
+    setPrescriptions([]);
+    setLabOrders([]);
+    setMediaObjects([]);
   }
 
   return (
-    <div dir={activePack?.direction ?? "ltr"} className="space-y-6">
-      <SessionAccountBar
-        session={
-          sessionToken && currentUser
-            ? { token: sessionToken, user: currentUser }
-            : null
+    <div dir={isRtl ? "rtl" : "ltr"} className="space-y-4">
+      <WorkspaceHeader
+        title={headerTitle}
+        countryCode={selectedCountry}
+        countryName={formatCountryDisplayName(
+          selectedCountry,
+          activePack?.name ?? selectedCountry,
+          locale,
+        )}
+        currencyCode={activePack?.currencyCode ?? selectedCountry}
+        emergencyHotline={activePack?.emergencyHotlines.ambulance ?? ""}
+        user={currentUser}
+        guestLabel={
+          roleFocus === "LAB_TECH" || currentUser?.role === "LAB_TECH"
+            ? c.header.guestLab
+            : isNursePractitioner
+              ? c.header.guestNursing
+              : c.header.guestClinical
         }
-        onSignOut={() => {
-          clearStoredSession();
-          setSessionToken(null);
-          setCurrentUser(null);
-          setVisitNotes([]);
-          setPrescriptions([]);
-          setLabOrders([]);
-          setMediaObjects([]);
-        }}
-        prompt="Sign in via Portal to document consultations, publish shifts, dispense QR prescriptions, or upload lab scans."
+        onSignOut={handleSignOut}
+        actions={
+          currentUser && sessionToken && !isPendingStaff && isAuthorizedClinicalViewer ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void refreshClinicalData(sessionToken, selectedCountry)}
+              className="inline-flex h-10 items-center rounded-xl border border-[#D7E4F2] bg-white px-4 text-xs font-semibold text-[#0F243E] shadow-2xs transition hover:border-[#0066CC] hover:bg-[#F3F8FD] hover:text-[#0066CC] disabled:opacity-50"
+            >
+              {c.header.syncBtn}
+            </button>
+          ) : undefined
+        }
       />
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs sm:p-6">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0 space-y-1">
-            <p className="font-mono-tabular text-xs font-semibold uppercase tracking-wider text-teal-800">
-              {t("clinical.eyebrow")}
-            </p>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-              {t("clinical.heading")}
-            </h1>
-            <p className="text-sm text-slate-600">
-              {t("clinical.subtitle")} ({activePack?.name ?? selectedCountry})
-            </p>
-          </div>
+      <VerificationGateNotice user={currentUser} compact />
 
-          <ActiveRegionPill
-            code={selectedCountry}
-            name={activePack?.name ?? "Morocco"}
-            currencyCode={activePack?.currencyCode}
-            emergencyHotline={activePack?.emergencyHotlines.ambulance}
-          />
-        </div>
-
-        <div
-          role="tablist"
-          aria-label="Clinical Workspace Modules"
-          className="mt-5 flex flex-wrap gap-2 border-t border-slate-200 pt-4"
-        >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "doctor"}
-            onClick={() => setActiveTab("doctor")}
-            className={
-              activeTab === "doctor"
-                ? "inline-flex min-h-[38px] items-center gap-1.5 rounded-lg bg-teal-800 px-3 py-1.5 text-xs font-semibold text-white"
-                : "inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-teal-700"
-            }
-          >
-            <ClipboardList className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>{t("clinical.tabDoctor")}</span>
-          </button>
-
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "schedule"}
-            onClick={() => setActiveTab("schedule")}
-            className={
-              activeTab === "schedule"
-                ? "inline-flex min-h-[38px] items-center gap-1.5 rounded-lg bg-teal-800 px-3 py-1.5 text-xs font-semibold text-white"
-                : "inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-teal-700"
-            }
-          >
-            <CalendarClock className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>{t("clinical.tabSchedule")}</span>
-          </button>
-
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "pharmacy"}
-            onClick={() => setActiveTab("pharmacy")}
-            className={
-              activeTab === "pharmacy"
-                ? "inline-flex min-h-[38px] items-center gap-1.5 rounded-lg bg-teal-800 px-3 py-1.5 text-xs font-semibold text-white"
-                : "inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-teal-700"
-            }
-          >
-            <QrCode className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>{t("clinical.tabPharmacy")}</span>
-          </button>
-
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "labs"}
-            onClick={() => setActiveTab("labs")}
-            className={
-              activeTab === "labs"
-                ? "inline-flex min-h-[38px] items-center gap-1.5 rounded-lg bg-teal-800 px-3 py-1.5 text-xs font-semibold text-white"
-                : "inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-teal-700"
-            }
-          >
-            <FlaskConical className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>{t("clinical.tabLabs")}</span>
-          </button>
-        </div>
-
-        {banner ? (
-          <StatusBanner
-            tone={banner.tone}
-            message={banner.text}
-            className="mt-4"
-          />
-        ) : null}
-      </section>
+      <WorkspaceRoleGuard
+        user={currentUser}
+        hydrated={sessionHydrated}
+        allowedRoles={allowedWorkspaceRoles}
+        workspaceTitle={
+          roleFocus === "LAB_TECH"
+            ? c.header.guardLabTitle
+            : c.header.guardClinicalTitle
+        }
+        requiredRoleDescription={
+          roleFocus === "LAB_TECH"
+            ? c.header.guardLabRoles
+            : c.header.guardClinicalRoles
+        }
+        allowPendingMatchingRole
+      >
+      <UiTabBar
+        ariaLabel={c.header.tabsAria}
+        activeTab={activeTab}
+        onSelect={setActiveTab}
+        tabs={[
+          ...(visibleTabs.includes("calendar")
+            ? [
+                {
+                  id: "calendar" as const,
+                  label: t("clinical.tabCalendar"),
+                  icon: <Calendar className="h-3.5 w-3.5" aria-hidden="true" />,
+                },
+              ]
+            : []),
+          ...(visibleTabs.includes("doctor")
+            ? [
+                {
+                  id: "doctor" as const,
+                  label: t("clinical.tabDoctor"),
+                  icon: <ClipboardList className="h-3.5 w-3.5" aria-hidden="true" />,
+                },
+              ]
+            : []),
+          ...(visibleTabs.includes("schedule")
+            ? [
+                {
+                  id: "schedule" as const,
+                  label: t("clinical.tabSchedule"),
+                  icon: <CalendarClock className="h-3.5 w-3.5" aria-hidden="true" />,
+                },
+              ]
+            : []),
+          ...(visibleTabs.includes("labs")
+            ? [
+                {
+                  id: "labs" as const,
+                  label: t("clinical.tabLabs"),
+                  icon: <FlaskConical className="h-3.5 w-3.5" aria-hidden="true" />,
+                },
+              ]
+            : []),
+          ...(visibleTabs.includes("papers") && currentUser
+            ? [
+                {
+                  id: "papers" as const,
+                  label: ec.tabPapers,
+                  icon: <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />,
+                },
+              ]
+            : []),
+        ]}
+      />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-        <div className="min-w-0 space-y-6 lg:col-span-8">
-          {activeTab === "schedule" ? (
-            <div className="space-y-6">
-              <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
-                <h2 className="border-b border-slate-200 pb-3 text-base font-bold text-slate-900">
-                  Publish Multi-Clinic Shift Window
-                </h2>
-                {!canManageSchedule ? (
-                  <p className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
-                    Sign in via the Care Portal as a Doctor, Clinic Coordinator,
-                    Hospital Director, or Compliance Admin to manage weekly
-                    provider shifts.
-                  </p>
-                ) : (
-                  <form
-                    onSubmit={(e) => void handlePublishSchedule(e)}
-                    className="mt-4 space-y-3 text-xs"
-                  >
-                    {currentUser?.role === "DOCTOR" ? (
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                        <div>
-                          <label className="mb-1 block font-semibold text-slate-700">
-                            Specialty
-                          </label>
-                          <UiInput
-                            type="text"
-                            value={specialtyInput}
-                            onChange={(e) => setSpecialtyInput(e.target.value)}
-                          />
-                        </div>
-                        <div>
-                          <label className="mb-1 block font-semibold text-slate-700">
-                            Medical License #
-                          </label>
-                          <UiInput
-                            type="text"
-                            value={mdLicenseInput}
-                            onChange={(e) => setMdLicenseInput(e.target.value)}
-                            className="font-mono-tabular"
-                          />
-                        </div>
-                        <div>
-                          <label className="mb-1 block font-semibold text-slate-700">
-                            Consultation Fee ({activePack?.currencyCode ?? selectedCountry} minor)
-                          </label>
-                          <UiInput
-                            type="number"
-                            min={0}
-                            value={feeMinorInput}
-                            onChange={(e) => setFeeMinorInput(e.target.value)}
-                            className="font-mono-tabular"
-                          />
-                        </div>
-                      </div>
-                    ) : (
-                      <EntityPicker
-                        id="clin-schedule-doctor-picker"
-                        label="Doctor or Nurse"
-                        placeholder="Filter practitioner by name or specialty..."
-                        emptyLabel="No practitioners listed in this region"
-                        options={doctorPickerOptions}
-                        value={schedDoctorId}
-                        onChange={setSchedDoctorId}
-                        required
-                      />
-                    )}
-
-                    <EntityPicker
-                      id="clin-schedule-facility-picker"
-                      label="Clinic or Hospital"
-                      placeholder="Filter facility by name..."
-                      emptyLabel="No verified facilities in this region"
-                      options={clinicFacilityPickerOptions}
-                      value={schedFacilityId}
-                      onChange={setSchedFacilityId}
-                      required
-                    />
-
-                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                      <div>
-                        <label className="mb-1 block font-semibold text-slate-700">
-                          Day of Week
-                        </label>
-                        <UiSelect
-                          value={schedDay}
-                          onChange={(e) => setSchedDay(Number(e.target.value))}
-                        >
-                          {WEEKDAY_LABELS.map((label, idx) => (
-                            <option key={label} value={idx}>
-                              {label}
-                            </option>
-                          ))}
-                        </UiSelect>
-                      </div>
-                      <div>
-                        <label className="mb-1 block font-semibold text-slate-700">
-                          Visit Format
-                        </label>
-                        <UiSelect
-                          value={schedMode}
-                          onChange={(e) =>
-                            setSchedMode(VisitModeSchema.parse(e.target.value))
-                          }
-                        >
-                          <option value="IN_PERSON">Clinic Visit</option>
-                          <option value="TELEHEALTH">Video Visit</option>
-                        </UiSelect>
-                      </div>
-                      <div>
-                        <label className="mb-1 block font-semibold text-slate-700">
-                          Start Time
-                        </label>
-                        <UiInput
-                          type="text"
-                          value={schedStart}
-                          onChange={(e) => setSchedStart(e.target.value)}
-                          className="font-mono-tabular"
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block font-semibold text-slate-700">
-                          End Time
-                        </label>
-                        <UiInput
-                          type="text"
-                          value={schedEnd}
-                          onChange={(e) => setSchedEnd(e.target.value)}
-                          className="font-mono-tabular"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-end justify-between gap-3 pt-1">
-                      <div className="w-40">
-                        <label className="mb-1 block font-semibold text-slate-700">
-                          Slot Duration (min)
-                        </label>
-                        <UiInput
-                          type="number"
-                          min={10}
-                          max={120}
-                          value={schedDuration}
-                          onChange={(e) => setSchedDuration(e.target.value)}
-                          className="font-mono-tabular"
-                        />
-                      </div>
-                      <UiButton type="submit" disabled={busy}>
-                        Publish Clinic Schedule Window
-                      </UiButton>
-                    </div>
-                  </form>
-                )}
-
-                {schedules.length > 0 ? (
-                  <div className="mt-5 border-t border-slate-200 pt-4">
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600">
-                      Active Clinic Rosters ({schedules.length})
-                    </h3>
-                    <ul className="mt-2 space-y-1.5">
-                      {schedules.slice(0, 8).map((sched) => (
-                        <li
-                          key={sched.id}
-                          className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs"
-                        >
-                          <span className="flex items-center gap-2 font-semibold text-slate-900">
-                            <EntityAvatar
-                              name={sched.doctorName}
-                              role="DOCTOR"
-                              size="xs"
-                            />
-                            <span>
-                              {sched.doctorName} · {sched.facilityName}
-                            </span>
-                          </span>
-                          <span className="font-mono-tabular text-slate-600">
-                            {WEEKDAY_LABELS[sched.dayOfWeek]}{" "}
-                            {sched.startTimeUtc}–{sched.endTimeUtc} (
-                            {sched.slotDurationMinutes}m)
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-              </section>
-            </div>
+        <div
+          className={`min-w-0 space-y-6 ${
+            activeTab === "papers" ? "lg:col-span-8" : "lg:col-span-12"
+          }`}
+        >
+          {activeTab === "calendar" ? (
+            <DoctorCalendarAgenda
+              currentUser={currentUser}
+              appointments={appointments}
+              schedules={schedules}
+              selectedPatientId={patientUuid}
+              patientProfile={patientProfile}
+              patientProfileLoading={patientProfileLoading}
+              busy={busy}
+              isLockedPendingVerification={isPendingStaff}
+              onSelectPatientForConsultation={handleSelectPatientFromCalendar}
+              onInspectPatient={(pid) => setPatientUuid(pid)}
+              onTransitionAppointment={handleTransitionAppointment}
+              onUpdateSchedule={handleUpdateSchedule}
+              onJumpToShifts={() => setActiveTab("schedule")}
+            />
+          ) : activeTab === "schedule" ? (
+            <VisualScheduleBuilder
+              currentUser={currentUser}
+              schedules={schedules}
+              clinicOptions={clinicFacilityPickerOptions}
+              doctorOptions={doctorPickerOptions}
+              currencyCode={activePack?.currencyCode ?? selectedCountry}
+              canManageSchedule={canManageSchedule}
+              isPendingStaff={isPendingStaff}
+              busy={busy}
+              showPracticeProfileFields={
+                currentUser?.role === "DOCTOR" || currentUser?.role === "NURSE"
+              }
+              specialtyInput={specialtyInput}
+              licenseInput={mdLicenseInput}
+              feeMinorInput={feeMinorInput}
+              schedFacilityId={schedFacilityId}
+              schedDoctorId={schedDoctorId}
+              schedDay={schedDay}
+              schedStart={schedStart}
+              schedEnd={schedEnd}
+              schedDuration={schedDuration}
+              schedMode={schedMode}
+              publishWeekdays={publishWeekdays}
+              onSpecialtyChange={(next) => {
+                setSpecialtyInput(next);
+                if (/nursing|infirmier|nurse/i.test(next)) {
+                  setSchedMode("HOME_VISIT");
+                } else if (schedMode === "HOME_VISIT") {
+                  setSchedMode("IN_PERSON");
+                }
+              }}
+              onLicenseChange={setMdLicenseInput}
+              onFeeChange={setFeeMinorInput}
+              onFacilityChange={setSchedFacilityId}
+              onDoctorChange={setSchedDoctorId}
+              onDayChange={setSchedDay}
+              onStartChange={setSchedStart}
+              onEndChange={setSchedEnd}
+              onDurationChange={setSchedDuration}
+              onModeChange={setSchedMode}
+              onPublishWeekdaysChange={setPublishWeekdays}
+              onSubmitPublish={(e) => void handlePublishSchedule(e)}
+              onToggleSchedule={(sched) => void handleToggleSchedule(sched)}
+              onDeleteSchedule={(sched) => void handleDeleteSchedule(sched)}
+              onUpdateSchedule={handleUpdateSchedule}
+              onDuplicateSchedule={handleDuplicateSchedule}
+              heading={c.schedule.heading}
+              signInHint={c.schedule.signInHint}
+              publishBtnLabel={c.schedule.publishBtn}
+              publishWeekdaysLabel={ec.publishWeekdaysLabel}
+              activeStatusLabel={ec.activeStatus}
+              pausedStatusLabel={ec.pausedStatus}
+              pauseBtnLabel={ec.pauseBtn}
+              resumeBtnLabel={ec.resumeBtn}
+              deleteBtnLabel={ec.deleteBtn}
+              clinicLabel={c.schedule.clinicLabel}
+              clinicPlaceholder={c.schedule.clinicPlaceholder}
+              clinicEmpty={c.schedule.clinicEmpty}
+              practitionerLabel={c.schedule.practitionerLabel}
+              practitionerPlaceholder={c.schedule.practitionerPlaceholder}
+              practitionerEmpty={c.schedule.practitionerEmpty}
+              specialtyLabel={c.schedule.specialtyLabel}
+              licenseLabel={c.schedule.licenseLabel}
+              feeLabel={c.schedule.feeLabel(activePack?.currencyCode ?? selectedCountry)}
+            />
           ) : null}
 
           {activeTab === "doctor" ? (
-            <div className="space-y-6">
-              <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
-                <h2 className="border-b border-slate-200 pb-3 text-base font-bold text-slate-900">
-                  Consultation Visit Notes & QR E-Prescription
-                </h2>
-
-                <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <EntityPicker
-                    id="clin-patient-uuid"
-                    label="Patient"
-                    placeholder="Filter patient by name or email..."
-                    emptyLabel="Sign in to browse patients in this region"
-                    options={patientPickerOptions}
-                    value={patientUuid}
-                    onChange={setPatientUuid}
-                    disabled={currentUser?.role === "PATIENT"}
-                  />
-                  <div>
-                    <label
-                      htmlFor="clin-icd10"
-                      className="block text-xs font-semibold text-slate-700"
-                    >
-                      Diagnosis Codes (Optional, e.g. J06.9)
-                    </label>
-                    <input
-                      id="clin-icd10"
-                      type="text"
-                      value={icd10Input}
-                      onChange={(e) => setIcd10Input(e.target.value)}
-                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-mono-tabular text-xs"
-                    />
-                  </div>
-                </div>
-
-                <form
-                  onSubmit={(e) => void handleSaveSoapNote(e)}
-                  className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2"
-                >
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700">
-                      Subjective
-                    </label>
-                    <textarea
-                      rows={2}
-                      required
-                      value={subjective}
-                      onChange={(e) => setSubjective(e.target.value)}
-                      placeholder="Chief complaint & symptom timeline"
-                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700">
-                      Objective
-                    </label>
-                    <textarea
-                      rows={2}
-                      required
-                      value={objective}
-                      onChange={(e) => setObjective(e.target.value)}
-                      placeholder="Exam findings & vitals"
-                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700">
-                      Assessment
-                    </label>
-                    <textarea
-                      rows={2}
-                      required
-                      value={assessment}
-                      onChange={(e) => setAssessment(e.target.value)}
-                      placeholder="Primary clinical impression"
-                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700">
-                      Plan
-                    </label>
-                    <textarea
-                      rows={2}
-                      required
-                      value={plan}
-                      onChange={(e) => setPlan(e.target.value)}
-                      placeholder="Therapy, labs & follow-up"
-                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-xs"
-                    />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <button
-                      type="submit"
-                      disabled={busy || !sessionToken}
-                      className="min-h-[38px] rounded-lg bg-teal-800 px-4 py-2 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-60"
-                    >
-                      {t("clinical.saveNote")}
-                    </button>
-                  </div>
-                </form>
-
-                <form
-                  onSubmit={(e) => void handleIssueRx(e)}
-                  className="mt-6 grid grid-cols-1 gap-3 border-t border-slate-200 pt-4 sm:grid-cols-4"
-                >
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700">
-                      Medication
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={rxMedName}
-                      onChange={(e) => setRxMedName(e.target.value)}
-                      className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700">
-                      Dosage
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={rxDosage}
-                      onChange={(e) => setRxDosage(e.target.value)}
-                      className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700">
-                      Frequency
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={rxFrequency}
-                      onChange={(e) => setRxFrequency(e.target.value)}
-                      className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700">
-                      Days
-                    </label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={365}
-                      value={rxDurationDays}
-                      onChange={(e) => setRxDurationDays(e.target.value)}
-                      className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 font-mono-tabular text-xs"
-                    />
-                  </div>
-                  <div className="sm:col-span-4">
-                    <button
-                      type="submit"
-                      disabled={busy || !sessionToken}
-                      className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
-                    >
-                      <Pill className="h-3.5 w-3.5" aria-hidden="true" />
-                      <span>{t("clinical.issueRx")}</span>
-                    </button>
-                  </div>
-                </form>
-              </section>
-
-              <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
-                <h3 className="text-sm font-bold text-slate-900">
-                  Consultation History ({visitNotes.length})
-                </h3>
-                {visitNotes.length === 0 ? (
-                  <p className="mt-2 text-xs text-slate-600">
-                    Sign in as a Doctor or Patient in {selectedCountry} to view
-                    consultation visit notes.
-                  </p>
-                ) : (
-                  <ul className="mt-3 space-y-2.5">
-                    {visitNotes.map((note) => (
-                      <li
-                        key={note.id}
-                        className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs"
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span className="flex items-center gap-2 font-bold text-slate-900">
-                            <EntityAvatar
-                              name={note.doctorName}
-                              role="DOCTOR"
-                              size="xs"
-                            />
-                            <span>{note.patientName} · Dr. {note.doctorName}</span>
-                          </span>
-                          <span className="font-mono-tabular text-teal-800">
-                            {note.icd10Codes.join(", ") || "UNSPECIFIED"}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-slate-700">
-                          <strong>Assessment:</strong> {note.assessment} —{" "}
-                          <strong>Plan:</strong> {note.plan}
-                        </p>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </section>
-
-              {prescriptions.length > 0 ? (
-                <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
-                  <h3 className="text-sm font-bold text-slate-900">
-                    Scannable E-Prescriptions &amp; QR Codes ({prescriptions.length})
-                  </h3>
-                  <div className="mt-3 space-y-2.5">
-                    {prescriptions.map((rx) => (
-                      <QrPrescriptionCard
-                        key={rx.id}
-                        prescription={rx}
-                        onUseForDispense={(token) => {
-                          setQrInput(token);
-                          setActiveTab("pharmacy");
-                        }}
-                      />
-                    ))}
-                  </div>
-                </section>
-              ) : null}
-            </div>
+            <ClinicalConsultationDesk
+              currentUser={currentUser}
+              selectedCountry={selectedCountry}
+              patientOptions={patientPickerOptions}
+              patientUuid={patientUuid}
+              onPatientChange={setPatientUuid}
+              patientProfile={patientProfile}
+              patientProfileLoading={patientProfileLoading}
+              visitNotes={visitNotes}
+              prescriptions={prescriptions}
+              busy={busy}
+              isPendingStaff={isPendingStaff}
+              hasSession={Boolean(sessionToken)}
+              onSaveVisitNote={handleSaveSoapNote}
+              onIssuePrescription={handleIssueRx}
+              onJumpToLabs={() => setActiveTab("labs")}
+            />
           ) : null}
 
-          {activeTab === "pharmacy" ? (
-            <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
-              <h2 className="border-b border-slate-200 pb-3 text-base font-bold text-slate-900">
-                Pharmacy QR Verification & Safe Dispensing
-              </h2>
+          {activeTab === "labs" ? (
+            <ClinicalLabsImagingDesk
+              currentUser={currentUser}
+              roleFocus={roleFocus}
+              selectedCountry={selectedCountry}
+              patientOptions={patientPickerOptions}
+              patientUuid={patientUuid}
+              onPatientChange={setPatientUuid}
+              labFacilityOptions={labFacilityPickerOptions}
+              labFacilityId={labFacilityId}
+              onLabFacilityChange={setLabFacilityId}
+              labOrders={labOrders}
+              mediaObjects={mediaObjects}
+              latestPresigned={latestPresigned}
+              uploadProgress={uploadProgress}
+              busy={busy}
+              isPendingStaff={isPendingStaff}
+              hasSession={Boolean(sessionToken)}
+              onCreateLabOrder={handleCreateLabOrder}
+              onCompleteLabOrder={handleCompleteLab}
+              onUploadClinicalFile={handleUploadClinicalFile}
+            />
+          ) : null}
 
-              <form onSubmit={(e) => void handleVerifyQr(e)} className="space-y-3">
-                <div>
-                  <label
-                    htmlFor="rx-qr-token"
-                    className="block text-xs font-semibold text-slate-700"
-                  >
-                    Prescription QR Code
-                  </label>
-                  <textarea
-                    id="rx-qr-token"
-                    rows={3}
-                    required
-                    value={qrInput}
-                    onChange={(e) => setQrInput(e.target.value)}
-                    placeholder="Paste prescription code from the patient's digital QR card..."
-                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-mono-tabular text-xs"
-                  />
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="submit"
-                    disabled={busy || !sessionToken}
-                    className="min-h-[38px] rounded-lg bg-teal-800 px-4 py-2 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-60"
-                  >
-                    Verify Prescription
-                  </button>
-                  <span className="text-xs text-slate-600">
-                    Every digital prescription is checked for authenticity and cannot be dispensed twice.
+          {activeTab === "papers" && currentUser && sessionToken ? (
+            <ClinicalPapersPanel
+              apiBaseUrl={apiBaseUrl}
+              token={sessionToken}
+              user={currentUser}
+              currencyCode={activePack?.currencyCode ?? selectedCountry}
+              isPendingStaff={isPendingStaff}
+              facilityName={
+                facilities.find((f) => f.id === currentUser.facilityId)?.name ??
+                directoryClinics.find((f) => f.id === currentUser.facilityId)?.name ??
+                null
+              }
+              facilityKind={
+                facilities.find((f) => f.id === currentUser.facilityId)?.kind ??
+                directoryClinics.find((f) => f.id === currentUser.facilityId)?.kind ??
+                (roleFocus === "LAB_TECH" || currentUser.role === "LAB_TECH"
+                  ? "DIAGNOSTIC_LAB"
+                  : "CLINIC")
+              }
+              userDocs={userDocs}
+              facilityDocs={facilityDocs}
+              specialtyInput={specialtyInput}
+              mdLicenseInput={mdLicenseInput}
+              feeMinorInput={feeMinorInput}
+              busy={busy}
+              onSpecialtyChange={setSpecialtyInput}
+              onLicenseChange={setMdLicenseInput}
+              onFeeChange={setFeeMinorInput}
+              onSavePracticeProfile={handleSavePracticeProfile}
+              onBusyChange={setBusy}
+              onDocumentsUpdated={() => refreshPapersData(sessionToken, currentUser)}
+              onFeedback={(tone, text) => setBanner({ tone, text })}
+            />
+          ) : null}
+        </div>
+
+        {activeTab === "papers" ? (
+        <aside className="min-w-0 space-y-5 lg:col-span-4">
+          {currentUser && !isPendingStaff && patientProfile ? (
+            <section className="rounded-2xl border border-[#D7E4F2] bg-white p-5 shadow-[0_6px_22px_-12px_rgba(15,36,62,0.08)]">
+              <h2 className="pb-3 font-editorial text-base font-bold text-[#0F243E]">
+                {c.aside.safetyTitle}
+              </h2>
+              <div className="space-y-2.5 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#E8F1FA] bg-[#F8FBFE] px-3.5 py-2.5">
+                  <span className="text-[#556E89]">{c.aside.bloodTypeLabel}</span>
+                  <span className="rounded-full bg-[#E6F7F4] px-2.5 py-0.5 font-mono-tabular font-bold text-[#0B6B5C]">
+                    {patientProfile.bloodType && patientProfile.bloodType !== "UNKNOWN"
+                      ? patientProfile.bloodType
+                      : c.aside.pendingVerification}
                   </span>
                 </div>
-              </form>
-
-              {verifiedRx ? (
-                <div className="rounded-xl border border-teal-200 bg-teal-50 p-4 text-xs">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-bold text-teal-950">
-                      Patient: {verifiedRx.patientName} · Rx{" "}
-                      {verifiedRx.id.slice(0, 8)}
-                    </span>
-                    <span className="rounded-full bg-white px-2.5 py-0.5 font-mono-tabular font-bold text-teal-900">
-                      {verifiedRx.status}
-                    </span>
+                {patientProfile.allergies.length > 0 ? (
+                  <div className="rounded-xl border border-rose-200 bg-rose-50/90 p-3 text-rose-950">
+                    <p className="font-semibold">{c.aside.recordedAllergies}</p>
+                    <p className="mt-0.5 text-rose-900">
+                      {patientProfile.allergies
+                        .map(
+                          (alg) =>
+                            `${alg.allergen} (${
+                              c.enums.severity[alg.severity] ?? alg.severity
+                            })`,
+                        )
+                        .join(", ")}
+                    </p>
                   </div>
-                  <ul className="mt-2 space-y-1 text-slate-700">
-                    {verifiedRx.medications.map((med, idx) => (
-                      <li key={`${med.name}-${idx}`}>
-                        {med.name} — {med.dosage} ({med.frequency}, {med.durationDays}d)
-                      </li>
-                    ))}
-                  </ul>
-                  {verifiedRx.status === "ISSUED" ? (
-                    <div className="mt-3 flex flex-wrap items-center gap-2">
-                      <input
-                        type="text"
-                        placeholder="Dispensing batch note (optional)"
-                        value={dispenseNote}
-                        onChange={(e) => setDispenseNote(e.target.value)}
-                        className="min-w-0 flex-1 rounded-lg border border-teal-300 bg-white px-3 py-1.5 text-xs"
-                      />
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => void handleDispense(verifiedRx.id)}
-                        className="min-h-[36px] rounded-lg bg-emerald-700 px-3.5 py-1.5 font-semibold text-white hover:bg-emerald-800"
-                      >
-                        Confirm Dispensed
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-
-              <div className="border-t border-slate-200 pt-3">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600">
-                  Recent Prescriptions ({prescriptions.length})
-                </h3>
-                <div className="mt-2 space-y-2.5">
-                  {prescriptions.map((rx) => (
-                    <QrPrescriptionCard
-                      key={rx.id}
-                      prescription={rx}
-                      onUseForDispense={(token) => setQrInput(token)}
-                    />
-                  ))}
-                </div>
+                ) : (
+                  <p className="rounded-xl border border-[#B2E5DC] bg-[#E6F7F4]/70 px-3.5 py-2.5 font-medium text-[#0B6B5C]">
+                    {c.aside.noDrugAllergies}
+                  </p>
+                )}
+                {patientProfile.chronicConditions.length > 0 ? (
+                  <p className="px-1 text-[#2F4661]">
+                    <span className="font-semibold text-[#0F243E]">
+                      {c.aside.conditionsPrefix}
+                    </span>{" "}
+                    {patientProfile.chronicConditions.join(", ")}
+                  </p>
+                ) : null}
+                {patientProfile.currentMedications.length > 0 ? (
+                  <p className="px-1 text-[#2F4661]">
+                    <span className="font-semibold text-[#0F243E]">
+                      {c.aside.activeRxPrefix}
+                    </span>{" "}
+                    {patientProfile.currentMedications.join(", ")}
+                  </p>
+                ) : null}
               </div>
             </section>
           ) : null}
 
-          {activeTab === "labs" ? (
-            <div className="space-y-6">
-              <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
-                <h2 className="border-b border-slate-200 pb-3 text-base font-bold text-slate-900">
-                  {t("clinical.labsHeading")}
-                </h2>
-
-                <form
-                  onSubmit={(e) => void handlePresignUpload(e)}
-                  className="mt-4 space-y-3"
-                >
-                  <FileUploadDropzone
-                    id="s3-clinical-file"
-                    label="Diagnostic Scan / Lab PDF Binary Upload"
-                    hint="Drag & drop X-ray PNG/JPG/WebP, DICOM, or lab report PDF"
-                    accept={ALLOWED_MEDIA_MIME_TYPES.join(",")}
-                    maxBytes={MAX_CLINICAL_UPLOAD_BYTES}
-                    selectedFile={selectedUploadFile}
-                    progressPercent={uploadProgress}
-                    disabled={busy || !sessionToken}
-                    onFileSelected={(file) => {
-                      setSelectedUploadFile(file);
-                      if (file) {
-                        const detected = inferUploadMimeType(
-                          file,
-                          ALLOWED_MEDIA_MIME_TYPES,
-                        );
-                        if (detected) {
-                          setUploadMime(
-                            ClinicalMediaMimeTypeSchema.parse(detected),
-                          );
-                        }
-                      }
-                    }}
-                  />
-
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <div>
-                      <label
-                        htmlFor="s3-mime-type"
-                        className="block text-xs font-semibold text-slate-700"
-                      >
-                        Document Format
-                      </label>
-                      <select
-                        id="s3-mime-type"
-                        value={uploadMime}
-                        onChange={(e) =>
-                          setUploadMime(
-                            ClinicalMediaMimeTypeSchema.parse(e.target.value),
-                          )
-                        }
-                        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs"
-                      >
-                        {ALLOWED_MEDIA_MIME_TYPES.map((mime) => (
-                          <option key={mime} value={mime}>
-                            {formatClinicalFileType(mime)}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label
-                        htmlFor="s3-lab-order-link"
-                        className="block text-xs font-semibold text-slate-700"
-                      >
-                        Link to Lab Order (Optional)
-                      </label>
-                      <select
-                        id="s3-lab-order-link"
-                        value={selectedLabOrderForUpload}
-                        onChange={(e) =>
-                          setSelectedLabOrderForUpload(e.target.value)
-                        }
-                        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs"
-                      >
-                        <option value="">Standalone clinical file</option>
-                        {labOrders.map((order) => (
-                          <option key={order.id} value={order.id}>
-                            {order.panelName} ({order.patientName})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  <div>
-                    <button
-                      type="submit"
-                      disabled={busy || !sessionToken || !selectedUploadFile}
-                      className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg bg-teal-800 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-teal-900 active:scale-95 disabled:opacity-60"
-                    >
-                      <FileUp className="h-3.5 w-3.5" aria-hidden="true" />
-                      <span>{t("clinical.uploadScanBtn")}</span>
-                    </button>
-                  </div>
-                </form>
-
-                {latestPresigned ? (
-                  <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 text-xs">
-                    <p className="font-semibold text-emerald-950">
-                      Diagnostic report uploaded and verified: {latestPresigned.mediaObject.fileName}
-                    </p>
-                  </div>
-                ) : null}
-
-                <form
-                  onSubmit={(e) => void handleCreateLabOrder(e)}
-                  className="mt-5 grid grid-cols-1 gap-3 border-t border-slate-200 pt-4 sm:grid-cols-3"
-                >
-                  <div>
-                    <EntityPicker
-                      id="clin-lab-facility"
-                      label="Diagnostic Lab"
-                      placeholder="Filter lab by name or city..."
-                      emptyLabel="No diagnostic labs available in this region"
-                      options={labFacilityPickerOptions}
-                      value={labFacilityId}
-                      onChange={setLabFacilityId}
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700">
-                      Diagnostic Panel
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={labPanelName}
-                      onChange={(e) => setLabPanelName(e.target.value)}
-                      className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700">
-                      Urgency
-                    </label>
-                    <select
-                      value={labUrgency}
-                      onChange={(e) =>
-                        setLabUrgency(LabUrgencySchema.parse(e.target.value))
-                      }
-                      className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs"
-                    >
-                      <option value="ROUTINE">ROUTINE</option>
-                      <option value="URGENT">URGENT</option>
-                      <option value="EMERGENCY">EMERGENCY</option>
-                    </select>
-                  </div>
-                  <div className="sm:col-span-3">
-                    <button
-                      type="submit"
-                      disabled={busy || !sessionToken}
-                      className="min-h-[38px] rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
-                    >
-                      Create Lab Order
-                    </button>
-                  </div>
-                </form>
-
-                {labOrders.length > 0 ? (
-                  <ul className="mt-4 space-y-2">
-                    {labOrders.map((order) => (
-                      <li
-                        key={order.id}
-                        className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs"
-                      >
-                        <div>
-                          <p className="font-bold text-slate-900">
-                            {order.panelName} · {order.patientName}
-                          </p>
-                          <p className="text-slate-600">
-                            {order.facilityName} · {order.urgency} ({order.status})
-                          </p>
-                        </div>
-                        {order.status !== "COMPLETED" ? (
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() => void handleCompleteLab(order.id)}
-                            className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-800"
-                          >
-                            Mark Completed
-                          </button>
-                        ) : null}
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-
-                {mediaObjects.length > 0 ? (
-                  <div className="mt-5 space-y-2.5 border-t border-slate-200 pt-4">
-                    <p className="font-mono-tabular text-xs font-semibold text-slate-700">
-                      Uploaded Clinical Scans & Lab PDFs ({mediaObjects.length})
-                    </p>
-                    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-                      {mediaObjects.map((media) => {
-                        const isImg = media.mimeType.startsWith("image/");
-                        return (
-                          <article
-                            key={media.id}
-                            className="flex items-center justify-between gap-2.5 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs"
-                          >
-                            <div className="flex min-w-0 items-center gap-2.5">
-                              {isImg && media.uploadStatus === "UPLOADED" ? (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    openImage({
-                                      src: media.downloadUrl,
-                                      downloadUrl: media.downloadUrl,
-                                      mimeType: media.mimeType,
-                                      alt: media.fileName,
-                                      title: media.fileName,
-                                      subtitle: `Clinical Media · ${media.uploadStatus}`,
-                                      specs: [
-                                        {
-                                          label: "File Size",
-                                          value: formatByteSize(
-                                            media.confirmedSizeBytes ??
-                                              media.sizeBytes,
-                                          ),
-                                        },
-                                        {
-                                          label: "Format",
-                                          value: formatClinicalFileType(
-                                            media.mimeType,
-                                          ),
-                                        },
-                                        {
-                                          label: "Status",
-                                          value: media.uploadStatus,
-                                        },
-                                      ],
-                                    })
-                                  }
-                                  aria-label={`Zoom scan ${media.fileName}`}
-                                  className="h-14 w-14 shrink-0 cursor-zoom-in overflow-hidden rounded-lg border border-slate-200 bg-white transition hover:border-teal-700"
-                                >
-                                  <img
-                                    src={media.downloadUrl}
-                                    alt={media.fileName}
-                                    className="h-full w-full object-cover"
-                                  />
-                                </button>
-                              ) : (
-                                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-teal-800">
-                                  {isImg ? (
-                                    <ImageIcon className="h-5 w-5" aria-hidden="true" />
-                                  ) : (
-                                    <FileText className="h-5 w-5" aria-hidden="true" />
-                                  )}
-                                </div>
-                              )}
-                              <div className="min-w-0">
-                                <p className="truncate font-semibold text-slate-900">
-                                  <bdi dir="auto">{media.fileName}</bdi>
-                                </p>
-                                <p className="font-mono-tabular text-[11px] text-slate-600">
-                                  {formatByteSize(media.sizeBytes)} ·{" "}
-                                  <span
-                                    className={
-                                      media.uploadStatus === "UPLOADED"
-                                        ? "font-semibold text-emerald-700"
-                                        : media.uploadStatus === "FAILED"
-                                          ? "font-semibold text-red-700"
-                                          : "font-semibold text-amber-700"
-                                    }
-                                  >
-                                    {media.uploadStatus}
-                                  </span>
-                                </p>
-                              </div>
-                            </div>
-
-                            {media.uploadStatus === "UPLOADED" ? (
-                              <UiButton
-                                size="sm"
-                                variant="secondary"
-                                onClick={() =>
-                                  openImage({
-                                    src: media.downloadUrl,
-                                    downloadUrl: media.downloadUrl,
-                                    mimeType: media.mimeType,
-                                    alt: media.fileName,
-                                    title: media.fileName,
-                                    subtitle: `Clinical Media · ${media.uploadStatus}`,
-                                    specs: [
-                                      {
-                                        label: "File Size",
-                                        value: formatByteSize(
-                                          media.confirmedSizeBytes ??
-                                            media.sizeBytes,
-                                        ),
-                                      },
-                                      {
-                                        label: "Format",
-                                        value: formatClinicalFileType(
-                                          media.mimeType,
-                                        ),
-                                      },
-                                      {
-                                        label: "Status",
-                                        value: media.uploadStatus,
-                                      },
-                                    ],
-                                  })
-                                }
-                              >
-                                <Eye className="h-3.5 w-3.5" aria-hidden="true" />
-                                <span>Preview</span>
-                              </UiButton>
-                            ) : null}
-                          </article>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ) : null}
-              </section>
-            </div>
-          ) : null}
-        </div>
-
-        <aside className="min-w-0 space-y-6 lg:col-span-4">
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
-            <h2 className="border-b border-slate-200 pb-3 text-base font-bold text-slate-900">
-              Clinical Workspace Actions
+          <section className="rounded-2xl border border-[#D7E4F2] bg-white p-5 shadow-[0_6px_22px_-12px_rgba(15,36,62,0.08)]">
+            <h2 className="pb-3 font-editorial text-sm font-bold text-[#0F243E]">
+              {roleFocus === "LAB_TECH"
+                ? c.aside.labMetricsTitle
+                : c.aside.clinicalMetricsTitle}
             </h2>
-
-            {currentUser ? (
-              <div className="mt-3 space-y-3 text-xs">
-                <p className="text-slate-600">
-                  All consultation notes, QR prescriptions, lab orders, and
-                  weekly shift rosters sync in real time with the Care Network.
-                </p>
-                <UiButton
-                  variant="secondary"
-                  disabled={busy || !sessionToken}
-                  onClick={() =>
-                    sessionToken
-                      ? void refreshClinicalData(sessionToken, selectedCountry)
-                      : undefined
-                  }
-                  className="w-full"
-                >
-                  Sync Clinical Records
-                </UiButton>
-                {canManageSchedule && activeTab !== "schedule" ? (
-                  <UiButton
-                    variant="outline"
-                    onClick={() => setActiveTab("schedule")}
-                    className="w-full"
-                  >
-                    Manage Clinic Shifts
-                  </UiButton>
-                ) : null}
-              </div>
+            {roleFocus === "LAB_TECH" ? (
+              <dl className="grid grid-cols-2 gap-2.5 text-xs">
+                <div className="rounded-xl border border-[#E8F1FA] bg-[#F8FBFE] p-3.5">
+                  <dt className="text-[11px] text-[#556E89]">{c.aside.orderedQueue}</dt>
+                  <dd className="mt-1 font-mono-tabular text-xl font-bold text-[#0F243E]">
+                    {labOrders.filter((o) => o.status === "ORDERED").length}
+                  </dd>
+                </div>
+                <div className="rounded-xl border border-[#E8F1FA] bg-[#F8FBFE] p-3.5">
+                  <dt className="text-[11px] text-[#556E89]">{c.aside.inProcessing}</dt>
+                  <dd className="mt-1 font-mono-tabular text-xl font-bold text-[#0F243E]">
+                    {labOrders.filter((o) => o.status === "SAMPLE_COLLECTED").length}
+                  </dd>
+                </div>
+                <div className="rounded-xl border border-[#E8F1FA] bg-[#F8FBFE] p-3.5">
+                  <dt className="text-[11px] text-[#556E89]">{c.aside.completedPanels}</dt>
+                  <dd className="mt-1 font-mono-tabular text-xl font-bold text-[#0066CC]">
+                    {labOrders.filter((o) => o.status === "COMPLETED").length}
+                  </dd>
+                </div>
+                <div className="rounded-xl border border-[#E8F1FA] bg-[#F8FBFE] p-3.5">
+                  <dt className="text-[11px] text-[#556E89]">{c.aside.uploadedScans}</dt>
+                  <dd className="mt-1 font-mono-tabular text-xl font-bold text-[#0066CC]">
+                    {mediaObjects.length}
+                  </dd>
+                </div>
+              </dl>
             ) : (
-              <div className="mt-3 space-y-3 text-xs text-slate-600">
-                <p>
-                  Sign in via the Care Portal as a Doctor, Pharmacist, Lab Tech,
-                  or Clinic Coordinator to access clinical workflows.
-                </p>
-                <Link
-                  href="/portal"
-                  className="inline-flex min-h-[38px] w-full items-center justify-center rounded-lg bg-teal-800 px-4 py-2 text-xs font-semibold text-white hover:bg-teal-900"
-                >
-                  Open Sign-In Portal
-                </Link>
-              </div>
+              <dl className="grid grid-cols-2 gap-2.5 text-xs">
+                <div className="rounded-xl border border-[#E8F1FA] bg-[#F8FBFE] p-3.5">
+                  <dt className="text-[11px] text-[#556E89]">{c.aside.scheduledVisits}</dt>
+                  <dd className="mt-1 font-mono-tabular text-xl font-bold text-[#0F243E]">
+                    {
+                      appointments.filter(
+                        (a) => a.status === "CONFIRMED" || a.status === "CHECKED_IN",
+                      ).length
+                    }
+                  </dd>
+                </div>
+                <div className="rounded-xl border border-[#E8F1FA] bg-[#F8FBFE] p-3.5">
+                  <dt className="text-[11px] text-[#556E89]">{c.aside.activeLabs}</dt>
+                  <dd className="mt-1 font-mono-tabular text-xl font-bold text-[#0066CC]">
+                    {labOrders.length}
+                  </dd>
+                </div>
+                <div className="rounded-xl border border-[#E8F1FA] bg-[#F8FBFE] p-3.5">
+                  <dt className="text-[11px] text-[#556E89]">{c.aside.ePrescriptions}</dt>
+                  <dd className="mt-1 font-mono-tabular text-xl font-bold text-[#0F243E]">
+                    {prescriptions.length}
+                  </dd>
+                </div>
+                <div className="rounded-xl border border-[#E8F1FA] bg-[#F8FBFE] p-3.5">
+                  <dt className="text-[11px] text-[#556E89]">{c.aside.uploadedScans}</dt>
+                  <dd className="mt-1 font-mono-tabular text-xl font-bold text-[#0F243E]">
+                    {mediaObjects.length}
+                  </dd>
+                </div>
+              </dl>
             )}
+            {canManageSchedule ? (
+              <UiButton
+                variant="secondary"
+                size="sm"
+                onClick={() => setActiveTab("schedule")}
+                className="mt-3.5 w-full bg-white hover:bg-[#F3F8FD]"
+              >
+                {c.aside.manageShiftsBtn}
+              </UiButton>
+            ) : null}
           </section>
         </aside>
+        ) : null}
       </div>
+      </WorkspaceRoleGuard>
     </div>
   );
 }

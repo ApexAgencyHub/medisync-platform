@@ -55,6 +55,14 @@ export type UpdateFacilityOperationalStatusInput = z.infer<
   typeof UpdateFacilityOperationalStatusSchema
 >;
 
+export const FacilityOperationalStatusResponseSchema = z.object({
+  facility: ViewportFacilityItemSchema,
+});
+
+export type FacilityOperationalStatusResponse = z.infer<
+  typeof FacilityOperationalStatusResponseSchema
+>;
+
 export const DriverStatusSchema = z.enum([
   "AVAILABLE",
   "ASSIGNED",

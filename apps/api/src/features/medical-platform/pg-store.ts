@@ -134,6 +134,17 @@ export async function getPatientMedicalProfileScoped(
 ): Promise<PatientMedicalProfile> {
   const patient = await resolvePatientTargetScope(pool, targetPatientId, actor);
 
+  if (actor.sub !== patient.id) {
+    await appendAuditLog(pool, {
+      countryCode: patient.countryCode,
+      actorId: actor.sub,
+      actorRole: actor.role,
+      action: "SENSITIVE_PHI_READ",
+      resourceType: "patient_medical_profile",
+      resourceId: patient.id,
+    }).catch(() => undefined);
+  }
+
   const existing = await pool.query(
     `SELECT ${MEDICAL_PROFILE_SELECT}
      FROM patient_medical_profiles p
@@ -687,7 +698,7 @@ export async function createMedicalInvoiceAtomic(
       if (!pol) {
         throw new MedicalPlatformNotFoundError("INSURANCE_POLICY_NOT_FOUND");
       }
-      if (pol.verificationStatus === "REJECTED" || pol.verificationStatus === "EXPIRED") {
+      if (pol.verificationStatus !== "VERIFIED") {
         throw new MedicalPlatformBadRequestError("INSURANCE_POLICY_NOT_ELIGIBLE");
       }
       appliedPolicyId = pol.id;

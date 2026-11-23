@@ -828,4 +828,1177 @@ describe("phase 8 enterprise medical backend: EHR, insurance, billing, MinIO for
       await throttledApp.close();
     }
   });
+
+  it("allows public staff self-registration by field while blocking functional actions until OPS_ADMIN verification", async () => {
+    const publicStaffGateApp = await buildApiServer({
+      databaseUrl: process.env.DATABASE_URL ?? DEFAULT_TEST_DB_URL,
+      redisUrl: process.env.REDIS_URL ?? DEFAULT_TEST_REDIS_URL,
+      authSecret: TEST_AUTH_SECRET,
+      corsOrigins: ["http://127.0.0.1:3000"],
+      s3Config: TEST_S3_CONFIG,
+      pool,
+      redis,
+      runDbMigrations: false,
+      seedDemoWorld: false,
+      allowPublicRegistration: true,
+      requireProviderVerification: true,
+      rateLimitKeyPrefix: `medisync:test:staff-gate:${runSuffix}`,
+    });
+
+    try {
+      const opsAuth = await loginSeededAccount(
+        publicStaffGateApp,
+        "ops.admin@medisync.global",
+      );
+      const patientSeedAuth = await loginSeededAccount(
+        publicStaffGateApp,
+        "patient.ma@medisync.global",
+      );
+
+      // Fetch a seeded MA facility ID for staff functional probes
+      const facRes = await publicStaffGateApp.inject({
+        method: "GET",
+        url: "/v1/directory/facilities?countryCode=MA&limit=5",
+      });
+      expect(facRes.statusCode).toBe(200);
+      const maFacilityId = facRes.json<{
+        facilities: Array<{ id: string }>;
+      }>().facilities[0]!.id;
+
+      // 1. Patient public registration activates immediately
+      const patientRegRes = await publicStaffGateApp.inject({
+        method: "POST",
+        url: "/v1/auth/register",
+        payload: {
+          email: `p9-patient-${runSuffix}@medisync.test`,
+          password: "StrongPassword!123",
+          fullName: "Yasmine Public Patient",
+          role: "PATIENT",
+          countryCode: "MA",
+        },
+      });
+      expect(patientRegRes.statusCode).toBe(201);
+      const patientReg = patientRegRes.json<AuthResponse>();
+      createdUserIds.push(patientReg.user.id);
+      expect(patientReg.user.accountStatus).toBe("ACTIVE");
+
+      // 2. All 6 healthcare worker fields register publicly & authenticate,
+      //    starting in PENDING_APPROVAL until verified by administration.
+      const staffFields = [
+        "DOCTOR",
+        "CLINIC_STAFF",
+        "HOSPITAL_ADMIN",
+        "DRIVER",
+        "PHARMACIST",
+        "LAB_TECH",
+      ] as const;
+
+      const registeredStaff: Record<string, AuthResponse> = {};
+      for (const roleField of staffFields) {
+        const email = `p9-${roleField.toLowerCase()}-${runSuffix}@medisync.test`;
+        const regRes = await publicStaffGateApp.inject({
+          method: "POST",
+          url: "/v1/auth/register",
+          payload: {
+            email,
+            password: "StrongPassword!123",
+            fullName: `Staff ${roleField}`,
+            role: roleField,
+            countryCode: "MA",
+          },
+        });
+        expect(regRes.statusCode).toBe(201);
+        const body = regRes.json<AuthResponse>();
+        createdUserIds.push(body.user.id);
+        expect(body.user.accountStatus).toBe("PENDING_APPROVAL");
+        expect(body.user.credentialVerified).toBe(false);
+        registeredStaff[roleField] = body;
+
+        // Pending staff member can still sign in & read /v1/auth/me normally
+        const loginRes = await publicStaffGateApp.inject({
+          method: "POST",
+          url: "/v1/auth/login",
+          payload: { email, password: "StrongPassword!123" },
+        });
+        expect(loginRes.statusCode).toBe(200);
+        const meRes = await publicStaffGateApp.inject({
+          method: "GET",
+          url: "/v1/auth/me",
+          headers: {
+            authorization: `Bearer ${loginRes.json<AuthResponse>().token}`,
+          },
+        });
+        expect(meRes.statusCode).toBe(200);
+        expect(
+          meRes.json<{ user: { accountStatus: string } }>().user.accountStatus,
+        ).toBe("PENDING_APPROVAL");
+      }
+
+      const pendingDoctor = registeredStaff.DOCTOR!;
+      const pendingPharmacist = registeredStaff.PHARMACIST!;
+      const pendingLabTech = registeredStaff.LAB_TECH!;
+      const pendingHospitalAdmin = registeredStaff.HOSPITAL_ADMIN!;
+
+      // 3. Pending doctor CAN upload practitioner credentials for admin review
+      const credPresign = await publicStaffGateApp.inject({
+        method: "POST",
+        url: "/v1/users/me/media/presign-upload",
+        headers: { authorization: `Bearer ${pendingDoctor.token}` },
+        payload: {
+          category: "PRACTITIONER_LICENSE",
+          fileName: "national-board-license.png",
+          mimeType: "image/png",
+          sizeBytes: SAMPLE_PNG_BYTES.length,
+        },
+      });
+      expect(credPresign.statusCode).toBe(201);
+      const credData = credPresign.json<UserPresignedUploadResponse>();
+      createdUserMediaIds.push(credData.document.id);
+      uploadedS3Keys.push(credData.document.objectKey);
+
+      const credPut = await fetch(credData.uploadUrl, {
+        method: "PUT",
+        headers: credData.requiredHeaders,
+        body: new Uint8Array(SAMPLE_PNG_BYTES),
+      });
+      expect(credPut.ok).toBe(true);
+
+      const credConfirm = await publicStaffGateApp.inject({
+        method: "POST",
+        url: `/v1/users/me/media/${credData.document.id}/confirm`,
+        headers: { authorization: `Bearer ${pendingDoctor.token}` },
+      });
+      expect(credConfirm.statusCode).toBe(200);
+
+      // 4. Functional actions remain blocked 403 PROVIDER_VERIFICATION_REQUIRED while PENDING_APPROVAL
+      const blockedDoctorProfile = await publicStaffGateApp.inject({
+        method: "PUT",
+        url: "/v1/booking/profiles",
+        headers: { authorization: `Bearer ${pendingDoctor.token}` },
+        payload: {
+          specialty: "Cardiology",
+          licenseNumber: `MA-DOC-${runSuffix}`,
+          consultationFeeMinor: 35000,
+        },
+      });
+      expect(blockedDoctorProfile.statusCode).toBe(403);
+      expect(blockedDoctorProfile.json<{ error: string }>().error).toBe(
+        "PROVIDER_VERIFICATION_REQUIRED",
+      );
+
+      const blockedDoctorUpload = await publicStaffGateApp.inject({
+        method: "POST",
+        url: "/v1/clinical/media/presign-upload",
+        headers: { authorization: `Bearer ${pendingDoctor.token}` },
+        payload: {
+          patientUserId: patientSeedAuth.user.id,
+          mediaCategory: "LAB_REPORT",
+          fileName: "blocked.csv",
+          mimeType: "text/csv",
+          sizeBytes: SAMPLE_CSV_BYTES.length,
+        },
+      });
+      expect(blockedDoctorUpload.statusCode).toBe(403);
+      expect(blockedDoctorUpload.json<{ error: string }>().error).toBe(
+        "PROVIDER_VERIFICATION_REQUIRED",
+      );
+
+      const blockedPharmQr = await publicStaffGateApp.inject({
+        method: "POST",
+        url: "/v1/clinical/prescriptions/verify-qr",
+        headers: { authorization: `Bearer ${pendingPharmacist.token}` },
+        payload: { qrToken: "dummy-qr-token-min-16-chars" },
+      });
+      expect(blockedPharmQr.statusCode).toBe(403);
+      expect(blockedPharmQr.json<{ error: string }>().error).toBe(
+        "PROVIDER_VERIFICATION_REQUIRED",
+      );
+
+      const blockedPharmProduct = await publicStaffGateApp.inject({
+        method: "POST",
+        url: "/v1/pharmacy/products",
+        headers: { authorization: `Bearer ${pendingPharmacist.token}` },
+        payload: {
+          sku: `SKU-BLOCKED-${runSuffix}`,
+          name: "Blocked Unverified Item",
+          category: "OTC_MEDICATION",
+          dosageForm: "Tablet",
+          strength: "500mg",
+          requiresPrescription: false,
+          priceMinor: 2500,
+          stockQty: 10,
+        },
+      });
+      expect(blockedPharmProduct.statusCode).toBe(403);
+      expect(blockedPharmProduct.json<{ error: string }>().error).toBe(
+        "PROVIDER_VERIFICATION_REQUIRED",
+      );
+
+      const blockedDoctorLabOrder = await publicStaffGateApp.inject({
+        method: "POST",
+        url: "/v1/clinical/lab-orders",
+        headers: { authorization: `Bearer ${pendingDoctor.token}` },
+        payload: {
+          patientUserId: patientSeedAuth.user.id,
+          facilityId: maFacilityId,
+          panelName: "Complete Blood Count",
+          urgency: "ROUTINE",
+        },
+      });
+      expect(blockedDoctorLabOrder.statusCode).toBe(403);
+      expect(blockedDoctorLabOrder.json<{ error: string }>().error).toBe(
+        "PROVIDER_VERIFICATION_REQUIRED",
+      );
+
+      const blockedLabTechRead = await publicStaffGateApp.inject({
+        method: "GET",
+        url: "/v1/clinical/lab-orders",
+        headers: { authorization: `Bearer ${pendingLabTech.token}` },
+      });
+      expect(blockedLabTechRead.statusCode).toBe(403);
+      expect(blockedLabTechRead.json<{ error: string }>().error).toBe(
+        "PROVIDER_VERIFICATION_REQUIRED",
+      );
+
+      const blockedLabTechUpdate = await publicStaffGateApp.inject({
+        method: "PATCH",
+        url: "/v1/clinical/lab-orders/11111111-1111-4111-8111-111111111111/status",
+        headers: { authorization: `Bearer ${pendingLabTech.token}` },
+        payload: { status: "SAMPLE_COLLECTED" },
+      });
+      expect(blockedLabTechUpdate.statusCode).toBe(403);
+      expect(blockedLabTechUpdate.json<{ error: string }>().error).toBe(
+        "PROVIDER_VERIFICATION_REQUIRED",
+      );
+
+      const blockedPatientsDirectory = await publicStaffGateApp.inject({
+        method: "GET",
+        url: "/v1/directory/patients?countryCode=MA",
+        headers: { authorization: `Bearer ${pendingDoctor.token}` },
+      });
+      expect(blockedPatientsDirectory.statusCode).toBe(403);
+      expect(blockedPatientsDirectory.json<{ error: string }>().error).toBe(
+        "PROVIDER_VERIFICATION_REQUIRED",
+      );
+
+      const blockedHospitalStatus = await publicStaffGateApp.inject({
+        method: "PATCH",
+        url: `/v1/maps/facilities/${maFacilityId}/operational-status`,
+        headers: { authorization: `Bearer ${pendingHospitalAdmin.token}` },
+        payload: { openStatus: "OPEN" },
+      });
+      expect(blockedHospitalStatus.statusCode).toBe(403);
+      expect(blockedHospitalStatus.json<{ error: string }>().error).toBe(
+        "PROVIDER_VERIFICATION_REQUIRED",
+      );
+
+      // 4b. Unverified staff are ALSO blocked from operational patient reads & can link their workplace
+      const blockedApptsRead = await publicStaffGateApp.inject({
+        method: "GET",
+        url: "/v1/booking/appointments",
+        headers: { authorization: `Bearer ${pendingDoctor.token}` },
+      });
+      expect(blockedApptsRead.statusCode).toBe(403);
+      expect(blockedApptsRead.json<{ error: string }>().error).toBe(
+        "PROVIDER_VERIFICATION_REQUIRED",
+      );
+
+      const blockedDispatchRead = await publicStaffGateApp.inject({
+        method: "GET",
+        url: "/v1/dispatch/requests",
+        headers: { authorization: `Bearer ${registeredStaff.DRIVER!.token}` },
+      });
+      expect(blockedDispatchRead.statusCode).toBe(403);
+      expect(blockedDispatchRead.json<{ error: string }>().error).toBe(
+        "PROVIDER_VERIFICATION_REQUIRED",
+      );
+
+      const linkWorkplaceRes = await publicStaffGateApp.inject({
+        method: "PATCH",
+        url: "/v1/auth/profile",
+        headers: { authorization: `Bearer ${pendingDoctor.token}` },
+        payload: { facilityId: maFacilityId },
+      });
+      expect(linkWorkplaceRes.statusCode).toBe(200);
+      expect(
+        linkWorkplaceRes.json<{ user: { facilityId: string | null } }>().user
+          .facilityId,
+      ).toBe(maFacilityId);
+
+      // 5. OPS_ADMIN verifies & activates the doctor -> doctor functionality unlocks immediately
+      const approveRes = await publicStaffGateApp.inject({
+        method: "PATCH",
+        url: `/v1/admin/users/${pendingDoctor.user.id}/status`,
+        headers: { authorization: `Bearer ${opsAuth.token}` },
+        payload: {
+          accountStatus: "ACTIVE",
+          credentialVerified: true,
+          reason: "Verified national medical credentials by OPS_ADMIN",
+        },
+      });
+      expect(approveRes.statusCode).toBe(200);
+      expect(
+        approveRes.json<{
+          user: { accountStatus: string; credentialVerified: boolean };
+        }>().user,
+      ).toMatchObject({
+        accountStatus: "ACTIVE",
+        credentialVerified: true,
+      });
+
+      const unlockedProfile = await publicStaffGateApp.inject({
+        method: "PUT",
+        url: "/v1/booking/profiles",
+        headers: { authorization: `Bearer ${pendingDoctor.token}` },
+        payload: {
+          specialty: "Cardiology",
+          licenseNumber: `MA-DOC-${runSuffix}`,
+          consultationFeeMinor: 35000,
+        },
+      });
+      expect(unlockedProfile.statusCode).toBe(200);
+
+      const unlockedDoctors = await publicStaffGateApp.inject({
+        method: "GET",
+        url: "/v1/directory/doctors?countryCode=MA&limit=50",
+      });
+      expect(unlockedDoctors.statusCode).toBe(200);
+      expect(
+        unlockedDoctors
+          .json<{ doctors: Array<{ id: string }> }>()
+          .doctors.some((d) => d.id === pendingDoctor.user.id),
+      ).toBe(true);
+    } finally {
+      await publicStaffGateApp.close();
+    }
+  });
+
+  it("enforces separated Patient Auth (Phone password, Phone OTP, Google) vs Healthcare Staff Auth", async () => {
+    const separatedAuthApp = await buildApiServer({
+      databaseUrl: process.env.DATABASE_URL ?? DEFAULT_TEST_DB_URL,
+      redisUrl: process.env.REDIS_URL ?? DEFAULT_TEST_REDIS_URL,
+      authSecret: TEST_AUTH_SECRET,
+      corsOrigins: ["http://127.0.0.1:3000"],
+      s3Config: TEST_S3_CONFIG,
+      pool,
+      redis,
+      runDbMigrations: false,
+      seedDemoWorld: false,
+      allowPublicRegistration: true,
+      requireProviderVerification: true,
+      rateLimitKeyPrefix: `medisync:test:auth-sep:${runSuffix}`,
+    });
+
+    try {
+      // 1. Google auth fails closed with 503 when not configured on server
+      const unconfiguredGoogle = await separatedAuthApp.inject({
+        method: "POST",
+        url: "/v1/auth/google",
+        payload: {
+          idToken: "valid-looking-mock-google-token-123456",
+          countryCode: "MA",
+        },
+      });
+      expect(unconfiguredGoogle.statusCode).toBe(503);
+      expect(unconfiguredGoogle.json<{ error: string }>().error).toBe(
+        "GOOGLE_OAUTH_NOT_CONFIGURED",
+      );
+
+      // 2. Staff registration rejects phone-only without email
+      const staffWithoutEmail = await separatedAuthApp.inject({
+        method: "POST",
+        url: "/v1/auth/register",
+        payload: {
+          phone: `+212600${runSuffix.slice(0, 6)}`,
+          password: "StrongPassword!123",
+          fullName: "Missing Email Doctor",
+          role: "DOCTOR",
+          countryCode: "MA",
+        },
+      });
+      expect(staffWithoutEmail.statusCode).toBe(400);
+
+      // 3. Patient registers via Phone Number only (no email required) -> ACTIVE immediately
+      const patientPhone = `+212661${Math.floor(100000 + Math.random() * 899999)}`;
+      const phoneRegRes = await separatedAuthApp.inject({
+        method: "POST",
+        url: "/v1/auth/register",
+        payload: {
+          phone: patientPhone,
+          password: "StrongPassword!123",
+          fullName: "Salma Phone Patient",
+          role: "PATIENT",
+          countryCode: "MA",
+        },
+      });
+      expect(phoneRegRes.statusCode).toBe(201);
+      const phoneReg = phoneRegRes.json<AuthResponse>();
+      createdUserIds.push(phoneReg.user.id);
+      expect(phoneReg.user.email).toBeNull();
+      expect(phoneReg.user.phone).toBe(patientPhone);
+      expect(phoneReg.user.accountStatus).toBe("ACTIVE");
+
+      // Patient signs in using phone identifier + PATIENT track
+      const phoneLoginRes = await separatedAuthApp.inject({
+        method: "POST",
+        url: "/v1/auth/login",
+        payload: {
+          identifier: patientPhone,
+          password: "StrongPassword!123",
+          portalTrack: "PATIENT",
+        },
+      });
+      expect(phoneLoginRes.statusCode).toBe(200);
+
+      // Cross-portal isolation: Patient cannot login via STAFF track, Doctor cannot login via PATIENT track
+      const patientOnStaffRes = await separatedAuthApp.inject({
+        method: "POST",
+        url: "/v1/auth/login",
+        payload: {
+          identifier: patientPhone,
+          password: "StrongPassword!123",
+          portalTrack: "STAFF",
+        },
+      });
+      expect(patientOnStaffRes.statusCode).toBe(403);
+      expect(patientOnStaffRes.json<{ error: string }>().error).toBe(
+        "USE_PATIENT_PORTAL",
+      );
+
+      const doctorOnPatientRes = await separatedAuthApp.inject({
+        method: "POST",
+        url: "/v1/auth/login",
+        payload: {
+          identifier: "doctor.ma@medisync.global",
+          password: SEEDED_DEMO_PASSWORD,
+          portalTrack: "PATIENT",
+        },
+      });
+      expect(doctorOnPatientRes.statusCode).toBe(403);
+      expect(doctorOnPatientRes.json<{ error: string }>().error).toBe(
+        "USE_STAFF_PORTAL",
+      );
+
+      // 4. Passwordless SMS OTP sign-up / sign-in for Patient
+      const otpPhone = `+212662${Math.floor(100000 + Math.random() * 899999)}`;
+      const reqOtpRes = await separatedAuthApp.inject({
+        method: "POST",
+        url: "/v1/auth/phone/request-otp",
+        payload: { phone: otpPhone, countryCode: "MA" },
+      });
+      expect(reqOtpRes.statusCode).toBe(200);
+      const otpMeta = reqOtpRes.json<{
+        sent: boolean;
+        devPreviewCode?: string;
+      }>();
+      expect(otpMeta.sent).toBe(true);
+      expect(otpMeta.devPreviewCode).toMatch(/^\d{6}$/);
+
+      // Rejects wrong OTP code
+      const badOtpRes = await separatedAuthApp.inject({
+        method: "POST",
+        url: "/v1/auth/phone/verify-otp",
+        payload: {
+          phone: otpPhone,
+          code: otpMeta.devPreviewCode === "000000" ? "111111" : "000000",
+          countryCode: "MA",
+        },
+      });
+      expect(badOtpRes.statusCode).toBe(400);
+
+      // Accepts valid OTP code & creates active PATIENT with email: null, authProvider: PHONE
+      const okOtpRes = await separatedAuthApp.inject({
+        method: "POST",
+        url: "/v1/auth/phone/verify-otp",
+        payload: {
+          phone: otpPhone,
+          code: otpMeta.devPreviewCode,
+          fullName: "Youssef OTP Patient",
+          countryCode: "MA",
+        },
+      });
+      expect(okOtpRes.statusCode).toBe(201);
+      const otpUser = okOtpRes.json<AuthResponse>();
+      createdUserIds.push(otpUser.user.id);
+      expect(otpUser.user.email).toBeNull();
+      expect(otpUser.user.phoneVerified).toBe(true);
+      expect(otpUser.user.authProvider).toBe("PHONE");
+      expect(otpUser.user.accountStatus).toBe("ACTIVE");
+    } finally {
+      await separatedAuthApp.close();
+    }
+
+    // 5. Verified Google OAuth Patient flow + Staff portal isolation
+    const googleEnabledApp = await buildApiServer({
+      databaseUrl: process.env.DATABASE_URL ?? DEFAULT_TEST_DB_URL,
+      redisUrl: process.env.REDIS_URL ?? DEFAULT_TEST_REDIS_URL,
+      authSecret: TEST_AUTH_SECRET,
+      corsOrigins: ["http://127.0.0.1:3000"],
+      s3Config: TEST_S3_CONFIG,
+      pool,
+      redis,
+      runDbMigrations: false,
+      seedDemoWorld: false,
+      allowPublicRegistration: true,
+      requireProviderVerification: true,
+      rateLimitKeyPrefix: `medisync:test:google-auth:${runSuffix}`,
+      googleClientId: "test-google-client-id.apps.googleusercontent.com",
+      googleTokenVerifier: async (idToken: string) => {
+        if (idToken === "valid-patient-google-token") {
+          return {
+            sub: `google-sub-patient-${runSuffix}`,
+            email: `google.patient.${runSuffix}@medisync.test`,
+            emailVerified: true,
+            fullName: "Kenza Google Patient",
+          };
+        }
+        if (idToken === "valid-staff-email-google-token") {
+          return {
+            sub: `google-sub-staff-${runSuffix}`,
+            email: "doctor.ma@medisync.global",
+            emailVerified: true,
+            fullName: "Doctor Spoof Attempt",
+          };
+        }
+        return null;
+      },
+    });
+
+    try {
+      const invalidGoogleRes = await googleEnabledApp.inject({
+        method: "POST",
+        url: "/v1/auth/google",
+        payload: {
+          idToken: "forged-google-token-value-123456",
+          countryCode: "MA",
+        },
+      });
+      expect(invalidGoogleRes.statusCode).toBe(401);
+
+      const validGoogleRes = await googleEnabledApp.inject({
+        method: "POST",
+        url: "/v1/auth/google",
+        payload: {
+          idToken: "valid-patient-google-token",
+          countryCode: "MA",
+        },
+      });
+      expect(validGoogleRes.statusCode).toBe(201);
+      const gUser = validGoogleRes.json<AuthResponse>();
+      createdUserIds.push(gUser.user.id);
+      expect(gUser.user.authProvider).toBe("GOOGLE");
+      expect(gUser.user.emailVerified).toBe(true);
+      expect(gUser.user.role).toBe("PATIENT");
+
+      const spoofStaffGoogle = await googleEnabledApp.inject({
+        method: "POST",
+        url: "/v1/auth/google",
+        payload: {
+          idToken: "valid-staff-email-google-token",
+          countryCode: "MA",
+        },
+      });
+      expect(spoofStaffGoogle.statusCode).toBe(403);
+      expect(spoofStaffGoogle.json<{ error: string }>().error).toBe(
+        "USE_STAFF_PORTAL",
+      );
+    } finally {
+      await googleEnabledApp.close();
+    }
+  });
+
+  it("exposes PATCH/PUT/DELETE CORS methods, blocks unverified providers on bookings, and accepts browser-origin MinIO PUT", async () => {
+    const corsOrigin = "http://127.0.0.1:3000";
+    const verifyServer = await buildApiServer({
+      databaseUrl: process.env.DATABASE_URL ?? DEFAULT_TEST_DB_URL,
+      redisUrl: process.env.REDIS_URL ?? DEFAULT_TEST_REDIS_URL,
+      authSecret: TEST_AUTH_SECRET,
+      corsOrigins: [corsOrigin],
+      s3Config: TEST_S3_CONFIG,
+      pool,
+      redis,
+      runDbMigrations: false,
+      seedDemoWorld: false,
+      allowPublicRegistration: true,
+      requireProviderVerification: true,
+      rateLimitKeyPrefix: `medisync:test:cors-and-gate:${runSuffix}`,
+    });
+
+    let uploadedObjectKey: string | null = null;
+    let uploadedMediaId: string | null = null;
+
+    try {
+      const preflightRes = await verifyServer.inject({
+        method: "OPTIONS",
+        url: "/v1/auth/profile",
+        headers: {
+          origin: corsOrigin,
+          "access-control-request-method": "PATCH",
+          "access-control-request-headers": "authorization,content-type",
+        },
+      });
+      expect(preflightRes.statusCode).toBe(204);
+      expect(preflightRes.headers["access-control-allow-origin"]).toBe(corsOrigin);
+      const allowMethods = String(
+        preflightRes.headers["access-control-allow-methods"] ?? "",
+      );
+      expect(allowMethods).toContain("PATCH");
+      expect(allowMethods).toContain("PUT");
+      expect(allowMethods).toContain("DELETE");
+
+      const facListRes = await verifyServer.inject({
+        method: "GET",
+        url: "/v1/directory/facilities?countryCode=MA&limit=1",
+      });
+      expect(facListRes.statusCode).toBe(200);
+      const facility = facListRes.json<{
+        facilities: Array<{ id: string; name: string }>;
+      }>().facilities[0];
+      expect(facility).toBeTruthy();
+
+      const pendingHospRes = await verifyServer.inject({
+        method: "POST",
+        url: "/v1/auth/register",
+        payload: {
+          email: `pending.hosp.${runSuffix}@medisync.test`,
+          password: "StrongPassword!123",
+          fullName: "Pending Hospital Admin",
+          role: "HOSPITAL_ADMIN",
+          countryCode: "MA",
+        },
+      });
+      expect(pendingHospRes.statusCode).toBe(201);
+      const pendingHosp = pendingHospRes.json<AuthResponse>();
+      createdUserIds.push(pendingHosp.user.id);
+
+      const profilePatchRes = await verifyServer.inject({
+        method: "PATCH",
+        url: "/v1/auth/profile",
+        headers: {
+          authorization: `Bearer ${pendingHosp.token}`,
+        },
+        payload: {
+          facilityId: facility!.id,
+          workplaceName: facility!.name,
+        },
+      });
+      expect(profilePatchRes.statusCode).toBe(200);
+      expect(
+        profilePatchRes.json<{ user: AuthResponse["user"] }>().user.facilityId,
+      ).toBe(facility!.id);
+
+      const schedRes = await verifyServer.inject({
+        method: "GET",
+        url: "/v1/booking/schedules?countryCode=MA",
+      });
+      expect(schedRes.statusCode).toBe(200);
+      const schedule = schedRes.json<{
+        schedules: Array<{ id: string }>;
+      }>().schedules[0];
+      expect(schedule).toBeTruthy();
+
+      const blockedBookingRes = await verifyServer.inject({
+        method: "POST",
+        url: "/v1/booking/appointments",
+        headers: {
+          authorization: `Bearer ${pendingHosp.token}`,
+        },
+        payload: {
+          scheduleId: schedule!.id,
+          slotStartIso: "2026-11-20T09:00:00.000Z",
+        },
+      });
+      expect(blockedBookingRes.statusCode).toBe(403);
+      expect(blockedBookingRes.json<{ error: string }>().error).toBe(
+        "PROVIDER_VERIFICATION_REQUIRED",
+      );
+
+      // Pending HOSPITAL_ADMIN is also gated out of admin governance & media oversight until verified
+      const blockedAdminOverview = await verifyServer.inject({
+        method: "GET",
+        url: "/v1/admin/overview",
+        headers: {
+          authorization: `Bearer ${pendingHosp.token}`,
+        },
+      });
+      expect(blockedAdminOverview.statusCode).toBe(403);
+      expect(blockedAdminOverview.json<{ error: string }>().error).toBe(
+        "PROVIDER_VERIFICATION_REQUIRED",
+      );
+
+      const blockedAdminMedia = await verifyServer.inject({
+        method: "GET",
+        url: "/v1/admin/facility-media",
+        headers: {
+          authorization: `Bearer ${pendingHosp.token}`,
+        },
+      });
+      expect(blockedAdminMedia.statusCode).toBe(403);
+      expect(blockedAdminMedia.json<{ error: string }>().error).toBe(
+        "PROVIDER_VERIFICATION_REQUIRED",
+      );
+
+      const opsAdminAuth = await loginSeededAccount(
+        verifyServer,
+        "ops.admin@medisync.global",
+      );
+      const okAdminOverview = await verifyServer.inject({
+        method: "GET",
+        url: "/v1/admin/overview",
+        headers: {
+          authorization: `Bearer ${opsAdminAuth.token}`,
+        },
+      });
+      expect(okAdminOverview.statusCode).toBe(200);
+
+      const okAdminMedia = await verifyServer.inject({
+        method: "GET",
+        url: "/v1/admin/facility-media",
+        headers: {
+          authorization: `Bearer ${opsAdminAuth.token}`,
+        },
+      });
+      expect(okAdminMedia.statusCode).toBe(200);
+
+      const patientAuth = await loginSeededAccount(
+        verifyServer,
+        "patient.ma@medisync.global",
+      );
+      const presignRes = await verifyServer.inject({
+        method: "POST",
+        url: "/v1/clinical/media/presign-upload",
+        headers: {
+          authorization: `Bearer ${patientAuth.token}`,
+        },
+        payload: {
+          patientUserId: patientAuth.user.id,
+          mediaCategory: "OTHER",
+          fileName: `cors-probe-${runSuffix}.png`,
+          mimeType: "image/png",
+          sizeBytes: SAMPLE_PNG_BYTES.byteLength,
+        },
+      });
+      expect(presignRes.statusCode).toBe(201);
+      const presigned = presignRes.json<PresignedUploadResponse>();
+      uploadedObjectKey = presigned.mediaObject.objectKey;
+      uploadedMediaId = presigned.mediaObject.id;
+
+      const s3Preflight = await fetch(presigned.uploadUrl, {
+        method: "OPTIONS",
+        headers: {
+          Origin: corsOrigin,
+          "Access-Control-Request-Method": "PUT",
+          "Access-Control-Request-Headers": "content-type",
+        },
+      });
+      expect([200, 204]).toContain(s3Preflight.status);
+      expect(s3Preflight.headers.get("access-control-allow-origin")).toBe(
+        corsOrigin,
+      );
+
+      const s3PutRes = await fetch(presigned.uploadUrl, {
+        method: "PUT",
+        headers: {
+          Origin: corsOrigin,
+          "Content-Type": "image/png",
+        },
+        body: SAMPLE_PNG_BYTES,
+      });
+      expect(s3PutRes.ok).toBe(true);
+      expect(s3PutRes.headers.get("access-control-allow-origin")).toBe(
+        corsOrigin,
+      );
+
+      const confirmRes = await verifyServer.inject({
+        method: "POST",
+        url: `/v1/clinical/media/${uploadedMediaId}/confirm`,
+        headers: {
+          authorization: `Bearer ${patientAuth.token}`,
+        },
+      });
+      expect(confirmRes.statusCode).toBe(200);
+    } finally {
+      if (uploadedObjectKey) {
+        await deleteS3Object(TEST_S3_CONFIG, uploadedObjectKey).catch(
+          () => undefined,
+        );
+      }
+      if (uploadedMediaId) {
+        await pool
+          .query("DELETE FROM clinical_media_objects WHERE id = $1", [
+            uploadedMediaId,
+          ])
+          .catch(() => undefined);
+      }
+      await verifyServer.close();
+    }
+  });
+
+  it("enforces HttpOnly cookie/CSRF, strict PHI separation, allergy alerts, GDPR/CNDP rights, webhook payments & Prometheus metrics", async () => {
+    const webhookSecret = "prod-hmac-webhook-secret-min-32-chars";
+    const prodLikeApp = await buildApiServer({
+      databaseUrl: process.env.DATABASE_URL ?? DEFAULT_TEST_DB_URL,
+      redisUrl: process.env.REDIS_URL ?? DEFAULT_TEST_REDIS_URL,
+      authSecret: TEST_AUTH_SECRET,
+      corsOrigins: ["http://127.0.0.1:3000"],
+      s3Config: TEST_S3_CONFIG,
+      pool,
+      redis,
+      runDbMigrations: false,
+      allowPublicRegistration: true,
+      requireProviderVerification: false,
+      allowSimulatedPayments: false,
+      paymentWebhookSecret: webhookSecret,
+    });
+
+    const createdLocalIds: string[] = [];
+    const createdLocalOrderIds: string[] = [];
+    const createdLocalRxIds: string[] = [];
+
+    try {
+      // 1. Self-registration sets HttpOnly session cookie + records TERMS_PRIVACY consent
+      const patRes = await prodLikeApp.inject({
+        method: "POST",
+        url: "/v1/auth/register",
+        payload: {
+          email: `gdpr-pat-${runSuffix}@medisync.test`,
+          password: "StrongPassword!123",
+          fullName: "Salma GDPR Compliance",
+          role: "PATIENT",
+          countryCode: "MA",
+          acceptedTerms: true,
+          consentVersion: "2026-11",
+        },
+      });
+      expect(patRes.statusCode).toBe(201);
+      const setCookieHeader = patRes.headers["set-cookie"];
+      const rawCookies = Array.isArray(setCookieHeader)
+        ? setCookieHeader
+        : typeof setCookieHeader === "string"
+          ? [setCookieHeader]
+          : [];
+      const sessionCookie = rawCookies.find((c) =>
+        c.startsWith("medisync_session="),
+      );
+      expect(sessionCookie).toBeTruthy();
+      expect(sessionCookie?.toLowerCase()).toContain("httponly");
+
+      const cookiePair = sessionCookie!.split(";")[0]!;
+      const patBody = patRes.json<AuthResponse>();
+      createdLocalIds.push(patBody.user.id);
+
+      // 2. Cookie authentication works for GET /v1/auth/me without Bearer header
+      const cookieMe = await prodLikeApp.inject({
+        method: "GET",
+        url: "/v1/auth/me",
+        headers: { cookie: cookiePair },
+      });
+      expect(cookieMe.statusCode).toBe(200);
+      expect(cookieMe.json<{ user: { id: string } }>().user.id).toBe(
+        patBody.user.id,
+      );
+
+      // 3. Cross-site Origin on cookie-authenticated mutation is rejected with 403 CSRF_ORIGIN_REJECTED
+      const csrfReject = await prodLikeApp.inject({
+        method: "PUT",
+        url: "/v1/users/me/consents",
+        headers: {
+          cookie: cookiePair,
+          origin: "https://evil-attacker.example",
+        },
+        payload: {
+          consentType: "DATA_SHARING",
+          granted: false,
+        },
+      });
+      expect(csrfReject.statusCode).toBe(403);
+      expect(csrfReject.json<{ error: string }>().error).toBe(
+        "CSRF_ORIGIN_REJECTED",
+      );
+
+      // Valid origin updates legal consent ledger and syncs EHR telehealth_consent
+      const okConsent = await prodLikeApp.inject({
+        method: "PUT",
+        url: "/v1/users/me/consents",
+        headers: {
+          cookie: cookiePair,
+          origin: "http://127.0.0.1:3000",
+        },
+        payload: {
+          consentType: "TELEHEALTH_CONSENT",
+          granted: true,
+          sourcePortal: "PROFILE",
+        },
+      });
+      expect(okConsent.statusCode).toBe(200);
+
+      const listConsentsRes = await prodLikeApp.inject({
+        method: "GET",
+        url: "/v1/users/me/consents",
+        headers: { authorization: `Bearer ${patBody.token}` },
+      });
+      expect(listConsentsRes.statusCode).toBe(200);
+      const consentsList = listConsentsRes.json<{
+        consents: Array<{ consentType: string; granted: boolean }>;
+      }>().consents;
+      expect(consentsList.some((c) => c.consentType === "TERMS_PRIVACY")).toBe(true);
+      expect(
+        consentsList.some((c) => c.consentType === "TELEHEALTH_CONSENT"),
+      ).toBe(true);
+
+      // 4. Record severe Penicillin allergy on patient's EHR profile
+      const ehrPut = await prodLikeApp.inject({
+        method: "PUT",
+        url: "/v1/clinical/patients/me/profile",
+        headers: { authorization: `Bearer ${patBody.token}` },
+        payload: {
+          bloodType: "A+",
+          allergies: [{ allergen: "Penicillin", severity: "SEVERE" }],
+        },
+      });
+      expect(ehrPut.statusCode).toBe(200);
+
+      // 5. Minimum-necessary PHI isolation: HOSPITAL_ADMIN & CLINIC_STAFF cannot read patient EHR or SOAP notes
+      const docAuth = await loginSeededAccount(prodLikeApp, "doctor.ma@medisync.global");
+      const pharmAuth = await loginSeededAccount(
+        prodLikeApp,
+        "pharmacist.ma@medisync.global",
+      );
+      const clinicStaffRes = await prodLikeApp.inject({
+        method: "POST",
+        url: "/v1/auth/register",
+        payload: {
+          email: `reception-phi-${runSuffix}@medisync.test`,
+          password: "StrongPassword!123",
+          fullName: "Reception Isolation",
+          role: "CLINIC_STAFF",
+          countryCode: "MA",
+        },
+      });
+      expect(clinicStaffRes.statusCode).toBe(201);
+      const clinicStaffAuth = clinicStaffRes.json<AuthResponse>();
+      createdLocalIds.push(clinicStaffAuth.user.id);
+
+      const receptionEhrDenied = await prodLikeApp.inject({
+        method: "GET",
+        url: `/v1/clinical/patients/${patBody.user.id}/profile`,
+        headers: { authorization: `Bearer ${clinicStaffAuth.token}` },
+      });
+      expect(receptionEhrDenied.statusCode).toBe(403);
+
+      const receptionNotesDenied = await prodLikeApp.inject({
+        method: "GET",
+        url: `/v1/clinical/visit-notes?patientUserId=${patBody.user.id}`,
+        headers: { authorization: `Bearer ${clinicStaffAuth.token}` },
+      });
+      expect(receptionNotesDenied.statusCode).toBe(403);
+
+      // Hospital admin remains blocked from sensitive EHR charts, while allowed to inspect insurance coverage for billing
+      const hospitalAuth = await loginSeededAccount(
+        prodLikeApp,
+        "hospital.ma@medisync.global",
+      );
+      const hospitalEhrDenied = await prodLikeApp.inject({
+        method: "GET",
+        url: `/v1/clinical/patients/${patBody.user.id}/profile`,
+        headers: { authorization: `Bearer ${hospitalAuth.token}` },
+      });
+      expect(hospitalEhrDenied.statusCode).toBe(403);
+
+      const hospitalInsuranceAllowed = await prodLikeApp.inject({
+        method: "GET",
+        url: `/v1/clinical/patients/${patBody.user.id}/insurances`,
+        headers: { authorization: `Bearer ${hospitalAuth.token}` },
+      });
+      expect(hospitalInsuranceAllowed.statusCode).toBe(200);
+
+      // 6. Drug-Allergy safety cross-check triggers for BOTH Doctor issuing Rx & Pharmacist verifying QR
+      const rxIssue = await prodLikeApp.inject({
+        method: "POST",
+        url: "/v1/clinical/prescriptions",
+        headers: { authorization: `Bearer ${docAuth.token}` },
+        payload: {
+          patientUserId: patBody.user.id,
+          medications: [
+            {
+              name: "Amoxicillin 1000mg",
+              dosage: "1000 mg",
+              frequency: "Twice daily",
+              durationDays: 7,
+            },
+          ],
+        },
+      });
+      expect(rxIssue.statusCode).toBe(201);
+      const rxBody = rxIssue.json<{
+        prescription: { id: string; qrToken: string };
+        allergyWarnings?: Array<{ allergen: string }>;
+      }>();
+      createdLocalRxIds.push(rxBody.prescription.id);
+      expect(rxBody.allergyWarnings?.length).toBeGreaterThanOrEqual(1);
+      expect(rxBody.allergyWarnings?.[0]?.allergen).toBe("Penicillin");
+
+      const qrCheck = await prodLikeApp.inject({
+        method: "POST",
+        url: "/v1/clinical/prescriptions/verify-qr",
+        headers: { authorization: `Bearer ${pharmAuth.token}` },
+        payload: { qrToken: rxBody.prescription.qrToken },
+      });
+      expect(qrCheck.statusCode).toBe(200);
+      expect(
+        qrCheck.json<{ allergyWarnings?: Array<{ allergen: string }> }>()
+          .allergyWarnings?.[0]?.allergen,
+      ).toBe("Penicillin");
+
+      // Verify SENSITIVE_PHI_READ audit entry recorded on Pharmacist QR inspection
+      const phiAudit = await pool.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM audit_logs
+         WHERE actor_id = $1 AND action = 'SENSITIVE_PHI_READ'`,
+        [pharmAuth.user.id],
+      );
+      expect(Number(phiAudit.rows[0]?.count ?? "0")).toBeGreaterThanOrEqual(1);
+
+      // 7. Payment hardening: CARD_SIMULATED rejected when allowSimulatedPayments=false; HMAC webhook settles idempotently
+      const productsRes = await prodLikeApp.inject({
+        method: "GET",
+        url: "/v1/pharmacy/products?countryCode=MA&inStockOnly=true",
+      });
+      expect(productsRes.statusCode).toBe(200);
+      expect(productsRes.headers["cache-control"]).toContain("public");
+      const otcProduct = productsRes
+        .json<{
+          products: Array<{
+            id: string;
+            facilityId: string;
+            requiresPrescription: boolean;
+            priceMinor: number;
+          }>;
+        }>()
+        .products.find((p) => !p.requiresPrescription);
+      expect(otcProduct).toBeTruthy();
+
+      const createOrderRes = await prodLikeApp.inject({
+        method: "POST",
+        url: "/v1/pharmacy/orders",
+        headers: { authorization: `Bearer ${patBody.token}` },
+        payload: {
+          facilityId: otcProduct!.facilityId,
+          items: [{ productId: otcProduct!.id, quantity: 1 }],
+          fulfillmentMode: "PHARMACY_PICKUP",
+        },
+      });
+      expect(createOrderRes.statusCode).toBe(201);
+      const order = createOrderRes.json<{
+        order: { id: string; totalMinor: number; currencyCode: string };
+      }>().order;
+      createdLocalOrderIds.push(order.id);
+
+      const blockedSimPay = await prodLikeApp.inject({
+        method: "POST",
+        url: `/v1/pharmacy/orders/${order.id}/confirm-payment`,
+        headers: { authorization: `Bearer ${patBody.token}` },
+        payload: { paymentMethod: "CARD_SIMULATED" },
+      });
+      expect(blockedSimPay.statusCode).toBe(403);
+      expect(blockedSimPay.json<{ error: string }>().error).toBe(
+        "PAYMENT_PROVIDER_REQUIRED",
+      );
+
+      const webhookEvent = {
+        eventId: `evt-${runSuffix}`,
+        provider: "CMI_MAROC",
+        resourceType: "PHARMACY_ORDER",
+        resourceId: order.id,
+        amountMinor: order.totalMinor,
+        currencyCode: order.currencyCode,
+        paymentReference: `CMI-TX-${runSuffix}`,
+        status: "SUCCEEDED",
+      };
+      const webhookSig = crypto
+        .createHmac("sha256", webhookSecret)
+        .update(JSON.stringify(webhookEvent), "utf8")
+        .digest("hex");
+
+      const okWebhook = await prodLikeApp.inject({
+        method: "POST",
+        url: "/v1/payments/webhook",
+        headers: { "x-medisync-signature": `sha256=${webhookSig}` },
+        payload: webhookEvent,
+      });
+      expect(okWebhook.statusCode).toBe(200);
+      expect(
+        okWebhook.json<{ processed: boolean; deduplicated: boolean }>()
+          .deduplicated,
+      ).toBe(false);
+
+      const replayWebhook = await prodLikeApp.inject({
+        method: "POST",
+        url: "/v1/payments/webhook",
+        headers: { "x-medisync-signature": `sha256=${webhookSig}` },
+        payload: webhookEvent,
+      });
+      expect(replayWebhook.statusCode).toBe(200);
+      expect(
+        replayWebhook.json<{ deduplicated: boolean }>().deduplicated,
+      ).toBe(true);
+
+      // 8. GDPR/CNDP Data Portability Export + Erasure & Anonymization + Prometheus /metrics
+      const exportRes = await prodLikeApp.inject({
+        method: "GET",
+        url: "/v1/users/me/data-export",
+        headers: { authorization: `Bearer ${patBody.token}` },
+      });
+      expect(exportRes.statusCode).toBe(200);
+      expect(exportRes.json<{ standard: string }>().standard).toBe(
+        "CNDP-09-08/GDPR-ART20",
+      );
+
+      const eraseRes = await prodLikeApp.inject({
+        method: "DELETE",
+        url: "/v1/users/me/account",
+        headers: { authorization: `Bearer ${patBody.token}` },
+        payload: { confirmation: "DELETE_MY_ACCOUNT" },
+      });
+      expect(eraseRes.statusCode).toBe(200);
+      expect(eraseRes.json<{ deleted: boolean }>().deleted).toBe(true);
+
+      const metricsRes = await prodLikeApp.inject({
+        method: "GET",
+        url: "/metrics",
+      });
+      expect(metricsRes.statusCode).toBe(200);
+      expect(metricsRes.body).toContain("medisync_http_requests_total");
+      expect(metricsRes.body).toContain('medisync_dependency_up{dependency="postgres"} 1');
+    } finally {
+      if (createdLocalOrderIds.length > 0) {
+        await pool.query(
+          "DELETE FROM pharmacy_order_items WHERE order_id = ANY($1::uuid[])",
+          [createdLocalOrderIds],
+        );
+        await pool.query(
+          "DELETE FROM pharmacy_orders WHERE id = ANY($1::uuid[])",
+          [createdLocalOrderIds],
+        );
+      }
+      if (createdLocalRxIds.length > 0) {
+        await pool.query("DELETE FROM prescriptions WHERE id = ANY($1::uuid[])", [
+          createdLocalRxIds,
+        ]);
+      }
+      await pool.query("DELETE FROM payment_webhook_events WHERE event_id = $1", [
+        `evt-${runSuffix}`,
+      ]);
+      if (createdLocalIds.length > 0) {
+        await pool.query(
+          "DELETE FROM audit_logs WHERE actor_id = ANY($1::uuid[])",
+          [createdLocalIds],
+        );
+        await pool.query("DELETE FROM users WHERE id = ANY($1::uuid[])", [
+          createdLocalIds,
+        ]);
+      }
+      await prodLikeApp.close();
+    }
+  });
 });

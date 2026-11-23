@@ -8,8 +8,12 @@ export {
 } from "./auth-crypto.js";
 export {
   authenticateRequest,
+  clearSessionCookie,
   invalidateUserAuthCache,
   revokeJwtToken,
+  SESSION_COOKIE_NAME,
+  setSessionCookie,
+  verifyLiveSessionToken,
   type AuthGuardDeps,
   type AuthGuardOptions,
 } from "./guard.js";

@@ -2,17 +2,21 @@ import crypto from "node:crypto";
 import type { Redis } from "ioredis";
 import type { Pool, PoolClient } from "pg";
 import {
+  DispatchRequestSummarySchema,
   PharmacyOrderItemSummarySchema,
   PharmacyOrderSummarySchema,
   PharmacyProductSummarySchema,
   type ConfirmOrderPaymentInput,
   type CreatePharmacyOrderInput,
   type CreatePharmacyProductInput,
+  type DispatchRequestSummary,
   type ListPharmacyProductsQuery,
+  type PaymentWebhookEvent,
   type PharmacyOrderSummary,
   type PharmacyProductCategory,
   type PharmacyProductSummary,
   type UpdatePharmacyOrderStatusInput,
+  type UpdatePharmacyProductInput,
   type UserRole,
 } from "@medisync/contracts";
 import { resolveCountryPack } from "@medisync/country-packs";
@@ -60,6 +64,11 @@ const DELIVERY_FEE_BY_COUNTRY: Record<string, number> = {
   US: 699, // 6.99 USD
   INTL: 500, // 5.00 USD
 };
+
+export function resolveCourierFeeMinor(countryCode?: string): number {
+  const key = countryCode?.trim().toUpperCase() ?? "INTL";
+  return DELIVERY_FEE_BY_COUNTRY[key] ?? DELIVERY_FEE_BY_COUNTRY.INTL!;
+}
 
 const ORDER_STAFF_ROLES: readonly UserRole[] = [
   "PHARMACIST",
@@ -154,7 +163,7 @@ export async function listPharmacyProducts(
        to_char(p.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"
      FROM pharmacy_products p
      JOIN facilities f ON f.id = p.facility_id
-     WHERE p.is_active = TRUE
+     WHERE ($7::boolean IS TRUE OR p.is_active = TRUE)
        AND ($1::text IS NULL OR p.country_code = $1)
        AND ($2::uuid IS NULL OR p.facility_id = $2)
        AND ($3::text IS NULL OR p.category = $3)
@@ -165,7 +174,7 @@ export async function listPharmacyProducts(
          OR COALESCE(p.generic_name, '') ILIKE $5
          OR p.sku ILIKE $5
        )
-     ORDER BY p.requires_prescription ASC, p.name ASC
+     ORDER BY p.is_active DESC, p.requires_prescription ASC, p.name ASC
      LIMIT $6`,
     [
       query.countryCode ?? null,
@@ -174,6 +183,7 @@ export async function listPharmacyProducts(
       query.inStockOnly ? true : null,
       pattern,
       query.limit,
+      Boolean(query.includeInactive),
     ],
   );
 
@@ -300,7 +310,7 @@ export async function updatePharmacyProductStock(
   pool: Pool,
   productId: string,
   actor: AuthTokenClaims,
-  patch: { stockQty?: number; priceMinor?: number; isActive?: boolean },
+  patch: UpdatePharmacyProductInput,
   s3Config?: S3PresignConfig,
 ): Promise<PharmacyProductSummary> {
   const existing = await fetchProductById(pool, productId, s3Config);
@@ -316,31 +326,66 @@ export async function updatePharmacyProductStock(
     );
   }
 
-  await pool.query(
-    `UPDATE pharmacy_products
-     SET stock_qty = COALESCE($2, stock_qty),
-         price_minor = COALESCE($3, price_minor),
-         is_active = COALESCE($4, is_active),
-         updated_at = NOW()
-     WHERE id = $1`,
-    [
-      productId,
-      patch.stockQty ?? null,
-      patch.priceMinor ?? null,
-      patch.isActive ?? null,
-    ],
-  );
+  const nextGeneric =
+    patch.genericName === undefined
+      ? existing.genericName
+      : patch.genericName?.trim() || null;
+
+  try {
+    await pool.query(
+      `UPDATE pharmacy_products
+       SET sku = COALESCE($2, sku),
+           name = COALESCE($3, name),
+           generic_name = $4,
+           category = COALESCE($5, category),
+           dosage_form = COALESCE($6, dosage_form),
+           strength = COALESCE($7, strength),
+           requires_prescription = COALESCE($8, requires_prescription),
+           stock_qty = COALESCE($9, stock_qty),
+           price_minor = COALESCE($10, price_minor),
+           is_active = COALESCE($11, is_active),
+           updated_at = NOW()
+       WHERE id = $1`,
+      [
+        productId,
+        patch.sku ? patch.sku.trim().toUpperCase() : null,
+        patch.name ? patch.name.trim() : null,
+        nextGeneric,
+        patch.category ?? null,
+        patch.dosageForm ? patch.dosageForm.trim() : null,
+        patch.strength ? patch.strength.trim() : null,
+        patch.requiresPrescription ?? null,
+        patch.stockQty ?? null,
+        patch.priceMinor ?? null,
+        patch.isActive ?? null,
+      ],
+    );
+  } catch (err) {
+    if (
+      typeof err === "object" &&
+      err !== null &&
+      "code" in err &&
+      (err as { code?: unknown }).code === "23505"
+    ) {
+      throw new PharmacyConflictError(
+        "SKU already exists in this pharmacy facility.",
+      );
+    }
+    throw err;
+  }
 
   await appendAuditLog(pool, {
     countryCode: existing.countryCode,
     actorId: actor.sub,
     actorRole: actor.role,
-    action: "PHARMACY_PRODUCT_STOCK_UPDATED",
+    action: "PHARMACY_PRODUCT_UPDATED",
     resourceType: "pharmacy_product",
     resourceId: productId,
     metadata: {
+      sku: patch.sku ? patch.sku.trim().toUpperCase() : existing.sku,
       stockQty: patch.stockQty ?? existing.stockQty,
       priceMinor: patch.priceMinor ?? existing.priceMinor,
+      isActive: patch.isActive ?? existing.isActive,
     },
   });
 
@@ -580,7 +625,7 @@ export async function createPharmacyOrderAtomic(
         [input.prescriptionId],
       );
       const rx = rxRes.rows[0];
-      if (!rx || rx.status === "CANCELLED") {
+      if (!rx || rx.status !== "ISSUED") {
         throw new PharmacyBadRequestError("INVALID_OR_CANCELLED_PRESCRIPTION");
       }
       if (rx.countryCode !== facility.countryCode) {
@@ -598,23 +643,41 @@ export async function createPharmacyOrderAtomic(
       }
     }
 
-    for (const item of lineItemsToInsert) {
-      const decRes = await client.query(
-        `UPDATE pharmacy_products
-         SET stock_qty = stock_qty - $2,
-             updated_at = NOW()
-         WHERE id = $1 AND stock_qty >= $2`,
-        [item.productId, item.quantity],
+    const countryPack = resolveCountryPack(facility.countryCode);
+    if (
+      requiresRx &&
+      !countryPack.allowRxCourierDelivery &&
+      input.fulfillmentMode === "COURIER_DELIVERY"
+    ) {
+      throw new PharmacyBadRequestError(
+        `PRESCRIPTION_PICKUP_REQUIRED_${facility.countryCode}: Under ${countryPack.pharmacyLawReference ?? "national pharmacy regulations"}, prescription medications require in-person pickup at the licensed pharmacy.`,
       );
-      if (decRes.rowCount === 0) {
-        throw new PharmacyConflictError(`INSUFFICIENT_STOCK:${item.sku}`);
-      }
+    }
+
+    const decRes = await client.query<{ id: string }>(
+      `UPDATE pharmacy_products AS p
+       SET stock_qty = p.stock_qty - v.qty,
+           updated_at = NOW()
+       FROM unnest($1::uuid[], $2::int[]) AS v(id, qty)
+       WHERE p.id = v.id AND p.stock_qty >= v.qty
+       RETURNING p.id`,
+      [
+        lineItemsToInsert.map((item) => item.productId),
+        lineItemsToInsert.map((item) => item.quantity),
+      ],
+    );
+    if ((decRes.rowCount ?? 0) !== lineItemsToInsert.length) {
+      const updatedIds = new Set(decRes.rows.map((r) => r.id));
+      const failed = lineItemsToInsert.find((it) => !updatedIds.has(it.productId));
+      throw new PharmacyConflictError(
+        `INSUFFICIENT_STOCK:${failed?.sku ?? "UNKNOWN"}`,
+      );
     }
 
     const currencyCode = resolveCountryPack(facility.countryCode).currencyCode;
     const deliveryFeeMinor =
       input.fulfillmentMode === "COURIER_DELIVERY"
-        ? (DELIVERY_FEE_BY_COUNTRY[facility.countryCode] ?? 500)
+        ? resolveCourierFeeMinor(facility.countryCode)
         : 0;
     const totalMinor = subtotalMinor + deliveryFeeMinor;
 
@@ -644,25 +707,32 @@ export async function createPharmacyOrderAtomic(
     );
     createdOrderId = orderInsertRes.rows[0]!.id;
 
-    for (const item of lineItemsToInsert) {
-      await client.query(
-        `INSERT INTO pharmacy_order_items (
-           order_id, product_id, product_name, sku,
-           requires_prescription, quantity, unit_price_minor, line_total_minor
-         )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [
-          createdOrderId,
-          item.productId,
-          item.productName,
-          item.sku,
-          item.requiresPrescription,
-          item.quantity,
-          item.unitPriceMinor,
-          item.lineTotalMinor,
-        ],
-      );
-    }
+    await client.query(
+      `INSERT INTO pharmacy_order_items (
+         order_id, product_id, product_name, sku,
+         requires_prescription, quantity, unit_price_minor, line_total_minor
+       )
+       SELECT $1, v.product_id, v.product_name, v.sku, v.requires_rx, v.qty, v.unit_price, v.line_total
+       FROM unnest(
+         $2::uuid[],
+         $3::text[],
+         $4::text[],
+         $5::boolean[],
+         $6::int[],
+         $7::int[],
+         $8::int[]
+       ) AS v(product_id, product_name, sku, requires_rx, qty, unit_price, line_total)`,
+      [
+        createdOrderId,
+        lineItemsToInsert.map((i) => i.productId),
+        lineItemsToInsert.map((i) => i.productName),
+        lineItemsToInsert.map((i) => i.sku),
+        lineItemsToInsert.map((i) => i.requiresPrescription),
+        lineItemsToInsert.map((i) => i.quantity),
+        lineItemsToInsert.map((i) => i.unitPriceMinor),
+        lineItemsToInsert.map((i) => i.lineTotalMinor),
+      ],
+    );
 
     await appendAuditLog(client, {
       countryCode: facility.countryCode,
@@ -748,7 +818,7 @@ export async function confirmPharmacyOrderPayment(
       throw new PharmacyNotFoundError("Pharmacy order not found.");
     }
     const isStaffSameCountry =
-      ORDER_STAFF_ROLES.includes(actor.role) &&
+      (actor.role === "PHARMACIST" || actor.role === "HOSPITAL_ADMIN") &&
       existing.countryCode === actor.countryCode;
     if (
       actor.role !== "OPS_ADMIN" &&
@@ -817,14 +887,25 @@ export async function confirmPharmacyOrderPayment(
 
   // If courier delivery was selected, create live dispatch job through maps-dispatch barrel
   if (orderMeta && orderMeta.fulfillmentMode === "COURIER_DELIVERY") {
+    let fallbackLat = orderMeta.deliveryLat;
+    let fallbackLng = orderMeta.deliveryLng;
+    if (fallbackLat === null || fallbackLng === null) {
+      const facRes = await pool.query<{ lat: number; lng: number }>(
+        `SELECT lat, lng FROM facilities WHERE id = $1 LIMIT 1`,
+        [orderMeta.facilityId],
+      );
+      fallbackLat = facRes.rows[0]?.lat ?? 0;
+      fallbackLng = facRes.rows[0]?.lng ?? 0;
+    }
+
     const dispatch = await createDispatchRequest(
       pool,
       orderMeta.patientUserId,
       orderMeta.countryCode,
       {
         targetFacilityId: orderMeta.facilityId,
-        pickupLat: orderMeta.deliveryLat ?? 33.5731,
-        pickupLng: orderMeta.deliveryLng ?? -7.5898,
+        pickupLat: fallbackLat,
+        pickupLng: fallbackLng,
         pickupAddress:
           orderMeta.deliveryAddress ?? "Pharmacy Courier Dropoff Destination",
         urgency: "ROUTINE",
@@ -931,16 +1012,20 @@ export async function listPharmacyOrdersScoped(
 
 export async function updatePharmacyOrderStatusAtomic(
   pool: Pool,
+  redis: Redis | undefined,
   orderId: string,
   actor: AuthTokenClaims,
   input: UpdatePharmacyOrderStatusInput,
 ): Promise<PharmacyOrderSummary> {
-  if (!ORDER_STAFF_ROLES.includes(actor.role)) {
+  const isStaff = ORDER_STAFF_ROLES.includes(actor.role);
+  const isSelfPendingCancelCandidate = input.status === "CANCELLED";
+  if (!isStaff && !isSelfPendingCancelCandidate) {
     throw new PharmacyForbiddenError(
       "Only pharmacy, courier, or admin staff may advance order status.",
     );
   }
 
+  let cancelledDispatch: DispatchRequestSummary | null = null;
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -948,9 +1033,16 @@ export async function updatePharmacyOrderStatusAtomic(
     const checkRes = await client.query<{
       id: string;
       countryCode: string;
+      patientUserId: string;
       status: string;
+      dispatchRequestId: string | null;
     }>(
-      `SELECT id, country_code AS "countryCode", status
+      `SELECT
+         id,
+         country_code AS "countryCode",
+         patient_user_id AS "patientUserId",
+         status,
+         dispatch_request_id AS "dispatchRequestId"
        FROM pharmacy_orders
        WHERE id = $1
        FOR UPDATE`,
@@ -959,6 +1051,17 @@ export async function updatePharmacyOrderStatusAtomic(
     const existing = checkRes.rows[0];
     if (!existing) {
       throw new PharmacyNotFoundError("Pharmacy order not found.");
+    }
+    if (!isStaff) {
+      if (
+        existing.patientUserId !== actor.sub ||
+        existing.status !== "PENDING_PAYMENT" ||
+        input.status !== "CANCELLED"
+      ) {
+        throw new PharmacyForbiddenError(
+          "Only pharmacy, courier, or admin staff may advance order status.",
+        );
+      }
     }
     if (
       actor.role !== "OPS_ADMIN" &&
@@ -974,6 +1077,19 @@ export async function updatePharmacyOrderStatusAtomic(
       existing.status === "DELIVERED"
     ) {
       throw new PharmacyConflictError("ORDER_ALREADY_FINALIZED");
+    }
+
+    const ALLOWED_ORDER_TRANSITIONS: Record<string, readonly string[]> = {
+      PENDING_PAYMENT: ["CANCELLED"],
+      PAID: ["PREPARING", "OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"],
+      PREPARING: ["OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"],
+      OUT_FOR_DELIVERY: ["DELIVERED", "CANCELLED"],
+    };
+    const allowedNext = ALLOWED_ORDER_TRANSITIONS[existing.status] ?? [];
+    if (!allowedNext.includes(input.status)) {
+      throw new PharmacyConflictError(
+        `INVALID_ORDER_TRANSITION:${existing.status}->${input.status}`,
+      );
     }
 
     await client.query(
@@ -994,14 +1110,48 @@ export async function updatePharmacyOrderStatusAtomic(
          WHERE order_id = $1`,
         [orderId],
       );
-      for (const item of itemsRes.rows) {
+      if (itemsRes.rows.length > 0) {
         await client.query(
-          `UPDATE pharmacy_products
-           SET stock_qty = stock_qty + $2,
+          `UPDATE pharmacy_products AS p
+           SET stock_qty = p.stock_qty + v.qty,
                updated_at = NOW()
-           WHERE id = $1`,
-          [item.productId, item.quantity],
+           FROM unnest($1::uuid[], $2::int[]) AS v(id, qty)
+           WHERE p.id = v.id`,
+          [
+            itemsRes.rows.map((it) => it.productId),
+            itemsRes.rows.map((it) => it.quantity),
+          ],
         );
+      }
+
+      if (existing.dispatchRequestId) {
+        const dispatchRes = await client.query(
+          `UPDATE dispatch_requests
+           SET status = 'CANCELLED',
+               updated_at = NOW()
+           WHERE id = $1
+             AND status = 'REQUESTED'
+           RETURNING
+             id,
+             country_code AS "countryCode",
+             patient_user_id AS "patientUserId",
+             driver_user_id AS "driverUserId",
+             target_facility_id AS "targetFacilityId",
+             pickup_lat AS "pickupLat",
+             pickup_lng AS "pickupLng",
+             pickup_address AS "pickupAddress",
+             urgency,
+             status,
+             notes,
+             to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso",
+             to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "updatedAtIso"`,
+          [existing.dispatchRequestId],
+        );
+        if (dispatchRes.rows[0]) {
+          cancelledDispatch = DispatchRequestSummarySchema.parse(
+            dispatchRes.rows[0],
+          );
+        }
       }
     }
 
@@ -1020,6 +1170,10 @@ export async function updatePharmacyOrderStatusAtomic(
     throw err;
   } finally {
     client.release();
+  }
+
+  if (cancelledDispatch && redis) {
+    await publishDispatchUpdate(redis, cancelledDispatch).catch(() => undefined);
   }
 
   const updated = await fetchOrderById(pool, orderId);
@@ -1153,4 +1307,236 @@ export async function seedDefaultPharmacyProducts(pool: Pool): Promise<number> {
     }
   }
   return seededCount;
+}
+
+export async function settlePaymentWebhookAtomic(
+  pool: Pool,
+  redis: Redis | undefined,
+  event: PaymentWebhookEvent,
+): Promise<{ processed: boolean; deduplicated: boolean }> {
+  const client: PoolClient = await pool.connect();
+  let dispatchTarget: {
+    orderId: string;
+    patientUserId: string;
+    countryCode: string;
+    facilityId: string;
+    deliveryAddress: string | null;
+    deliveryLat: number | null;
+    deliveryLng: number | null;
+    receiptNumber: string;
+  } | null = null;
+
+  try {
+    await client.query("BEGIN");
+
+    const eventInsert = await client.query<{ id: string }>(
+      `INSERT INTO payment_webhook_events (
+         provider, event_id, resource_type, resource_id, amount_minor, currency_code, status
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (provider, event_id) DO NOTHING
+       RETURNING id`,
+      [
+        event.provider,
+        event.eventId,
+        event.resourceType,
+        event.resourceId,
+        event.amountMinor,
+        event.currencyCode.toUpperCase(),
+        event.status,
+      ],
+    );
+    if (eventInsert.rowCount === 0) {
+      await client.query("COMMIT");
+      return { processed: true, deduplicated: true };
+    }
+
+    if (event.status === "SUCCEEDED") {
+      if (event.resourceType === "PHARMACY_ORDER") {
+        const orderRes = await client.query<{
+          id: string;
+          countryCode: string;
+          patientUserId: string;
+          facilityId: string;
+          fulfillmentMode: string;
+          deliveryAddress: string | null;
+          deliveryLat: number | null;
+          deliveryLng: number | null;
+          status: string;
+          totalMinor: number;
+          currencyCode: string;
+        }>(
+          `SELECT
+             id,
+             country_code AS "countryCode",
+             patient_user_id AS "patientUserId",
+             facility_id AS "facilityId",
+             fulfillment_mode AS "fulfillmentMode",
+             delivery_address AS "deliveryAddress",
+             delivery_lat AS "deliveryLat",
+             delivery_lng AS "deliveryLng",
+             status,
+             total_minor AS "totalMinor",
+             currency_code AS "currencyCode"
+           FROM pharmacy_orders
+           WHERE id = $1
+           FOR UPDATE`,
+          [event.resourceId],
+        );
+        const order = orderRes.rows[0];
+        if (!order) {
+          throw new PharmacyNotFoundError("PHARMACY_ORDER_NOT_FOUND");
+        }
+        if (
+          event.amountMinor < order.totalMinor ||
+          event.currencyCode.toUpperCase() !== order.currencyCode.toUpperCase()
+        ) {
+          throw new PharmacyBadRequestError("WEBHOOK_AMOUNT_OR_CURRENCY_MISMATCH");
+        }
+        if (order.status === "PENDING_PAYMENT") {
+          const receiptNumber = `REC-${order.countryCode}-${crypto
+            .randomBytes(4)
+            .toString("hex")
+            .toUpperCase()}`;
+          await client.query(
+            `UPDATE pharmacy_orders
+             SET status = 'PAID',
+                 payment_method = 'CARD_SIMULATED',
+                 payment_reference = $2,
+                 receipt_number = $3,
+                 paid_at = NOW(),
+                 updated_at = NOW()
+             WHERE id = $1`,
+            [order.id, event.paymentReference, receiptNumber],
+          );
+          await appendAuditLog(client, {
+            countryCode: order.countryCode,
+            actorId: order.patientUserId,
+            actorRole: "PATIENT",
+            action: "PAYMENT_WEBHOOK_SETTLED",
+            resourceType: "pharmacy_order",
+            resourceId: order.id,
+            metadata: {
+              source: "PAYMENT_WEBHOOK",
+              provider: event.provider,
+              eventId: event.eventId,
+              paymentReference: event.paymentReference,
+            },
+          });
+          if (order.fulfillmentMode === "COURIER_DELIVERY") {
+            dispatchTarget = {
+              orderId: order.id,
+              patientUserId: order.patientUserId,
+              countryCode: order.countryCode,
+              facilityId: order.facilityId,
+              deliveryAddress: order.deliveryAddress,
+              deliveryLat: order.deliveryLat,
+              deliveryLng: order.deliveryLng,
+              receiptNumber,
+            };
+          }
+        }
+      } else {
+        const invRes = await client.query<{
+          id: string;
+          countryCode: string;
+          patientUserId: string;
+          status: string;
+          patientPayableMinor: number;
+          currencyCode: string;
+        }>(
+          `SELECT
+             id,
+             country_code AS "countryCode",
+             patient_user_id AS "patientUserId",
+             status,
+             patient_payable_minor AS "patientPayableMinor",
+             currency_code AS "currencyCode"
+           FROM medical_invoices
+           WHERE id = $1
+           FOR UPDATE`,
+          [event.resourceId],
+        );
+        const invoice = invRes.rows[0];
+        if (!invoice) {
+          throw new PharmacyNotFoundError("MEDICAL_INVOICE_NOT_FOUND");
+        }
+        if (
+          event.amountMinor < invoice.patientPayableMinor ||
+          event.currencyCode.toUpperCase() !== invoice.currencyCode.toUpperCase()
+        ) {
+          throw new PharmacyBadRequestError("WEBHOOK_AMOUNT_OR_CURRENCY_MISMATCH");
+        }
+        if (invoice.status !== "PAID" && invoice.status !== "VOID" && invoice.status !== "REFUNDED") {
+          await client.query(
+            `UPDATE medical_invoices
+             SET status = 'PAID',
+                 payment_method = $2,
+                 payment_reference = $3,
+                 paid_at = NOW(),
+                 updated_at = NOW()
+             WHERE id = $1`,
+            [invoice.id, event.provider, event.paymentReference],
+          );
+          await appendAuditLog(client, {
+            countryCode: invoice.countryCode,
+            actorId: invoice.patientUserId,
+            actorRole: "PATIENT",
+            action: "PAYMENT_WEBHOOK_SETTLED",
+            resourceType: "medical_invoice",
+            resourceId: invoice.id,
+            metadata: {
+              source: "PAYMENT_WEBHOOK",
+              provider: event.provider,
+              eventId: event.eventId,
+              paymentReference: event.paymentReference,
+            },
+          });
+        }
+      }
+    }
+
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  if (dispatchTarget) {
+    let lat = dispatchTarget.deliveryLat;
+    let lng = dispatchTarget.deliveryLng;
+    if (lat === null || lng === null) {
+      const facRes = await pool.query<{ lat: number; lng: number }>(
+        `SELECT lat, lng FROM facilities WHERE id = $1 LIMIT 1`,
+        [dispatchTarget.facilityId],
+      );
+      lat = facRes.rows[0]?.lat ?? 0;
+      lng = facRes.rows[0]?.lng ?? 0;
+    }
+    const dispatch = await createDispatchRequest(
+      pool,
+      dispatchTarget.patientUserId,
+      dispatchTarget.countryCode,
+      {
+        targetFacilityId: dispatchTarget.facilityId,
+        pickupLat: lat,
+        pickupLng: lng,
+        pickupAddress:
+          dispatchTarget.deliveryAddress ?? "Pharmacy Courier Dropoff Destination",
+        urgency: "ROUTINE",
+        notes: `Pharmacy courier order ${dispatchTarget.receiptNumber}`,
+      },
+    );
+    await pool.query(
+      `UPDATE pharmacy_orders SET dispatch_request_id = $2, updated_at = NOW() WHERE id = $1`,
+      [dispatchTarget.orderId, dispatch.id],
+    );
+    if (redis) {
+      await publishDispatchUpdate(redis, dispatch);
+    }
+  }
+
+  return { processed: true, deduplicated: false };
 }

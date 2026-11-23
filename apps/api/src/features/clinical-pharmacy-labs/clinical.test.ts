@@ -104,7 +104,7 @@ describe("api slice 4 clinical-pharmacy-labs: SOAP notes, QR e-prescriptions, la
   async function registerAccount(input: {
     email: string;
     fullName: string;
-    role: "PATIENT" | "DOCTOR" | "PHARMACIST" | "LAB_TECH";
+    role: "PATIENT" | "DOCTOR" | "NURSE" | "PHARMACIST" | "LAB_TECH";
     countryCode: string;
   }): Promise<AuthResponse> {
     const res = await app.inject({
@@ -425,5 +425,47 @@ describe("api slice 4 clinical-pharmacy-labs: SOAP notes, QR e-prescriptions, la
     expect(completeLabRes.json<LabOrderResponse>().labOrder.status).toBe(
       "COMPLETED",
     );
+
+    // 5. Nurse (NURSE) role writes nursing vitals/care notes and lab orders, while Doctor-only E-Rx remains 403
+    const nurse = await registerAccount({
+      email: `rn.care.${runSuffix}@medisync.ma`,
+      fullName: "Kenza HomeCare RN",
+      role: "NURSE",
+      countryCode: "MA",
+    });
+
+    const nurseNoteRes = await app.inject({
+      method: "POST",
+      url: "/v1/clinical/visit-notes",
+      headers: { authorization: `Bearer ${nurse.token}` },
+      payload: {
+        patientUserId: patient.user.id,
+        subjective: "Post-op dressing check & vital signs",
+        objective: "BP 118/76 mmHg, SpO2 98%, Afebrile",
+        assessment: "Clean incision healing",
+        plan: "Continue sterile dressing in 48h",
+        icd10Codes: ["Z48.0"],
+      },
+    });
+    expect(nurseNoteRes.statusCode).toBe(201);
+    createdVisitNoteIds.push(nurseNoteRes.json<VisitNoteResponse>().visitNote.id);
+
+    const nurseForbiddenRx = await app.inject({
+      method: "POST",
+      url: "/v1/clinical/prescriptions",
+      headers: { authorization: `Bearer ${nurse.token}` },
+      payload: {
+        patientUserId: patient.user.id,
+        medications: [
+          {
+            name: "Amoxicillin",
+            dosage: "500 mg",
+            frequency: "Twice daily",
+            durationDays: 5,
+          },
+        ],
+      },
+    });
+    expect(nurseForbiddenRx.statusCode).toBe(403);
   });
 });

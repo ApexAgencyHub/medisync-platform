@@ -65,13 +65,13 @@ describe("api slice 1 foundation: postgis, auth, rbac & audit", () => {
     await pool.end();
   });
 
-  it("returns health status with live PostgreSQL connection and all 9 roles", async () => {
+  it("returns health status with live PostgreSQL connection and all 10 roles", async () => {
     const res = await app.inject({ method: "GET", url: "/health" });
     expect(res.statusCode).toBe(200);
     const body = res.json<{ status: string; db: boolean; rolesCount: number }>();
     expect(body.status).toBe("ok");
     expect(body.db).toBe(true);
-    expect(body.rolesCount).toBe(9);
+    expect(body.rolesCount).toBe(10);
   });
 
   it("lists country packs and validates facility license formats", async () => {
