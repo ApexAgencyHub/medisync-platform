@@ -758,7 +758,13 @@ export function PharmacyOrdersView({
 
                 {/* Progress Stepper (when active / completed) */}
                 {currentStep >= 0 ? (
-                  <div className="grid grid-cols-3 gap-1.5 rounded-xl border border-slate-200/80 bg-white p-2 sm:grid-cols-4">
+                  <div
+                    className={`grid gap-1.5 rounded-xl border border-slate-200/80 bg-white p-2 ${
+                      steps.length === 3
+                        ? "grid-cols-3"
+                        : "grid-cols-2 sm:grid-cols-4"
+                    }`}
+                  >
                     {steps.map((stepLabel, idx) => {
                       const done = idx <= currentStep;
                       return (

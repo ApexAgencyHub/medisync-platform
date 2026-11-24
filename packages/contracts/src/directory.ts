@@ -19,7 +19,7 @@ export const DirectorySearchQuerySchema = z.object({
     .union([z.boolean(), z.enum(["true", "false"])])
     .optional()
     .transform((v) => (v === "true" || v === true ? true : undefined)),
-  limit: z.coerce.number().int().min(1).max(100).default(30),
+  limit: z.coerce.number().int().min(1).max(200).default(60),
 });
 
 export type DirectorySearchQuery = z.infer<typeof DirectorySearchQuerySchema>;

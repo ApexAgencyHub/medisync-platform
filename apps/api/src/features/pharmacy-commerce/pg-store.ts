@@ -19,7 +19,10 @@ import {
   type UpdatePharmacyProductInput,
   type UserRole,
 } from "@medisync/contracts";
-import { resolveCountryPack } from "@medisync/country-packs";
+import {
+  getMoroccanCityAliasTerms,
+  resolveCountryPack,
+} from "@medisync/country-packs";
 import {
   createSigV4PresignedUrl,
   type S3PresignConfig,
@@ -111,6 +114,7 @@ async function fetchProductById(
        p.country_code AS "countryCode",
        p.facility_id AS "facilityId",
        f.name AS "facilityName",
+       f.city AS "facilityCity",
        p.sku,
        p.name,
        p.generic_name AS "genericName",
@@ -141,6 +145,10 @@ export async function listPharmacyProducts(
 ): Promise<PharmacyProductSummary[]> {
   const pattern =
     query.q && query.q.trim().length > 0 ? `%${query.q.trim()}%` : null;
+  const cityPatterns =
+    query.city && query.city.trim().length > 0
+      ? getMoroccanCityAliasTerms(query.city).map((term) => `%${term}%`)
+      : null;
 
   const res = await pool.query(
     `SELECT
@@ -148,6 +156,7 @@ export async function listPharmacyProducts(
        p.country_code AS "countryCode",
        p.facility_id AS "facilityId",
        f.name AS "facilityName",
+       f.city AS "facilityCity",
        p.sku,
        p.name,
        p.generic_name AS "genericName",
@@ -173,6 +182,12 @@ export async function listPharmacyProducts(
          OR p.name ILIKE $5
          OR COALESCE(p.generic_name, '') ILIKE $5
          OR p.sku ILIKE $5
+         OR f.name ILIKE $5
+         OR COALESCE(f.city, '') ILIKE $5
+       )
+       AND (
+         $8::text[] IS NULL
+         OR translate(COALESCE(f.city, ''), 'àâäáãåçéèêëíìîïñóòôöõúùûüýÿÀÂÄÁÃÅÇÉÈÊËÍÌÎÏÑÓÒÔÖÕÚÙÛÜÝ', 'aaaaaaceeeeiiiinooooouuuuyyAAAAAACEEEEIIIINOOOOOUUUUY') ILIKE ANY($8::text[])
        )
      ORDER BY p.is_active DESC, p.requires_prescription ASC, p.name ASC
      LIMIT $6`,
@@ -184,6 +199,7 @@ export async function listPharmacyProducts(
       pattern,
       query.limit,
       Boolean(query.includeInactive),
+      cityPatterns,
     ],
   );
 

@@ -540,7 +540,7 @@ export function AccountProfileSecurityCard({
             <button
               type="button"
               onClick={onSignOut}
-              className="inline-flex h-9 items-center gap-1 rounded-xl border border-rose-200 bg-rose-50 px-3.5 text-xs font-semibold text-rose-800 transition hover:bg-rose-100 active:scale-[0.98]"
+              className="inline-flex h-9 items-center gap-1 rounded-xl border border-rose-200 bg-rose-50 px-3.5 text-xs font-semibold text-rose-800 transition hover:bg-rose-100 active:scale-[0.98] sm:hidden"
             >
               <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
               <span>{pc.signOutDeviceBtn}</span>

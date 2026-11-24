@@ -65,7 +65,10 @@ export function PatientActivitySection({
     activeAppointments.length + activeDispatches.length + guestPasses.length;
 
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+    <div
+      id="patient-activity"
+      className="grid grid-cols-1 gap-4 lg:grid-cols-12"
+    >
       <section className="min-w-0 space-y-3.5 rounded-2xl bg-slate-50 p-5 ring-1 ring-slate-900/[0.06] lg:col-span-6">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
@@ -86,14 +89,14 @@ export function PatientActivitySection({
         </div>
 
         {trackedCount === 0 ? (
-          <div className="flex flex-col justify-between gap-3 rounded-2xl bg-white p-4 shadow-[0_6px_22px_rgba(15,23,42,0.04)] sm:flex-row sm:items-center">
-            <div className="flex items-center gap-3">
+          <div className="flex flex-col gap-3 rounded-2xl bg-white p-4 shadow-[0_6px_22px_rgba(15,23,42,0.04)]">
+            <div className="flex items-start gap-3">
               <img
                 src="/media/icons/icon-consultation.webp"
                 alt=""
                 className="h-11 w-11 shrink-0 rounded-xl bg-[#EEF4FC] object-contain p-1"
               />
-              <div className="space-y-0.5">
+              <div className="min-w-0 space-y-0.5">
                 <p className="text-xs font-bold text-slate-900">
                   {copy.activityEmptyTitle}
                 </p>
@@ -102,11 +105,11 @@ export function PatientActivitySection({
                 </p>
               </div>
             </div>
-            <div className="flex shrink-0 flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <UiLinkButton href="/booking" size="sm" pill>
                 {copy.reserveVisitCta}
               </UiLinkButton>
-              <UiLinkButton href="/map" size="sm" variant="secondary" pill>
+              <UiLinkButton href="/map?layer=DRIVER" size="sm" variant="secondary" pill>
                 {copy.openMapCta}
               </UiLinkButton>
             </div>
@@ -290,14 +293,14 @@ export function PatientActivitySection({
         </div>
 
         {bookmarks.length === 0 ? (
-          <div className="flex flex-col justify-between gap-3 rounded-xl bg-slate-50 p-3.5 sm:flex-row sm:items-center">
-            <div className="flex items-center gap-3">
+          <div className="flex flex-col gap-3 rounded-xl bg-slate-50 p-4">
+            <div className="flex items-start gap-3">
               <img
                 src="/media/icons/icon-home-care.webp"
                 alt=""
                 className="h-11 w-11 shrink-0 rounded-xl border border-slate-200 bg-white object-contain p-1"
               />
-              <div className="space-y-0.5">
+              <div className="min-w-0 space-y-0.5">
                 <p className="text-xs font-bold text-slate-900">
                   {copy.savedEmptyTitle}
                 </p>
@@ -306,12 +309,9 @@ export function PatientActivitySection({
                 </p>
               </div>
             </div>
-            <div className="flex shrink-0 flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <UiLinkButton href="/profiles" size="sm" pill>
                 {copy.browseDoctorsCta}
-              </UiLinkButton>
-              <UiLinkButton href="/map" size="sm" variant="secondary" pill>
-                {copy.exploreMapCta}
               </UiLinkButton>
             </div>
           </div>

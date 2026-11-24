@@ -28,7 +28,7 @@ import {
   useToastSetter,
 } from "@/shared/ui/primitives";
 import { MoroccanComplianceBadge } from "@/shared/ui/TactileControls";
-import { MOROCCAN_CITIES } from "@/shared/config/morocco-standards";
+import { MoroccanPlacePicker } from "@/shared/ui/MoroccanPlacePicker";
 import { useLocale } from "@/shared/i18n/locale-store";
 import {
   ALLOWED_AVATAR_MIME_TYPES,
@@ -77,7 +77,6 @@ import {
   Hospital,
   KeyRound,
   LocateFixed,
-  LogOut,
   MapPin,
   Pill,
   RefreshCw,
@@ -215,6 +214,10 @@ export function ProPortalWorkspace({
   const [facKind, setFacKind] = useState<FacilityKind>("CLINIC");
   const [facLicense, setFacLicense] = useState("");
   const [facAddress, setFacAddress] = useState("");
+  const [facCity, setFacCity] = useState("Casablanca");
+  const [facPlaceLabel, setFacPlaceLabel] = useState<string | undefined>(
+    undefined,
+  );
   const [facLat, setFacLat] = useState("33.5731");
   const [facLng, setFacLng] = useState("-7.5898");
   const [facLicenseFile, setFacLicenseFile] = useState<File | null>(null);
@@ -632,6 +635,7 @@ export function ProPortalWorkspace({
       name: facName,
       kind: facKind,
       countryCode: selectedCountry,
+      ...(facCity.trim() ? { city: facCity.trim() } : {}),
       licenseNumber: facLicense,
       lat: latNum,
       lng: lngNum,
@@ -1199,8 +1203,11 @@ export function ProPortalWorkspace({
                         aria-label={copy.staffRegister.roleCardsAria}
                         className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3"
                       >
-                        {STAFF_WORKER_ROLES.map((roleOption) => {
+                        {STAFF_WORKER_ROLES.map((roleOption, idx) => {
                           const selected = regRole === roleOption;
+                          const isOddTrailing =
+                            idx === STAFF_WORKER_ROLES.length - 1 &&
+                            STAFF_WORKER_ROLES.length % 3 === 1;
                           return (
                             <button
                               key={roleOption}
@@ -1209,6 +1216,8 @@ export function ProPortalWorkspace({
                               aria-checked={selected}
                               onClick={() => setRegRole(roleOption)}
                               className={`flex flex-col items-start rounded-xl p-3 text-start transition-colors active:scale-[0.99] ${
+                                isOddTrailing ? "sm:col-span-2 lg:col-span-3" : ""
+                              } ${
                                 selected
                                   ? "bg-[#EBF4FF] ring-2 ring-[#0066CC]"
                                   : "bg-[#F3F8FD] border border-[#D7E4F2] hover:bg-[#E1EBF2]"
@@ -1564,31 +1573,39 @@ export function ProPortalWorkspace({
                       </button>
                     </div>
 
-                    <div className="flex flex-wrap gap-1.5">
-                      {MOROCCAN_CITIES.map((city) => {
-                        const isCitySelected =
-                          facLat.trim() !== "" &&
-                          facLng.trim() !== "" &&
-                          Math.abs(Number(facLat) - city.lat) < 0.01 &&
-                          Math.abs(Number(facLng) - city.lng) < 0.01;
-                        return (
-                          <button
-                            key={city.id}
-                            type="button"
-                            onClick={() => {
-                              setFacLat(city.lat.toFixed(4));
-                              setFacLng(city.lng.toFixed(4));
-                            }}
-                            className={`rounded-full px-3 py-1 text-xs font-semibold transition-all active:scale-[0.98] ${
-                              isCitySelected
-                                ? "bg-[#0066CC] text-white shadow-xs"
-                                : "border border-[#D7E4F2] bg-white text-[#0F243E] hover:border-[#0066CC] hover:text-[#0066CC]"
-                            }`}
-                          >
-                            {city.labels[locale]}
-                          </button>
-                        );
-                      })}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <MoroccanPlacePicker
+                        value={facCity}
+                        {...(facPlaceLabel ? { displayLabel: facPlaceLabel } : {})}
+                        variant="toolbar"
+                        allowAll={false}
+                        includePlaces
+                        align="start"
+                        ariaLabel={
+                          locale === "ar"
+                            ? "اختر مدينة أو حي المؤسسة الصحية"
+                            : locale === "fr"
+                              ? "Choisir la ville ou le quartier de l'établissement"
+                              : "Select facility Moroccan city or district"
+                        }
+                        onSelect={(match) => {
+                          if (!match) return;
+                          setFacCity(match.cityName);
+                          setFacPlaceLabel(
+                            match.kind === "PLACE"
+                              ? `${match.labels[locale]} · ${match.cityLabels[locale]}`
+                              : undefined,
+                          );
+                          setFacLat(match.lat.toFixed(4));
+                          setFacLng(match.lng.toFixed(4));
+                        }}
+                      />
+                      <span
+                        dir="ltr"
+                        className="rounded-lg border border-[#D7E4F2] bg-white px-2.5 py-1.5 font-mono-tabular text-[11px] font-medium text-[#4A627D]"
+                      >
+                        {facCity} · {facLat}, {facLng}
+                      </span>
                     </div>
 
                     <details className="pt-1">
@@ -1716,10 +1733,16 @@ export function ProPortalWorkspace({
                 </span>
               </div>
               <div className="grid min-w-0 w-full gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
-                {staffDemoPersonas.map((persona) => (
+                {staffDemoPersonas.map((persona, idx) => {
+                  const isOddLast =
+                    staffDemoPersonas.length % 2 === 1 &&
+                    idx === staffDemoPersonas.length - 1;
+                  return (
                   <div
                     key={persona.id}
-                    className="flex min-w-0 w-full items-center gap-2 overflow-hidden rounded-xl border border-[#D7E4F2] bg-[#F3F8FD] p-2.5  transition-all hover:bg-emerald-50/40 hover:ring-2 hover:ring-emerald-600/30"
+                    className={`flex min-w-0 w-full items-center gap-2 overflow-hidden rounded-xl border border-[#D7E4F2] bg-[#F3F8FD] p-2.5 transition-all hover:bg-emerald-50/40 hover:ring-2 hover:ring-emerald-600/30 ${
+                      isOddLast ? "sm:col-span-2 lg:col-span-1 xl:col-span-2" : ""
+                    }`}
                   >
                     <EntityAvatar
                       name={persona.fullName}
@@ -1750,7 +1773,8 @@ export function ProPortalWorkspace({
                       </p>
                     </button>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </section>
           ) : null}
@@ -1761,47 +1785,8 @@ export function ProPortalWorkspace({
                 <h2 className="text-sm font-bold text-slate-950">
                   {copy.aside.signedInProfileTitle}
                 </h2>
-                <button
-                  type="button"
-                  onClick={handleSignOut}
-                  className="inline-flex items-center gap-1 rounded-xl bg-white px-3 py-1 text-xs font-medium text-slate-700 shadow-2xs hover:text-rose-700"
-                >
-                  <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
-                  <span>{copy.aside.signOutBtn}</span>
-                </button>
               </div>
               <div className="mt-4 space-y-4">
-                {isStaffWorkerRole(currentUser.role) &&
-                (currentUser.accountStatus === "PENDING_APPROVAL" ||
-                  !currentUser.credentialVerified) ? (
-                  <div
-                    role="status"
-                    className="flex items-start gap-3 rounded-xl bg-amber-50 p-3.5 text-amber-950"
-                  >
-                    <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#D7E4F2] bg-[#F3F8FD] text-amber-800 ">
-                      <ShieldAlert className="h-5 w-5" aria-hidden="true" />
-                    </span>
-                    <div className="min-w-0">
-                      <p className="text-xs font-bold uppercase tracking-wider text-amber-900">
-                        {copy.aside.pendingTitle}
-                      </p>
-                      <p className="mt-0.5 text-xs leading-relaxed text-amber-900/90">
-                        {copy.aside.pendingBody(
-                          formatRoleLabel(currentUser.role, locale),
-                        )}
-                      </p>
-                    </div>
-                  </div>
-                ) : isStaffWorkerRole(currentUser.role) ? (
-                  <div className="flex items-center gap-2.5 rounded-xl bg-emerald-50 px-3.5 py-2.5 text-xs font-semibold text-emerald-900">
-                    <ShieldCheck
-                      className="h-4 w-4 shrink-0 text-[#0066CC]"
-                      aria-hidden="true"
-                    />
-                    <span>{copy.aside.verifiedStaffBanner}</span>
-                  </div>
-                ) : null}
-
                 <div className="flex items-center justify-between gap-3 rounded-xl border border-[#D7E4F2] bg-[#F3F8FD] p-3.5 ">
                   <div className="flex min-w-0 items-center gap-3">
                     <EntityAvatar

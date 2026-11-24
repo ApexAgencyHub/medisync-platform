@@ -37,7 +37,6 @@ import {
 import {
   clearStoredSession,
   readStoredSession,
-  revokeClientSession,
 } from "@/shared/auth/session-storage";
 import { isConsumerUserOrGuest } from "@/shared/auth/role-capabilities";
 import { ConsumerWorkspaceGuard } from "@/shared/auth/ConsumerWorkspaceGuard";
@@ -64,7 +63,10 @@ import {
 import {
   expandMoroccanCityKeywords,
   matchesAccentInsensitiveQuery,
+  searchMoroccanLocations,
+  type MoroccanLocationMatch,
 } from "@/shared/config/morocco-standards";
+import { MoroccanPlacePicker } from "@/shared/ui/MoroccanPlacePicker";
 import {
   SessionAccountBar,
   UiSelect,
@@ -76,16 +78,12 @@ import {
   Building2,
   FlaskConical,
   Hospital,
-  LocateFixed,
-  LogOut,
   MapPin,
   Pill,
   Power,
-  Radio,
   Search,
   SlidersHorizontal,
   Stethoscope,
-  UserCheck,
   X,
 } from "lucide-react";
 import {
@@ -103,6 +101,7 @@ import {
   getPresetForCountry,
   getViewportCenter,
   isCoordinateNearViewport,
+  locationMatchToViewportBox,
   MAP_CITY_PRESETS,
   panViewport,
   toViewportBox,
@@ -219,7 +218,7 @@ const SECTOR_FILTER_ICONS: Record<MapSectorFilter, typeof Ambulance> = {
 
 interface MapSearchSuggestion {
   key: string;
-  targetType: "FACILITY" | "DOCTOR";
+  targetType: "FACILITY" | "DOCTOR" | "LOCATION";
   id: string;
   title: string;
   subtitle: string;
@@ -227,6 +226,7 @@ interface MapSearchSuggestion {
   lat: number;
   lng: number;
   targetLayer: MapSectorFilter;
+  locationMatch?: MoroccanLocationMatch;
 }
 
 function parseMapLayerParam(raw: string | null): MapSectorFilter | null {
@@ -284,6 +284,7 @@ export function DispatchConsole({
   const [selectedCityId, setSelectedCityId] = useState<string>(() =>
     getDefaultCityIdForCountry(defaultCode),
   );
+  const [selectedPlaceLabel, setSelectedPlaceLabel] = useState<string>("");
   const [viewport, setViewport] = useState<ViewportBox>(() =>
     getPresetForCountry(defaultCode),
   );
@@ -654,6 +655,7 @@ export function DispatchConsole({
     const preset = getCityPresetById(cityId);
     if (!preset) return;
     setSelectedCityId(preset.id);
+    setSelectedPlaceLabel("");
     setSelectedCountry(preset.countryCode);
     setViewport(toViewportBox(preset));
     setDetailCardOpen(false);
@@ -673,6 +675,42 @@ export function DispatchConsole({
       setBanner({
         tone: "info",
         text: `Map centered on ${preset.city} (${preset.countryCode})`,
+      });
+    }
+  }
+
+  function handleSelectMoroccanLocation(
+    match: MoroccanLocationMatch | null,
+    options?: { silent?: boolean },
+  ) {
+    if (!match) {
+      handleSelectCity(
+        getDefaultCityIdForCountry(currentUser?.countryCode ?? defaultCode),
+        options,
+      );
+      return;
+    }
+    setSelectedCityId(match.cityId);
+    setSelectedPlaceLabel(match.kind === "PLACE" ? match.labels[locale] : "");
+    setSelectedCountry("MA");
+    setViewport(locationMatchToViewportBox(match));
+    setDetailCardOpen(false);
+    setSelectedFacilityId(null);
+    setSelectedDoctorId(null);
+    setSelectedDriverId(null);
+    setSelectedDispatchId(null);
+    if (selectedCountry !== "MA") {
+      setFacilities([]);
+      setCachedViewportFacilities([]);
+      setDirectoryFacilities([]);
+      setDirectoryDoctors([]);
+      setDirectoryDrivers([]);
+      setDrivers([]);
+    }
+    if (!options?.silent) {
+      setBanner({
+        tone: "info",
+        text: `Map centered on ${match.labels[locale]} (${match.region})`,
       });
     }
   }
@@ -740,11 +778,11 @@ export function DispatchConsole({
       void Promise.all([
         fetchDirectoryFacilities(apiBaseUrl, {
           countryCode: selectedCountry,
-          limit: 100,
+          limit: 150,
         }),
         fetchDirectoryDrivers(apiBaseUrl, {
           countryCode: selectedCountry,
-          limit: 100,
+          limit: 80,
         }),
       ]).then(([facDirRes, fleetRes]) => {
         if (!active) return;
@@ -759,15 +797,15 @@ export function DispatchConsole({
     void Promise.all([
       fetchDirectoryFacilities(apiBaseUrl, {
         countryCode: selectedCountry,
-        limit: 100,
+        limit: 150,
       }),
       fetchDirectoryDoctors(apiBaseUrl, {
         countryCode: selectedCountry,
-        limit: 100,
+        limit: 150,
       }),
       fetchDirectoryDrivers(apiBaseUrl, {
         countryCode: selectedCountry,
-        limit: 100,
+        limit: 80,
       }),
     ]).then(([facDirRes, docsRes, fleetRes]) => {
       if (!active) return;
@@ -2158,6 +2196,31 @@ export function DispatchConsole({
   const locationSearchResults = useMemo<MapSearchSuggestion[]>(() => {
     if (!normalizedSearch) return [];
     const results: MapSearchSuggestion[] = [];
+
+    // 1. All-Morocco cities & neighborhoods (Oujda, Dakhla, Maarif, Agdal, Laâyoune, etc.)
+    const moroccanMatches = searchMoroccanLocations(normalizedSearch, 4);
+    const cityBadge =
+      locale === "ar" ? "مدينة" : locale === "fr" ? "Ville" : "City";
+    const placeBadge =
+      locale === "ar" ? "حي / منطقة" : locale === "fr" ? "Quartier" : "District";
+    for (const loc of moroccanMatches.slice(0, 3)) {
+      results.push({
+        key: `loc-${loc.kind}-${loc.id}`,
+        targetType: "LOCATION",
+        id: loc.id,
+        title: loc.labels[locale],
+        subtitle:
+          loc.kind === "PLACE"
+            ? `${loc.cityLabels[locale]} · ${loc.region}`
+            : loc.region,
+        badge: loc.kind === "PLACE" ? placeBadge : cityBadge,
+        lat: loc.lat,
+        lng: loc.lng,
+        targetLayer: sectorFilter,
+        locationMatch: loc,
+      });
+    }
+
     const facCityById = new Map(directoryFacilities.map((f) => [f.id, f.city]));
     const facMatches = searchableFacilities.filter((fac) => {
       if (openNowOnly && fac.openStatus !== "OPEN") return false;
@@ -2171,7 +2234,7 @@ export function DispatchConsole({
         formatFacilityKind(fac.kind, locale),
       ]);
     });
-    for (const fac of facMatches.slice(0, 6)) {
+    for (const fac of facMatches.slice(0, 5)) {
       results.push({
         key: `fac-${fac.id}`,
         targetType: "FACILITY",
@@ -2230,6 +2293,7 @@ export function DispatchConsole({
     openNowOnly,
     viewport,
     locale,
+    sectorFilter,
   ]);
 
   const destinationHospitalAndClinicPool = useMemo(
@@ -3068,9 +3132,12 @@ export function DispatchConsole({
   );
   const activeCityPreset =
     getCityPresetById(selectedCityId) ?? MAP_CITY_PRESETS[0]!;
-  const isCityFiltered = selectedCityId !== defaultCityId;
-  const hasPopoverFilter = openNowOnly || isCityFiltered;
-  const hasActiveFilter = Boolean(mapSearchQuery.trim() || hasPopoverFilter);
+  const isCityFiltered =
+    selectedCityId !== defaultCityId || Boolean(selectedPlaceLabel);
+  const hasPopoverFilter = openNowOnly;
+  const hasActiveFilter = Boolean(
+    mapSearchQuery.trim() || openNowOnly || isCityFiltered,
+  );
 
   function openEntityFacilityById(facilityId: string) {
     const fac = searchableFacilities.find((f) => f.id === facilityId);
@@ -3103,6 +3170,13 @@ export function DispatchConsole({
   }
 
   function handleSelectSearchSuggestion(item: MapSearchSuggestion) {
+    if (item.targetType === "LOCATION" && item.locationMatch) {
+      handleSelectMoroccanLocation(item.locationMatch);
+      mapSearchQueryRef.current = "";
+      setMapSearchQuery("");
+      setSearchDropdownOpen(false);
+      return;
+    }
     setSectorFilter(item.targetLayer);
     if (item.targetType === "FACILITY") {
       setSelectedDoctorId(null);
@@ -3299,20 +3373,14 @@ export function DispatchConsole({
           <h1 className="sr-only">{t("map.heading")}</h1>
         ) : null}
 
-        <div
-          className={`flex items-center justify-start gap-1.5 sm:gap-2 ${
-            isDriverWorkspace
-              ? "flex-wrap lg:flex-nowrap"
-              : "flex-nowrap"
-          }`}
-        >
-          {/* Standalone Feature 1: Unified Rounded-Full Search + Filters Pill */}
+        <div className="flex flex-wrap items-center justify-start gap-1.5 sm:gap-2">
+          {/* Standalone Feature 1: Unified Rounded-Full Search + Open-Now Filter Pill */}
           <div
             ref={searchContainerRef}
             className={`pointer-events-auto relative order-1 flex min-w-0 items-center gap-1.5 ${
               isDriverWorkspace
-                ? "flex-1 sm:max-w-[230px] sm:flex-none lg:w-[178px] xl:w-[244px]"
-                : "flex-1 sm:max-w-[340px] sm:flex-none xl:w-[340px]"
+                ? "w-full sm:w-[224px] lg:w-[196px] xl:w-[244px]"
+                : "w-full sm:w-[300px] xl:w-[340px]"
             }`}
           >
             <div className="flex h-9 w-full min-w-0 items-center gap-1 rounded-full border border-[#D7E4F2] bg-white/97 ps-3 pe-1 shadow-[0_12px_30px_-8px_rgba(15,36,62,0.14)] backdrop-blur-xl xl:h-10 xl:ps-3.5 xl:pe-1.5">
@@ -3338,13 +3406,19 @@ export function DispatchConsole({
                 onKeyDown={(e) => {
                   if (e.key === "Escape") {
                     setSearchDropdownOpen(false);
-                  } else if (
-                    !isDriverWorkspace &&
-                    e.key === "Enter" &&
-                    locationSearchResults.length > 0
-                  ) {
-                    e.preventDefault();
-                    handleSelectSearchSuggestion(locationSearchResults[0]!);
+                  } else if (e.key === "Enter") {
+                    if (!isDriverWorkspace && locationSearchResults.length > 0) {
+                      e.preventDefault();
+                      handleSelectSearchSuggestion(locationSearchResults[0]!);
+                    } else if (isDriverWorkspace && normalizedSearch) {
+                      const locJump = searchMoroccanLocations(normalizedSearch, 1)[0];
+                      if (locJump) {
+                        e.preventDefault();
+                        handleSelectMoroccanLocation(locJump);
+                        mapSearchQueryRef.current = "";
+                        setMapSearchQuery("");
+                      }
+                    }
                   }
                 }}
                 placeholder={
@@ -3385,7 +3459,7 @@ export function DispatchConsole({
               >
                 <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
                 <span className={isDriverWorkspace ? "hidden xl:inline" : "hidden sm:inline"}>
-                  {isCityFiltered ? activeCityPreset.city : copy.filtersBtn}
+                  {copy.filtersBtn}
                 </span>
                 {hasPopoverFilter && !filtersOpen ? (
                   <span
@@ -3396,7 +3470,7 @@ export function DispatchConsole({
               </button>
             </div>
 
-            {/* Live Facility & Doctor Location Search Results Dropdown */}
+            {/* Live Moroccan Places, Facility & Doctor Search Results Dropdown */}
             {!isDriverWorkspace &&
             searchDropdownOpen &&
             normalizedSearch.length > 0 ? (
@@ -3412,7 +3486,10 @@ export function DispatchConsole({
                 ) : (
                   <ul className="space-y-0.5">
                     {locationSearchResults.map((item) => {
-                      const ResultIcon = SECTOR_FILTER_ICONS[item.targetLayer];
+                      const ResultIcon =
+                        item.targetType === "LOCATION"
+                          ? MapPin
+                          : SECTOR_FILTER_ICONS[item.targetLayer];
                       return (
                         <li key={item.key}>
                           <button
@@ -3422,16 +3499,21 @@ export function DispatchConsole({
                               (item.targetType === "FACILITY" &&
                                 selectedFacilityId === item.id) ||
                               (item.targetType === "DOCTOR" &&
-                                selectedDoctorId === item.id)
+                                selectedDoctorId === item.id) ||
+                              (item.targetType === "LOCATION" &&
+                                selectedCityId === item.locationMatch?.cityId &&
+                                !selectedPlaceLabel)
                             }
                             onClick={() => handleSelectSearchSuggestion(item)}
                             className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-start transition-colors hover:bg-teal-50/70"
                           >
                             <span
                               className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${
-                                item.targetType === "DOCTOR"
-                                  ? "bg-emerald-50 text-[#0066CC]"
-                                  : "bg-teal-50 text-teal-800"
+                                item.targetType === "LOCATION"
+                                  ? "bg-[#EBF4FF] text-[#0066CC]"
+                                  : item.targetType === "DOCTOR"
+                                    ? "bg-emerald-50 text-[#0066CC]"
+                                    : "bg-teal-50 text-teal-800"
                               }`}
                             >
                               <ResultIcon className="h-4 w-4" aria-hidden="true" />
@@ -3458,12 +3540,12 @@ export function DispatchConsole({
               </div>
             ) : null}
 
-            {/* Standalone Filter Popover */}
+            {/* Compact Open-Now & Reset Filter Popover */}
             {filtersOpen ? (
               <div
                 role="dialog"
                 aria-label={copy.mapFiltersDialogAria}
-                className="absolute top-full start-0 z-40 mt-2 w-[300px] max-w-[calc(100vw-1.5rem)] space-y-3 rounded-2xl border border-slate-200 bg-white/98 p-3.5 shadow-2xl backdrop-blur-xl sm:w-[320px]"
+                className="absolute top-full start-0 z-40 mt-2 w-[280px] max-w-[calc(100vw-1.5rem)] space-y-2.5 rounded-2xl border border-slate-200 bg-white/98 p-3.5 shadow-2xl backdrop-blur-xl sm:w-[300px]"
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs font-bold text-slate-900">
@@ -3477,43 +3559,6 @@ export function DispatchConsole({
                   >
                     <X className="h-4 w-4" aria-hidden="true" />
                   </button>
-                </div>
-
-                <div className="space-y-1.5">
-                  <span
-                    id="map-city-filter"
-                    className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500"
-                  >
-                    {copy.cityLabel}
-                  </span>
-                  <div
-                    role="radiogroup"
-                    aria-label={copy.filterCityAria}
-                    className="flex flex-wrap gap-1.5"
-                  >
-                    {MAP_CITY_PRESETS.filter(
-                      (city) => city.group === "Morocco",
-                    ).map((city) => {
-                      const active = selectedCityId === city.id;
-                      return (
-                        <button
-                          key={city.id}
-                          type="button"
-                          role="radio"
-                          aria-checked={active}
-                          onClick={() => handleSelectCity(city.id)}
-                          className={`inline-flex min-h-[30px] items-center gap-1 rounded-full border px-2.5 text-[11px] font-semibold transition active:scale-95 ${
-                            active
-                              ? "border-[#0066CC] bg-[#0066CC] text-white shadow-2xs"
-                              : "border-[#D7E4F2] bg-[#F3F8FD] text-[#2F4661] hover:border-[#0066CC] hover:bg-white"
-                          }`}
-                        >
-                          <MapPin className="h-3 w-3 shrink-0" aria-hidden="true" />
-                          <span>{city.city}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
                 </div>
 
                 <div className="flex items-center justify-between gap-2 pt-0.5">
@@ -3548,20 +3593,35 @@ export function DispatchConsole({
             ) : null}
           </div>
 
-          {/* Standalone Feature 2: Unified Rounded-Full Layer Selector Pill */}
-          <div className="pointer-events-auto order-2 shrink-0 sm:w-auto">
+          {/* Standalone Feature 2: All-Morocco Cities & Neighborhoods Picker Pill */}
+          <div className="pointer-events-auto order-2 shrink-0">
+            <MoroccanPlacePicker
+              value={selectedCityId}
+              {...(selectedPlaceLabel ? { displayLabel: selectedPlaceLabel } : {})}
+              allowAll={false}
+              includePlaces
+              align="start"
+              variant="pill"
+              ariaLabel={copy.filterCityAria}
+              onSelect={(match) => handleSelectMoroccanLocation(match)}
+              className="[&>button]:h-9 [&>button]:bg-white/97 [&>button]:shadow-[0_12px_30px_-8px_rgba(15,36,62,0.14)] [&>button]:backdrop-blur-xl xl:[&>button]:h-10"
+            />
+          </div>
+
+          {/* Standalone Feature 3: Unified Rounded-Full Layer Selector Pill (never clips label) */}
+          <div className="pointer-events-auto order-3 shrink-0">
             {isDriverWorkspace ? (
               <UiSelect
                 aria-label={copy.driverFocusAria}
                 selectSize="sm"
-                wrapperClassName="w-[124px] min-[390px]:w-[138px] lg:w-[144px] xl:w-[186px]"
+                wrapperClassName="w-auto min-w-[176px] sm:min-w-[192px]"
                 startIcon={
                   <Ambulance
                     className="h-3.5 w-3.5 text-[#0066CC] xl:h-4 xl:w-4"
                     aria-hidden="true"
                   />
                 }
-                className="h-9 rounded-full border-[#D7E4F2] bg-white/97 px-2.5 text-xs font-bold text-[#0F243E] shadow-[0_12px_30px_-8px_rgba(15,36,62,0.14)] hover:ring-2 hover:ring-[#0066CC]/20 xl:h-10 xl:px-3.5"
+                className="h-9 whitespace-nowrap rounded-full border-[#D7E4F2] bg-white/97 px-2.5 text-xs font-bold text-[#0F243E] shadow-[0_12px_30px_-8px_rgba(15,36,62,0.14)] hover:ring-2 hover:ring-[#0066CC]/20 xl:h-10 xl:px-3.5"
                 value={driverLayer}
                 onChange={(e) =>
                   setDriverLayer(e.target.value as DriverLayerMode)
@@ -3577,7 +3637,7 @@ export function DispatchConsole({
               <UiSelect
                 aria-label={copy.serviceCategoryAria}
                 selectSize="sm"
-                wrapperClassName="w-[126px] min-[390px]:w-[138px] sm:w-[200px] xl:w-[216px]"
+                wrapperClassName="w-auto min-w-[192px] sm:min-w-[208px]"
                 startIcon={(() => {
                   const ActiveIcon = SECTOR_FILTER_ICONS[sectorFilter];
                   return (
@@ -3587,7 +3647,7 @@ export function DispatchConsole({
                     />
                   );
                 })()}
-                className="h-9 rounded-full border-[#D7E4F2] bg-white/97 px-2.5 text-xs font-bold text-[#0F243E] shadow-[0_12px_30px_-8px_rgba(15,36,62,0.14)] hover:ring-2 hover:ring-[#0066CC]/20 xl:h-10 xl:px-3.5"
+                className="h-9 whitespace-nowrap rounded-full border-[#D7E4F2] bg-white/97 px-2.5 text-xs font-bold text-[#0F243E] shadow-[0_12px_30px_-8px_rgba(15,36,62,0.14)] hover:ring-2 hover:ring-[#0066CC]/20 xl:h-10 xl:px-3.5"
                 value={sectorFilter}
                 onChange={(e) => {
                   setSectorFilter(e.target.value as MapSectorFilter);
@@ -3607,9 +3667,9 @@ export function DispatchConsole({
             )}
           </div>
 
-          {/* Driver Single-Instance Compact Tabs & Duty Pill (inline on lg+, crisp 2nd pill row below lg) */}
+          {/* Driver Compact Tabs & Live Duty Status Pill (tightly grouped, zero dead center gap; GPS/Auto-GPS live solely in DriverDispatchHud) */}
           {isDriverWorkspace && currentUser?.role === "DRIVER" ? (
-            <div className="order-4 flex w-full items-center justify-between gap-1.5 lg:order-3 lg:w-auto lg:justify-start">
+            <div className="order-4 flex flex-wrap items-center gap-1.5 lg:flex-nowrap">
               <div className="pointer-events-auto">
                 <DriverTabBar
                   compact
@@ -3624,7 +3684,7 @@ export function DispatchConsole({
                   }}
                 />
               </div>
-              <div className="pointer-events-auto inline-flex h-9 shrink-0 items-center gap-0.5 rounded-full border border-[#D7E4F2] bg-white/97 p-1 shadow-[0_12px_30px_-8px_rgba(15,36,62,0.14)] backdrop-blur-xl xl:h-10 xl:gap-1">
+              <div className="pointer-events-auto inline-flex h-9 shrink-0 items-center rounded-full border border-[#D7E4F2] bg-white/97 p-1 shadow-[0_12px_30px_-8px_rgba(15,36,62,0.14)] backdrop-blur-xl xl:h-10">
                 <button
                   type="button"
                   disabled={
@@ -3640,7 +3700,7 @@ export function DispatchConsole({
                       driverStatus === "OFF_DUTY" ? "AVAILABLE" : "OFF_DUTY",
                     )
                   }
-                  className={`inline-flex h-7 items-center gap-1 whitespace-nowrap rounded-full px-2 text-[11px] font-bold transition disabled:cursor-not-allowed disabled:opacity-70 xl:h-8 xl:gap-1.5 xl:px-3 ${
+                  className={`inline-flex h-7 items-center gap-1 whitespace-nowrap rounded-full px-2.5 text-[11px] font-bold transition disabled:cursor-not-allowed disabled:opacity-70 xl:h-8 xl:gap-1.5 xl:px-3 ${
                     !driverDutyHydrated
                       ? "bg-slate-100 text-slate-500"
                       : driverStatus === "OFF_DUTY"
@@ -3673,111 +3733,9 @@ export function DispatchConsole({
                           : copy.onlineShortBadge}
                   </span>
                 </button>
-                <button
-                  type="button"
-                  disabled={
-                    busy || !driverDutyHydrated || driverStatus === "OFF_DUTY"
-                  }
-                  onClick={handleUseDriverBrowserGps}
-                  aria-label={copy.syncGpsAria}
-                  title={copy.syncGpsAria}
-                  className="hidden h-7 w-7 items-center justify-center rounded-full text-[#0066CC] transition hover:bg-[#EBF4FF] disabled:opacity-40 sm:inline-flex xl:h-8 xl:w-8"
-                >
-                  <LocateFixed className="h-3.5 w-3.5" aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  disabled={
-                    busy || !driverDutyHydrated || driverStatus === "OFF_DUTY"
-                  }
-                  aria-pressed={autoGpsActive}
-                  aria-label={copy.autoGpsAria}
-                  title={copy.autoGpsAria}
-                  onClick={() => setAutoGpsActive((prev) => !prev)}
-                  className={`hidden h-7 w-7 items-center justify-center rounded-full transition disabled:opacity-40 sm:inline-flex xl:h-8 xl:w-8 ${
-                    autoGpsActive
-                      ? "bg-[#E6F7F4] text-[#0F9D88]"
-                      : "text-[#556E89] hover:bg-[#F3F8FD] hover:text-[#0066CC]"
-                  }`}
-                >
-                  <Radio
-                    className={`h-3.5 w-3.5 ${autoGpsActive ? "animate-pulse" : ""}`}
-                    aria-hidden="true"
-                  />
-                </button>
               </div>
             </div>
           ) : null}
-
-          {/* Standalone Feature 3: Compact Rounded-Full User / Sign-In Pill */}
-          <div className="pointer-events-auto order-3 ms-auto flex shrink-0 items-center gap-1.5 lg:order-4">
-            {currentUser ? (
-              <div className="inline-flex h-9 max-w-[190px] items-center gap-1.5 rounded-full border border-[#D7E4F2] bg-white/97 ps-2.5 pe-1 text-xs shadow-[0_12px_30px_-8px_rgba(15,36,62,0.14)] backdrop-blur-xl xl:h-10 xl:ps-3 xl:pe-1.5">
-                {isDriverWorkspace ? (
-                  <span
-                    aria-label={
-                      streamConnected
-                        ? copy.liveClientFeedBadge
-                        : copy.feedSyncedBadge
-                    }
-                    title={
-                      streamConnected
-                        ? copy.liveClientFeedBadge
-                        : copy.feedSyncedBadge
-                    }
-                    className={`h-2 w-2 shrink-0 rounded-full ${
-                      streamConnected
-                        ? "bg-[#0F9D88] animate-pulse"
-                        : "bg-slate-400"
-                    }`}
-                  />
-                ) : (
-                  <UserCheck
-                    className="h-3.5 w-3.5 shrink-0 text-[#0066CC]"
-                    aria-hidden="true"
-                  />
-                )}
-                <span
-                  className={`hidden max-w-[116px] truncate font-semibold text-[#0F243E] ${
-                    isDriverWorkspace ? "2xl:inline" : "sm:inline"
-                  }`}
-                >
-                  <bdi dir="auto">{currentUser.fullName}</bdi>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    revokeClientSession(apiBaseUrl);
-                    setSession(null);
-                    setDrivers([]);
-                    setDispatches([]);
-                    driverStatusRef.current = "AVAILABLE";
-                    setDriverStatus("AVAILABLE");
-                    driverDutyHydratedRef.current = false;
-                    setDriverDutyHydrated(false);
-                    mapSearchQueryRef.current = "";
-                    setMapSearchQuery("");
-                  }}
-                  aria-label={copy.signOutAria}
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-full text-slate-500 transition hover:bg-rose-50 hover:text-rose-700"
-                >
-                  <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
-                </button>
-              </div>
-            ) : (
-              <div className="inline-flex h-11 items-center gap-1 rounded-full border border-[#D7E4F2] bg-white/97 p-1.5 text-xs shadow-[0_12px_30px_-8px_rgba(15,36,62,0.14)] backdrop-blur-xl">
-                <span className="hidden rounded-full bg-[#EBF4FF] px-3 py-1 text-[11px] font-semibold text-[#0052A3] sm:inline">
-                  {copy.guestUrgentBadge}
-                </span>
-                <Link
-                  href="/portal"
-                  className="inline-flex h-8 items-center rounded-full bg-[#0066CC] px-3.5 text-xs font-semibold text-white transition hover:bg-[#0052A3] sm:px-4"
-                >
-                  {copy.signInCta}
-                </Link>
-              </div>
-            )}
-          </div>
         </div>
       </section>
 

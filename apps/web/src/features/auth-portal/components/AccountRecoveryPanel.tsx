@@ -256,7 +256,11 @@ export function AccountRecoveryPanel({
         ) : null}
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div
+        className={`grid gap-4 ${
+          recoveryPurpose === "RESET_PASSWORD" ? "sm:grid-cols-2" : "grid-cols-1"
+        }`}
+      >
         <div>
           <label
             htmlFor="rec-otp"

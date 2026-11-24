@@ -17,7 +17,7 @@ export default function LabWorkspacePage() {
   const apiBaseUrl = resolvePublicApiUrl();
 
   return (
-    <WorkspaceShell activeRoute="/lab" statusPill="nav.lab">
+    <WorkspaceShell activeRoute="/lab">
       <LabWorkbench packs={packs} apiBaseUrl={apiBaseUrl} />
     </WorkspaceShell>
   );

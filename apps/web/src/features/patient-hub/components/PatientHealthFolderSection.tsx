@@ -43,7 +43,7 @@ export function PatientHealthFolderSection({
 
   return (
     <section
-      id="patient-records"
+      id="patient-folder"
       className="space-y-4 rounded-2xl bg-slate-50 p-5 ring-1 ring-slate-900/[0.06] sm:p-6"
     >
       <div className="flex flex-wrap items-start justify-between gap-2 pb-1">

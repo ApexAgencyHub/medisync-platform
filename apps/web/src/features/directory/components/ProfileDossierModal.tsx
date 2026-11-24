@@ -623,77 +623,131 @@ export function ProfileDossierModal({
                 {target.teamDoctors.length > 0 ||
                 target.teamNurses.length > 0 ||
                 target.fleetDrivers.length > 0 ? (
-                  <div className="space-y-2.5 rounded-2xl bg-[#F3F8FD] border border-[#D7E4F2] p-4">
-                    <p className="flex items-center gap-1.5 text-xs font-bold text-slate-900">
-                      <Building2 className="h-4 w-4 text-[#0066CC]" aria-hidden="true" />
-                      {copy.staffUnitsHeading}
-                    </p>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      {target.teamDoctors.map((doc) => (
-                        <button
-                          key={doc.id}
-                          type="button"
-                          onClick={() => onInspectDoctor?.(doc)}
-                          className="flex items-center justify-between gap-2 rounded-xl border border-[#D7E4F2] bg-[#F3F8FD] px-3 py-2 text-start text-xs  transition hover:ring-2 hover:ring-emerald-600/30 active:scale-[0.98]"
+                  (() => {
+                    const totalStaffCount =
+                      target.teamDoctors.length +
+                      target.teamNurses.length +
+                      target.fleetDrivers.length;
+                    const isOddMulti =
+                      totalStaffCount > 1 && totalStaffCount % 2 === 1;
+                    const docsOffset = 0;
+                    const nursesOffset = target.teamDoctors.length;
+                    const driversOffset =
+                      target.teamDoctors.length + target.teamNurses.length;
+
+                    return (
+                      <div className="space-y-2.5 rounded-2xl border border-[#D7E4F2] bg-[#F3F8FD] p-4">
+                        <p className="flex items-center gap-1.5 text-xs font-bold text-slate-900">
+                          <Building2
+                            className="h-4 w-4 text-[#0066CC]"
+                            aria-hidden="true"
+                          />
+                          {copy.staffUnitsHeading}
+                        </p>
+                        <div
+                          className={`grid gap-2 ${
+                            totalStaffCount === 1
+                              ? "grid-cols-1"
+                              : "grid-cols-1 sm:grid-cols-2"
+                          }`}
                         >
-                          <div className="min-w-0">
-                            <p className="truncate font-bold text-slate-900">
-                              <bdi dir="auto">{doc.fullName}</bdi>
-                            </p>
-                            <p className="truncate text-[11px] text-slate-500">
-                              {formatSpecialtyLabel(doc.specialty, locale)}
-                            </p>
-                          </div>
-                          <span className="font-mono-tabular shrink-0 font-bold text-[#0066CC]">
-                            {formatMoney(doc.consultationFeeMinor, currencyCode)}
-                          </span>
-                        </button>
-                      ))}
-                      {target.teamNurses.map((nurse) => (
-                        <button
-                          key={nurse.id}
-                          type="button"
-                          onClick={() => onInspectDoctor?.(nurse)}
-                          className="flex items-center justify-between gap-2 rounded-xl border border-[#D7E4F2] bg-[#F3F8FD] px-3 py-2 text-start text-xs  transition hover:ring-2 hover:ring-emerald-600/30 active:scale-[0.98]"
-                        >
-                          <div className="min-w-0">
-                            <p className="truncate font-bold text-slate-900">
-                              <bdi dir="auto">{nurse.fullName}</bdi>
-                            </p>
-                            <p className="truncate text-[11px] text-[#0066CC]">
-                              {formatSpecialtyLabel(nurse.specialty, locale)} ·{" "}
-                              {copy.nurseHomeVisitTag}
-                            </p>
-                          </div>
-                          <span className="font-mono-tabular shrink-0 font-bold text-[#0066CC]">
-                            {formatMoney(nurse.consultationFeeMinor, currencyCode)}
-                          </span>
-                        </button>
-                      ))}
-                      {target.fleetDrivers.map((drv) => (
-                        <button
-                          key={drv.id}
-                          type="button"
-                          onClick={() => onInspectDriver?.(drv)}
-                          className="flex items-center justify-between gap-2 rounded-xl border border-[#D7E4F2] bg-[#F3F8FD] px-3 py-2 text-start text-xs  transition hover:ring-2 hover:ring-rose-500/30 active:scale-[0.98]"
-                        >
-                          <div className="min-w-0">
-                            <p className="truncate font-bold text-slate-900">
-                              <bdi dir="auto">{drv.fullName}</bdi>
-                            </p>
-                            <p className="truncate text-[11px] text-slate-500">
-                              {drv.vehicleLabel}
-                            </p>
-                          </div>
-                          <UiBadge tone="red">
-                            {drv.vehicleType === "AMBULANCE"
-                              ? copy.emsAmbulance
-                              : copy.medicalShuttle}
-                          </UiBadge>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+                          {target.teamDoctors.map((doc, idx) => {
+                            const spanLast =
+                              isOddMulti &&
+                              docsOffset + idx === totalStaffCount - 1;
+                            return (
+                              <button
+                                key={doc.id}
+                                type="button"
+                                onClick={() => onInspectDoctor?.(doc)}
+                                className={`flex items-center justify-between gap-2 rounded-xl border border-[#D7E4F2] bg-[#F3F8FD] px-3 py-2 text-start text-xs transition hover:ring-2 hover:ring-emerald-600/30 active:scale-[0.98] ${
+                                  spanLast ? "sm:col-span-2" : ""
+                                }`}
+                              >
+                                <div className="min-w-0">
+                                  <p className="truncate font-bold text-slate-900">
+                                    <bdi dir="auto">{doc.fullName}</bdi>
+                                  </p>
+                                  <p className="truncate text-[11px] text-slate-500">
+                                    {formatSpecialtyLabel(doc.specialty, locale)}
+                                  </p>
+                                </div>
+                                <span className="font-mono-tabular shrink-0 font-bold text-[#0066CC]">
+                                  {formatMoney(
+                                    doc.consultationFeeMinor,
+                                    currencyCode,
+                                  )}
+                                </span>
+                              </button>
+                            );
+                          })}
+                          {target.teamNurses.map((nurse, idx) => {
+                            const spanLast =
+                              isOddMulti &&
+                              nursesOffset + idx === totalStaffCount - 1;
+                            return (
+                              <button
+                                key={nurse.id}
+                                type="button"
+                                onClick={() => onInspectDoctor?.(nurse)}
+                                className={`flex items-center justify-between gap-2 rounded-xl border border-[#D7E4F2] bg-[#F3F8FD] px-3 py-2 text-start text-xs transition hover:ring-2 hover:ring-emerald-600/30 active:scale-[0.98] ${
+                                  spanLast ? "sm:col-span-2" : ""
+                                }`}
+                              >
+                                <div className="min-w-0">
+                                  <p className="truncate font-bold text-slate-900">
+                                    <bdi dir="auto">{nurse.fullName}</bdi>
+                                  </p>
+                                  <p className="truncate text-[11px] text-[#0066CC]">
+                                    {formatSpecialtyLabel(
+                                      nurse.specialty,
+                                      locale,
+                                    )}{" "}
+                                    · {copy.nurseHomeVisitTag}
+                                  </p>
+                                </div>
+                                <span className="font-mono-tabular shrink-0 font-bold text-[#0066CC]">
+                                  {formatMoney(
+                                    nurse.consultationFeeMinor,
+                                    currencyCode,
+                                  )}
+                                </span>
+                              </button>
+                            );
+                          })}
+                          {target.fleetDrivers.map((drv, idx) => {
+                            const spanLast =
+                              isOddMulti &&
+                              driversOffset + idx === totalStaffCount - 1;
+                            return (
+                              <button
+                                key={drv.id}
+                                type="button"
+                                onClick={() => onInspectDriver?.(drv)}
+                                className={`flex items-center justify-between gap-2 rounded-xl border border-[#D7E4F2] bg-[#F3F8FD] px-3 py-2 text-start text-xs transition hover:ring-2 hover:ring-rose-500/30 active:scale-[0.98] ${
+                                  spanLast ? "sm:col-span-2" : ""
+                                }`}
+                              >
+                                <div className="min-w-0">
+                                  <p className="truncate font-bold text-slate-900">
+                                    <bdi dir="auto">{drv.fullName}</bdi>
+                                  </p>
+                                  <p className="truncate text-[11px] text-slate-500">
+                                    {drv.vehicleLabel}
+                                  </p>
+                                </div>
+                                <UiBadge tone="red">
+                                  {drv.vehicleType === "AMBULANCE"
+                                    ? copy.emsAmbulance
+                                    : copy.medicalShuttle}
+                                </UiBadge>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()
                 ) : null}
 
                 <div className="flex flex-wrap items-center justify-between gap-2 pt-2">

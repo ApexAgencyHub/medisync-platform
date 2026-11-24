@@ -488,19 +488,36 @@ export function AppHeader({ activeRoute, statusPill }: AppHeaderProps) {
 
           <div className="flex shrink-0 items-center gap-2">
             {sessionUser ? (
-              <span className="hidden items-center gap-1.5 rounded-full border border-[#D7E4F2] bg-[#F3F8FD] px-2.5 py-1 text-[11.5px] font-medium text-[#0F243E] sm:inline-flex xl:gap-2 xl:px-3 xl:py-1.5 xl:text-xs">
-                <span
-                  aria-hidden="true"
-                  className={`h-2 w-2 rounded-full ${
-                    isPendingStaffVerification(sessionUser)
-                      ? "bg-amber-500"
-                      : "bg-[#0F9D88]"
-                  }`}
-                />
-                <span className="max-w-[115px] truncate xl:max-w-[140px]">
-                  <bdi dir="auto">{sessionUser.fullName}</bdi>
-                </span>
-              </span>
+              <div className="hidden items-center gap-1 rounded-full border border-[#D7E4F2] bg-[#F3F8FD] ps-2.5 pe-1 py-0.5 text-[11.5px] font-medium text-[#0F243E] sm:inline-flex xl:ps-3 xl:text-xs">
+                <Link
+                  href="/profile"
+                  className="inline-flex items-center gap-1.5 py-0.5 hover:text-[#0066CC]"
+                >
+                  <span
+                    aria-hidden="true"
+                    className={`h-2 w-2 rounded-full ${
+                      isPendingStaffVerification(sessionUser)
+                        ? "bg-amber-500"
+                        : "bg-[#0F9D88]"
+                    }`}
+                  />
+                  <span className="max-w-[115px] truncate font-semibold xl:max-w-[150px]">
+                    <bdi dir="auto">{sessionUser.fullName}</bdi>
+                  </span>
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => {
+                    revokeClientSession();
+                    setSessionUser(null);
+                  }}
+                  aria-label="Sign out"
+                  title="Sign out"
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[#556E89] transition-colors hover:bg-rose-50 hover:text-[#DC2626] active:scale-95 xl:h-7 xl:w-7"
+                >
+                  <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+              </div>
             ) : null}
 
             <button

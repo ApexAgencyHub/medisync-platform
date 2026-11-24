@@ -5,6 +5,7 @@ import type {
   LocaleCode,
 } from "@medisync/contracts";
 import { formatVisitMode } from "@/shared/i18n/human-labels";
+import { isNursingSpecialty } from "@/shared/config/morocco-standards";
 import {
   BOOKING_COPY,
   SHORT_MONTH_BY_LOCALE,
@@ -80,7 +81,7 @@ export function getInitialBookingIsoDate(): string {
 }
 
 export function isNurseSpecialty(specialty: string): boolean {
-  return /nursing|infirmier|nurse/i.test(specialty);
+  return isNursingSpecialty(specialty);
 }
 
 export function formatReadableDateLabel(

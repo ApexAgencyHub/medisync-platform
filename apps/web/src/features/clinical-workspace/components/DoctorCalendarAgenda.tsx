@@ -1322,45 +1322,79 @@ export function DoctorCalendarAgenda({
         </div>
       </section>
 
-      {/* 2. Responsive Google Calendar Toolbar */}
-      <section className="flex flex-col gap-2.5 rounded-2xl border border-[#D7E4F2] bg-white p-3.5 shadow-[0_4px_18px_-10px_rgba(15,36,62,0.08)] sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:px-4 sm:py-3">
-        <div className="flex flex-wrap items-center justify-between gap-2 sm:justify-start">
-          <div className="flex items-center gap-1.5">
-            <UiButton
-              size="sm"
-              variant="outline"
-              onClick={() => setAnchorDate(todayIso)}
-            >
-              {gc.todayBtn}
-            </UiButton>
-            <div className="inline-flex items-center gap-1">
-              <button
-                type="button"
-                aria-label={a.prev7Aria}
-                onClick={() => navigatePeriod(-1)}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-[#D7E4F2] bg-white text-[#2F4661] transition-[border-color,color,transform] duration-150 hover:border-[#0066CC] hover:text-[#0066CC] active:scale-95"
+      {/* 2. Responsive Google Calendar Toolbar (2 crisp aligned rows) */}
+      <section className="space-y-2.5 rounded-2xl border border-[#D7E4F2] bg-white p-3.5 shadow-[0_4px_18px_-10px_rgba(15,36,62,0.08)] sm:px-4 sm:py-3">
+        {/* Row 1: Date navigation + Today + View Switcher */}
+        <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2 sm:justify-start">
+            <div className="flex items-center gap-1.5">
+              <UiButton
+                size="sm"
+                variant="outline"
+                onClick={() => setAnchorDate(todayIso)}
               >
-                <ChevronLeft className="h-4 w-4 rtl:rotate-180" aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                aria-label={a.next7Aria}
-                onClick={() => navigatePeriod(1)}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-[#D7E4F2] bg-white text-[#2F4661] transition-[border-color,color,transform] duration-150 hover:border-[#0066CC] hover:text-[#0066CC] active:scale-95"
-              >
-                <ChevronRight className="h-4 w-4 rtl:rotate-180" aria-hidden="true" />
-              </button>
+                {gc.todayBtn}
+              </UiButton>
+              <div className="inline-flex items-center gap-1">
+                <button
+                  type="button"
+                  aria-label={a.prev7Aria}
+                  onClick={() => navigatePeriod(-1)}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-[#D7E4F2] bg-white text-[#2F4661] transition-[border-color,color,transform] duration-150 hover:border-[#0066CC] hover:text-[#0066CC] active:scale-95"
+                >
+                  <ChevronLeft className="h-4 w-4 rtl:rotate-180" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  aria-label={a.next7Aria}
+                  onClick={() => navigatePeriod(1)}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-[#D7E4F2] bg-white text-[#2F4661] transition-[border-color,color,transform] duration-150 hover:border-[#0066CC] hover:text-[#0066CC] active:scale-95"
+                >
+                  <ChevronRight className="h-4 w-4 rtl:rotate-180" aria-hidden="true" />
+                </button>
+              </div>
             </div>
+
+            <h2 className="font-editorial text-sm font-bold text-[#0F243E] sm:text-base">
+              {headingLabel}
+            </h2>
           </div>
 
-          <h2 className="font-editorial text-sm font-bold text-[#0F243E] sm:text-base">
-            {headingLabel}
-          </h2>
+          {/* Day / Week / Month / Agenda Switcher (comfortable 36px touch targets) */}
+          <div className="inline-flex w-full shrink-0 justify-between rounded-xl border border-[#D7E4F2] bg-[#F3F8FD] p-1 sm:w-auto">
+            {(
+              [
+                { id: "DAY", label: gc.viewDay, icon: Clock },
+                { id: "WEEK", label: gc.viewWeek, icon: CalendarDays },
+                { id: "MONTH", label: gc.viewMonth, icon: LayoutGrid },
+                { id: "AGENDA", label: gc.viewAgenda, icon: List },
+              ] as const
+            ).map((opt) => {
+              const Icon = opt.icon;
+              const active = viewMode === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setViewMode(opt.id)}
+                  aria-pressed={active}
+                  className={`inline-flex min-h-[34px] flex-1 items-center justify-center gap-1 rounded-lg px-2.5 text-[11.5px] font-semibold transition-transform duration-100 active:scale-[0.97] sm:flex-none ${
+                    active
+                      ? "bg-[#0066CC] text-white shadow-2xs"
+                      : "text-[#4A627D] hover:text-[#0F243E]"
+                  }`}
+                >
+                  <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  <span>{opt.label}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
-        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-          {/* Search Bar (full width on mobile so placeholder never clips) */}
-          <div className="relative flex w-full items-center sm:w-52">
+        {/* Row 2: Search (flex-1) + Filters + Shifts */}
+        <div className="flex flex-col gap-2 border-t border-[#E8F1FA] pt-2.5 sm:flex-row sm:items-center">
+          <div className="relative flex min-w-0 flex-1 items-center">
             <Search
               className="pointer-events-none absolute start-3 h-3.5 w-3.5 text-[#6B829D]"
               aria-hidden="true"
@@ -1374,38 +1408,7 @@ export function DoctorCalendarAgenda({
             />
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Day / Week / Month / Agenda Switcher (comfortable 36px touch targets) */}
-            <div className="inline-flex flex-1 justify-between rounded-xl border border-[#D7E4F2] bg-[#F3F8FD] p-1 sm:flex-none">
-              {(
-                [
-                  { id: "DAY", label: gc.viewDay, icon: Clock },
-                  { id: "WEEK", label: gc.viewWeek, icon: CalendarDays },
-                  { id: "MONTH", label: gc.viewMonth, icon: LayoutGrid },
-                  { id: "AGENDA", label: gc.viewAgenda, icon: List },
-                ] as const
-              ).map((opt) => {
-                const Icon = opt.icon;
-                const active = viewMode === opt.id;
-                return (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    onClick={() => setViewMode(opt.id)}
-                    aria-pressed={active}
-                    className={`inline-flex min-h-[34px] flex-1 items-center justify-center gap-1 rounded-lg px-2.5 text-[11.5px] font-semibold transition-transform duration-100 active:scale-[0.97] sm:flex-none ${
-                      active
-                        ? "bg-[#0066CC] text-white shadow-2xs"
-                        : "text-[#4A627D] hover:text-[#0F243E]"
-                    }`}
-                  >
-                    <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                    <span>{opt.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
             {/* Mobile/Tablet Mini-Calendar & Filters Drawer Button (hides giant sidebar stack below xl) */}
             <UiButton
               size="sm"

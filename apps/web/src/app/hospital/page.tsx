@@ -17,10 +17,7 @@ export default function HospitalWorkspacePage() {
   const apiBaseUrl = resolvePublicApiUrl();
 
   return (
-    <WorkspaceShell
-      activeRoute="/hospital"
-      statusPill="nav.hospital"
-    >
+    <WorkspaceShell activeRoute="/hospital">
       <HospitalReceptionWorkspace packs={packs} apiBaseUrl={apiBaseUrl} />
     </WorkspaceShell>
   );

@@ -20,8 +20,10 @@ import {
   formatCountryDisplayName,
   formatOpenStatus,
 } from "@/shared/i18n/human-labels";
+import { matchesMoroccanCity } from "@/shared/config/morocco-standards";
 import { useLocale } from "@/shared/i18n/locale-store";
 import { ProductThumbnail } from "@/shared/ui/EntityAvatar";
+import { MoroccanPlacePicker } from "@/shared/ui/MoroccanPlacePicker";
 import { UiBadge, UiButton, UiSelect } from "@/shared/ui/primitives";
 import { MoroccanComplianceBadge } from "@/shared/ui/TactileControls";
 import { PHARMA_COPY } from "../pharmacy-i18n";
@@ -37,6 +39,7 @@ interface PharmacyCatalogGridProps {
   effectiveCountry: string;
   loadingCatalog: boolean;
   searchText: string;
+  selectedCity: string;
   selectedFacilityId: string;
   selectedCategory: PharmacyProductCategory | "ALL";
   safetyFilter: CatalogSafetyFilter;
@@ -44,6 +47,7 @@ interface PharmacyCatalogGridProps {
   sortBy: CatalogSortOption;
   cartQuantities: ReadonlyMap<string, number>;
   onSearchChange: (next: string) => void;
+  onCityChange: (nextCity: string) => void;
   onFacilityChange: (nextFacilityId: string) => void;
   onCategoryChange: (nextCategory: PharmacyProductCategory | "ALL") => void;
   onSafetyFilterChange: (next: CatalogSafetyFilter) => void;
@@ -61,6 +65,7 @@ export function PharmacyCatalogGrid({
   effectiveCountry,
   loadingCatalog,
   searchText,
+  selectedCity,
   selectedFacilityId,
   selectedCategory,
   safetyFilter,
@@ -68,6 +73,7 @@ export function PharmacyCatalogGrid({
   sortBy,
   cartQuantities,
   onSearchChange,
+  onCityChange,
   onFacilityChange,
   onCategoryChange,
   onSafetyFilterChange,
@@ -80,14 +86,35 @@ export function PharmacyCatalogGrid({
   const { locale, t } = useLocale();
   const copy = PHARMA_COPY[locale];
 
+  const cityFilteredFacilities = selectedCity
+    ? facilities.filter((fac) =>
+        matchesMoroccanCity(selectedCity, fac.city, [fac.address, fac.name]),
+      )
+    : facilities;
+
+  const facilityById = new Map(facilities.map((fac) => [fac.id, fac]));
+
   const selectedFacility = selectedFacilityId
-    ? (facilities.find((fac) => fac.id === selectedFacilityId) ?? null)
-    : facilities.length === 1
-      ? facilities[0]!
+    ? (cityFilteredFacilities.find((fac) => fac.id === selectedFacilityId) ?? null)
+    : cityFilteredFacilities.length === 1
+      ? cityFilteredFacilities[0]!
       : null;
 
   const visibleProducts = products
     .filter((product) => {
+      if (selectedCity) {
+        const fac = facilityById.get(product.facilityId);
+        if (
+          fac &&
+          !matchesMoroccanCity(selectedCity, fac.city, [
+            fac.address,
+            fac.name,
+            product.facilityName,
+          ])
+        ) {
+          return false;
+        }
+      }
       if (safetyFilter === "OTC_ONLY" && product.requiresPrescription) {
         return false;
       }
@@ -148,10 +175,10 @@ export function PharmacyCatalogGrid({
         </div>
       ) : null}
 
-      {/* Unified Search, Facility, Rx Filter & Categories Bar */}
-      <div className="w-full min-w-0 space-y-2.5 overflow-hidden rounded-2xl border border-[#D7E4F2] bg-white p-4">
-        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-12">
-          <div className="flex h-10 items-center gap-2 rounded-xl bg-white px-3.5 shadow-2xs transition-colors focus-within:ring-2 focus-within:ring-emerald-600/20 sm:col-span-7">
+      {/* Unified Search, Moroccan City Picker, Facility, Wrapped Categories & Balanced Filter/Sort Rows */}
+      <div className="w-full min-w-0 space-y-2.5 rounded-2xl border border-[#D7E4F2] bg-white p-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex h-10 min-w-[200px] flex-1 basis-full items-center gap-2 rounded-xl border border-[#D7E4F2] bg-[#F8FBFE] px-3.5 transition-colors focus-within:border-[#0066CC] focus-within:bg-white focus-within:ring-2 focus-within:ring-[#0066CC]/15 sm:basis-0">
             <Search
               className="h-4 w-4 shrink-0 text-[#0066CC]"
               aria-hidden="true"
@@ -176,19 +203,29 @@ export function PharmacyCatalogGrid({
             ) : null}
           </div>
 
-          <div className="sm:col-span-5">
+          <MoroccanPlacePicker
+            value={selectedCity}
+            allowAll
+            includePlaces={false}
+            align="start"
+            variant="toolbar"
+            onSelect={(match) => onCityChange(match?.cityName ?? "")}
+            className="shrink-0 [&>button]:h-10"
+          />
+
+          <div className="w-full shrink-0 sm:w-[220px]">
             <UiSelect
               id="pharma-facility-filter"
               aria-label={copy.facilityFilterAria}
               selectSize="sm"
-              className="h-10 rounded-xl border-transparent bg-white shadow-2xs"
+              className="h-10 rounded-xl border-[#D7E4F2] bg-white shadow-2xs"
               value={selectedFacilityId}
               onChange={(e) => onFacilityChange(e.target.value)}
             >
               <option value="">
-                {copy.allPharmaciesOption} ({facilities.length})
+                {copy.allPharmaciesOption} ({cityFilteredFacilities.length})
               </option>
-              {facilities.map((fac) => (
+              {cityFilteredFacilities.map((fac) => (
                 <option key={fac.id} value={fac.id}>
                   {fac.name} ({fac.licenseNumber})
                 </option>
@@ -197,15 +234,15 @@ export function PharmacyCatalogGrid({
           </div>
         </div>
 
-        {/* Categories Row */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none]">
+        {/* Categories Row — wraps cleanly instead of horizontal clipping */}
+        <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
             onClick={() => onCategoryChange("ALL")}
-            className={`h-8 shrink-0 rounded-full px-3.5 text-xs font-semibold transition-all active:scale-[0.98] ${
+            className={`h-8 shrink-0 rounded-full border px-3.5 text-xs font-semibold transition-all active:scale-[0.98] ${
               selectedCategory === "ALL"
-                ? "bg-[#0066CC] text-white shadow-2xs"
-                : "bg-white text-slate-700 hover:bg-emerald-50 hover:text-[#0066CC]"
+                ? "border-[#0066CC] bg-[#0066CC] text-white shadow-2xs"
+                : "border-[#D7E4F2] bg-[#F8FBFE] text-slate-700 hover:border-[#0066CC] hover:bg-[#EBF4FF] hover:text-[#0066CC]"
             }`}
           >
             {copy.allCategoriesBtn}
@@ -215,10 +252,10 @@ export function PharmacyCatalogGrid({
               key={cat}
               type="button"
               onClick={() => onCategoryChange(cat)}
-              className={`h-8 shrink-0 rounded-full px-3.5 text-xs font-semibold transition-all active:scale-[0.98] ${
+              className={`h-8 shrink-0 rounded-full border px-3.5 text-xs font-semibold transition-all active:scale-[0.98] ${
                 selectedCategory === cat
-                  ? "bg-[#0066CC] text-white shadow-2xs"
-                  : "bg-white text-slate-700 hover:bg-emerald-50 hover:text-[#0066CC]"
+                  ? "border-[#0066CC] bg-[#0066CC] text-white shadow-2xs"
+                  : "border-[#D7E4F2] bg-[#F8FBFE] text-slate-700 hover:border-[#0066CC] hover:bg-[#EBF4FF] hover:text-[#0066CC]"
               }`}
             >
               {copy.categories[cat]}
@@ -226,78 +263,77 @@ export function PharmacyCatalogGrid({
           ))}
         </div>
 
-        {/* Clinical Filter Chips & Sort */}
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-          <div className="flex flex-wrap items-center gap-1.5">
-            {(
-              [
-                { id: "ALL", label: copy.allTypesChip },
-                { id: "OTC_ONLY", label: copy.otcReadyChip },
-                { id: "RX_ONLY", label: copy.rxOnlyChip },
-              ] as const
-            ).map((opt) => (
-              <button
-                key={opt.id}
-                type="button"
-                onClick={() => onSafetyFilterChange(opt.id)}
-                className={`h-7 rounded-full px-3 text-[11px] font-semibold transition ${
-                  safetyFilter === opt.id
-                    ? "bg-[#0066CC] text-white"
-                    : "bg-white text-slate-600 shadow-2xs hover:text-[#0066CC]"
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-
+        {/* Clinical Safety & Stock Chips Row */}
+        <div className="flex flex-wrap items-center gap-1.5 border-t border-[#E8F1FA] pt-2.5">
+          {(
+            [
+              { id: "ALL", label: copy.allTypesChip },
+              { id: "OTC_ONLY", label: copy.otcReadyChip },
+              { id: "RX_ONLY", label: copy.rxOnlyChip },
+            ] as const
+          ).map((opt) => (
             <button
+              key={opt.id}
               type="button"
-              aria-pressed={inStockOnly}
-              onClick={() => onInStockOnlyChange(!inStockOnly)}
-              className={`h-7 rounded-full px-3 text-[11px] font-semibold transition ${
-                inStockOnly
-                  ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-600/30"
-                  : "bg-white text-slate-600 shadow-2xs hover:text-[#0066CC]"
+              onClick={() => onSafetyFilterChange(opt.id)}
+              className={`h-7 rounded-full border px-3 text-[11px] font-semibold transition ${
+                safetyFilter === opt.id
+                  ? "border-[#0066CC] bg-[#0066CC] text-white"
+                  : "border-[#D7E4F2] bg-white text-slate-600 hover:border-[#0066CC] hover:text-[#0066CC]"
               }`}
             >
-              {copy.inStockOnlyChip}
+              {opt.label}
             </button>
-          </div>
+          ))}
 
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="font-mono-tabular text-[11px] font-medium text-slate-500">
-              {visibleProducts.length} {copy.itemsWord}
-            </span>
-            <div
-              role="radiogroup"
-              aria-label={copy.sortAria}
-              className="inline-flex flex-wrap items-center gap-1 rounded-full border border-[#D7E4F2] bg-[#F3F8FD] p-0.5"
-            >
-              {(
-                [
-                  { id: "recommended" as const, label: copy.sortRecommended },
-                  { id: "price_asc" as const, label: copy.sortPriceAsc },
-                  { id: "price_desc" as const, label: copy.sortPriceDesc },
-                  { id: "name_asc" as const, label: copy.sortNameAsc },
-                ] as const
-              ).map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={sortBy === s.id}
-                  onClick={() => onSortChange(s.id)}
-                  className={`h-7 rounded-full px-2.5 text-[11px] font-semibold transition ${
-                    sortBy === s.id
-                      ? "bg-[#0066CC] text-white shadow-2xs"
-                      : "text-[#4A627D] hover:bg-white hover:text-[#0F243E]"
-                  }`}
-                >
-                  {s.label}
-                </button>
-              ))}
-            </div>
+          <button
+            type="button"
+            aria-pressed={inStockOnly}
+            onClick={() => onInStockOnlyChange(!inStockOnly)}
+            className={`h-7 rounded-full border px-3 text-[11px] font-semibold transition ${
+              inStockOnly
+                ? "border-emerald-300 bg-emerald-50 text-emerald-800"
+                : "border-[#D7E4F2] bg-white text-slate-600 hover:border-[#0066CC] hover:text-[#0066CC]"
+            }`}
+          >
+            {copy.inStockOnlyChip}
+          </button>
+        </div>
+
+        {/* Dedicated Sort Row + Count */}
+        <div className="flex flex-wrap items-center gap-2 border-t border-[#E8F1FA] pt-2">
+          <div
+            role="radiogroup"
+            aria-label={copy.sortAria}
+            className="inline-flex flex-wrap items-center gap-1 rounded-xl border border-[#D7E4F2] bg-[#F3F8FD] p-0.5"
+          >
+            {(
+              [
+                { id: "recommended" as const, label: copy.sortRecommended },
+                { id: "price_asc" as const, label: copy.sortPriceAsc },
+                { id: "price_desc" as const, label: copy.sortPriceDesc },
+                { id: "name_asc" as const, label: copy.sortNameAsc },
+              ] as const
+            ).map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                role="radio"
+                aria-checked={sortBy === s.id}
+                onClick={() => onSortChange(s.id)}
+                className={`h-7 rounded-lg px-2.5 text-[11px] font-semibold transition ${
+                  sortBy === s.id
+                    ? "bg-[#0066CC] text-white shadow-2xs"
+                    : "text-[#4A627D] hover:bg-white hover:text-[#0F243E]"
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
           </div>
+          <span className="font-mono-tabular text-[11px] font-semibold text-slate-500">
+            {visibleProducts.length} {copy.itemsWord}
+          </span>
         </div>
       </div>
 
@@ -323,6 +359,7 @@ export function PharmacyCatalogGrid({
             size="sm"
             onClick={() => {
               onSearchChange("");
+              onCityChange("");
               onCategoryChange("ALL");
               onSafetyFilterChange("ALL");
               onInStockOnlyChange(false);

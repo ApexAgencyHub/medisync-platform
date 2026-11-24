@@ -335,12 +335,9 @@ export function PharmacistInventoryDesk({
           className="space-y-3 rounded-2xl border border-[#BFDBFE] bg-[#F8FBFE] p-5 shadow-[0_6px_22px_-12px_rgba(15,36,62,0.08)]"
         >
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="font-editorial text-base font-bold text-[#0F243E]">
-                {copy.addMedHeading} ({effectiveCountry})
-              </h2>
-              <MoroccanComplianceBadge domain="pharmacy" locale={locale} />
-            </div>
+            <h2 className="font-editorial text-base font-bold text-[#0F243E]">
+              {copy.addMedHeading} ({effectiveCountry})
+            </h2>
             <button
               type="button"
               onClick={() => setComposerOpen(false)}
@@ -550,14 +547,17 @@ export function PharmacistInventoryDesk({
         ) : null}
 
         <section className="space-y-3 rounded-2xl border border-[#D7E4F2] bg-white p-5 shadow-[0_6px_22px_-12px_rgba(15,36,62,0.08)]">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-2">
+          <div className="space-y-2.5">
+            {/* Row 1: Desk Heading & Single Moroccan Compliance Badge */}
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="font-editorial text-base font-bold text-[#0F243E]">
                 {copy.liveInventoryHeading}
               </h2>
               <MoroccanComplianceBadge domain="pharmacy" locale={locale} />
             </div>
-            <div className="flex flex-wrap items-center gap-1.5">
+
+            {/* Row 2: Action Button + Status Filters packed tightly */}
+            <div className="flex flex-wrap items-center gap-1.5 border-t border-[#E8F1FA] pt-2.5">
               <UiButton
                 type="button"
                 size="sm"

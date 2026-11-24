@@ -24,7 +24,6 @@ import {
   CalendarClock,
   Compass,
   FlaskConical,
-  HeartPulse,
   Hospital,
   MapPin,
   Navigation,
@@ -35,10 +34,10 @@ import {
 } from "lucide-react";
 import {
   DynamicViewportVectorMap as ViewportVectorMap,
-  MAP_CITY_PRESETS,
   getCityPresetById,
   getPresetForCountry,
   getViewportCenter,
+  locationMatchToViewportBox,
   panViewport,
   queryViewportFacilities,
   toViewportBox,
@@ -56,6 +55,10 @@ import {
   resolveActivePack,
 } from "@/shared/config/deployment";
 import {
+  searchMoroccanLocations,
+  type MoroccanLocationMatch,
+} from "@/shared/config/morocco-standards";
+import {
   formatDriverStatus,
   formatFacilityKind,
   formatOpenStatus,
@@ -68,11 +71,11 @@ import {
   resolveFacilityPicture,
   resolveVehiclePicture,
 } from "@/shared/ui/EntityAvatar";
+import { MoroccanPlacePicker } from "@/shared/ui/MoroccanPlacePicker";
 import {
   UiBadge,
   UiButton,
   UiLinkButton,
-  UiSelect,
 } from "@/shared/ui/primitives";
 
 interface HomeCareLaunchpadProps {
@@ -244,15 +247,15 @@ const FALLBACK_CASABLANCA_DRIVERS: readonly DirectoryDriverSummary[] = [
 
 const HERO_COPY = {
   en: {
-    searchPlaceholder: "Hospital, clinic, doctor, or pharmacy...",
+    searchPlaceholder: "City, district, hospital, doctor, or pharmacy...",
     layers: [
-      { id: "ALL" as const, label: "All Care" },
+      { id: "ALL" as const, label: "All" },
       { id: "HOSPITAL" as const, label: "Hospitals" },
       { id: "CLINIC" as const, label: "Clinics" },
-      { id: "PHARMACY" as const, label: "24/7 Pharmacy" },
+      { id: "PHARMACY" as const, label: "Pharmacy" },
       { id: "DIAGNOSTIC_LAB" as const, label: "Labs" },
       { id: "DOCTOR" as const, label: "Doctors" },
-      { id: "DRIVER" as const, label: "Ambulances" },
+      { id: "DRIVER" as const, label: "EMS 141" },
     ],
     searchCta: "Search",
     pharmacyCta: "24/7 Pharmacy",
@@ -261,7 +264,7 @@ const HERO_COPY = {
     readyFeedLabel: "Active",
     hubsWord: "centers",
     unitsWord: "units",
-    cityAria: "Jump live map to Moroccan city",
+    cityAria: "Jump live map to Moroccan city or district",
     layerBarAria: "Filter care layers on live map",
     openFullMap: "Open Full Map",
     bookVisit: "Book Appointment",
@@ -270,17 +273,18 @@ const HERO_COPY = {
     fastBookHere: "1-Tap Dispatch Here",
     closePreviewAria: "Close map pin preview",
     tapPinHint: "Select any medical center on the map for details & booking",
+    placeBadge: "Morocco Place",
   },
   fr: {
-    searchPlaceholder: "Hôpital, clinique, médecin ou pharmacie...",
+    searchPlaceholder: "Ville, quartier, hôpital, médecin ou pharmacie...",
     layers: [
       { id: "ALL" as const, label: "Tout" },
       { id: "HOSPITAL" as const, label: "Hôpitaux" },
       { id: "CLINIC" as const, label: "Cliniques" },
-      { id: "PHARMACY" as const, label: "Pharmacies 24/7" },
+      { id: "PHARMACY" as const, label: "Pharmacie" },
       { id: "DIAGNOSTIC_LAB" as const, label: "Labos" },
       { id: "DOCTOR" as const, label: "Médecins" },
-      { id: "DRIVER" as const, label: "Ambulances" },
+      { id: "DRIVER" as const, label: "SAMU 141" },
     ],
     searchCta: "Rechercher",
     pharmacyCta: "Pharmacie 24/7",
@@ -289,7 +293,7 @@ const HERO_COPY = {
     readyFeedLabel: "Actif",
     hubsWord: "centres",
     unitsWord: "unités",
-    cityAria: "Centrer la carte sur une ville",
+    cityAria: "Centrer la carte sur une ville ou un quartier",
     layerBarAria: "Filtrer les services médicaux sur la carte",
     openFullMap: "Ouvrir la Carte",
     bookVisit: "Prendre RDV",
@@ -298,17 +302,18 @@ const HERO_COPY = {
     fastBookHere: "Trajet 1-Clic ici",
     closePreviewAria: "Fermer l'aperçu",
     tapPinHint: "Cliquez sur un établissement sur la carte pour réserver",
+    placeBadge: "Lieu Maroc",
   },
   ar: {
-    searchPlaceholder: "مستشفى، عيادة، طبيب أو صيدلية...",
+    searchPlaceholder: "مدينة، حي، مستشفى، طبيب أو صيدلية...",
     layers: [
       { id: "ALL" as const, label: "الكل" },
-      { id: "HOSPITAL" as const, label: "المستشفيات" },
-      { id: "CLINIC" as const, label: "العيادات" },
-      { id: "PHARMACY" as const, label: "صيدليات 24/7" },
-      { id: "DIAGNOSTIC_LAB" as const, label: "المختبرات" },
-      { id: "DOCTOR" as const, label: "الأطباء" },
-      { id: "DRIVER" as const, label: "الإسعاف" },
+      { id: "HOSPITAL" as const, label: "مستشفيات" },
+      { id: "CLINIC" as const, label: "عيادات" },
+      { id: "PHARMACY" as const, label: "صيدليات" },
+      { id: "DIAGNOSTIC_LAB" as const, label: "مختبرات" },
+      { id: "DOCTOR" as const, label: "أطباء" },
+      { id: "DRIVER" as const, label: "إسعاف 141" },
     ],
     searchCta: "بحث",
     pharmacyCta: "صيدلية 24/7",
@@ -317,7 +322,7 @@ const HERO_COPY = {
     readyFeedLabel: "نشط",
     hubsWord: "مراكز",
     unitsWord: "وحدات",
-    cityAria: "الانتقال إلى مدينة على الخريطة",
+    cityAria: "الانتقال إلى مدينة أو حي على الخريطة",
     layerBarAria: "تصفية الخدمات الطبية على الخريطة",
     openFullMap: "فتح الخريطة الكاملة",
     bookVisit: "حجز موعد",
@@ -326,6 +331,7 @@ const HERO_COPY = {
     fastBookHere: "طلب نقل إلى هنا",
     closePreviewAria: "إغلاق المعاينة",
     tapPinHint: "انقر على أي مركز طبي على الخريطة لعرض التفاصيل والحجز",
+    placeBadge: "موقع بالمغرب",
   },
 } as const;
 
@@ -338,8 +344,6 @@ const LAYER_ICONS: Record<HomeMapLayer, typeof Compass> = {
   DOCTOR: Stethoscope,
   DRIVER: Ambulance,
 };
-
-const MOROCCO_CITIES = MAP_CITY_PRESETS.filter((c) => c.group === "Morocco");
 
 const MOBILE_CASABLANCA_VIEWPORT: ViewportBox = {
   districtLabel: "Casablanca Central Metro",
@@ -367,6 +371,7 @@ export function HomeCareLaunchpad({
     getPresetForCountry(countryCode),
   );
   const [selectedCityId, setSelectedCityId] = useState("casablanca");
+  const [selectedPlaceLabel, setSelectedPlaceLabel] = useState<string>("");
   const [activeLayer, setActiveLayer] = useState<HomeMapLayer>("ALL");
   const [apiOnline, setApiOnline] = useState(false);
 
@@ -426,8 +431,8 @@ export function HomeCareLaunchpad({
     let cancelled = false;
 
     void Promise.all([
-      fetchDirectoryDoctors(resolvedApiBase, { countryCode, limit: 20 }),
-      fetchDirectoryDrivers(resolvedApiBase, { countryCode, limit: 12 }),
+      fetchDirectoryDoctors(resolvedApiBase, { countryCode, limit: 80 }),
+      fetchDirectoryDrivers(resolvedApiBase, { countryCode, limit: 60 }),
     ]).then(([docsRes, drvRes]) => {
       if (cancelled) return;
       if (docsRes.ok && docsRes.doctors.length > 0) {
@@ -629,6 +634,17 @@ export function HomeCareLaunchpad({
     const results: Array<
       | {
           key: string;
+          type: "LOCATION";
+          match: MoroccanLocationMatch;
+          title: string;
+          subtitle: string;
+          badge: string;
+          layer: HomeMapLayer;
+          lat: number;
+          lng: number;
+        }
+      | {
+          key: string;
           type: "FACILITY";
           id: string;
           title: string;
@@ -650,6 +666,24 @@ export function HomeCareLaunchpad({
           lng: number;
         }
     > = [];
+
+    const locationMatches = searchMoroccanLocations(searchTerm, 4);
+    for (const loc of locationMatches) {
+      results.push({
+        key: `loc-${loc.kind}-${loc.id}`,
+        type: "LOCATION",
+        match: loc,
+        title: loc.labels[locale],
+        subtitle:
+          loc.kind === "PLACE"
+            ? `${loc.cityLabels[locale]} · ${loc.region}`
+            : loc.region,
+        badge: copy.placeBadge,
+        layer: "ALL",
+        lat: loc.lat,
+        lng: loc.lng,
+      });
+    }
 
     for (const fac of facilities) {
       const hay =
@@ -688,19 +722,21 @@ export function HomeCareLaunchpad({
       }
     }
 
-    return results.slice(0, 6);
-  }, [normalizedSearch, facilities, doctors, doctorPins, locale, countryCode]);
+    return results.slice(0, 7);
+  }, [normalizedSearch, searchTerm, facilities, doctors, doctorPins, locale, countryCode, copy.placeBadge]);
 
   function withCountry(href: string) {
     const sep = href.includes("?") ? "&" : "?";
     return `${href}${sep}country=${encodeURIComponent(countryCode)}`;
   }
 
-  function handleCitySelect(cityId: string) {
-    const preset = getCityPresetById(cityId);
-    if (!preset) return;
-    setSelectedCityId(preset.id);
-    setViewport(toViewportBox(preset));
+  function handleLocationJump(match: MoroccanLocationMatch | null) {
+    if (!match) return;
+    setSelectedCityId(match.cityId);
+    setSelectedPlaceLabel(
+      match.kind === "PLACE" ? match.labels[locale] : "",
+    );
+    setViewport(locationMatchToViewportBox(match));
     setSelectedFacilityId(null);
     setSelectedDoctorId(null);
     setSelectedDriverId(null);
@@ -732,6 +768,11 @@ export function HomeCareLaunchpad({
     const cleaned = searchTerm.trim();
     if (quickSuggestions.length > 0) {
       const top = quickSuggestions[0]!;
+      if (top.type === "LOCATION") {
+        handleLocationJump(top.match);
+        setSearchDropdownOpen(false);
+        return;
+      }
       setActiveLayer(top.layer);
       if (top.type === "FACILITY") {
         setSelectedDoctorId(null);
@@ -757,29 +798,8 @@ export function HomeCareLaunchpad({
 
   const commandCardBody = (
     <div className="flex flex-col gap-2.5 xl:gap-3.5">
-      {/* Authentic Medical Network Status Row */}
-      <div className="flex flex-wrap items-center justify-between gap-1.5">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-[#BFDBFE] bg-[#EBF4FF] px-2.5 py-0.5 text-[10.5px] font-semibold text-[#0052A3] xl:py-1 xl:text-[11px]">
-            <HeartPulse className="h-3 w-3 text-[#0066CC] xl:h-3.5 xl:w-3.5" aria-hidden="true" />
-            <span>{t("home.eyebrow")}</span>
-          </span>
-          {activePack ? (
-            <span
-              dir="ltr"
-              className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10.5px] font-semibold text-[#DC2626] xl:px-2.5 xl:py-1 xl:text-[11px]"
-            >
-              <span
-                aria-hidden="true"
-                className="h-1.5 w-1.5 rounded-full bg-[#DC2626]"
-              />
-              <span>
-                {activePack.emergencyHotlines.ambulance} /{" "}
-                {activePack.emergencyHotlines.generalEmergency}
-              </span>
-            </span>
-          ) : null}
-        </div>
+      {/* Compact Live Telemetry Strip (avoids duplicating AppHeader's network & 141 pill) */}
+      <div className="flex items-center justify-between gap-2">
         <span className="inline-flex items-center gap-1.5 rounded-full border border-[#B2E5DC] bg-[#E6F7F4] px-2.5 py-0.5 text-[10.5px] font-semibold text-[#0B6B5C] xl:py-1 xl:text-[11px]">
           <span
             aria-hidden="true"
@@ -787,6 +807,16 @@ export function HomeCareLaunchpad({
           />
           {apiOnline ? copy.liveFeedLabel : copy.readyFeedLabel}
         </span>
+        <div
+          dir="ltr"
+          className="inline-flex items-center gap-1.5 rounded-full border border-[#D7E4F2] bg-[#F3F8FD] px-2.5 py-0.5 font-mono-tabular text-[11px] font-semibold text-[#4A627D] xl:py-1"
+        >
+          <span className="text-[#0066CC]">{facilities.length}</span>
+          <span>{copy.hubsWord}</span>
+          <span className="text-[#B7CDE4]">·</span>
+          <span className="text-[#0F243E]">{liveDrivers.length}</span>
+          <span>{copy.unitsWord}</span>
+        </div>
       </div>
 
       {/* Crisp Clinical Sans Headline */}
@@ -869,7 +899,8 @@ export function HomeCareLaunchpad({
             className="absolute inset-x-0 top-full z-40 mt-1.5 max-h-[240px] overflow-y-auto rounded-2xl border border-[#D7E4F2] bg-white/98 p-1.5 shadow-[0_18px_40px_rgba(15,36,62,0.16)] backdrop-blur-xl"
           >
             {quickSuggestions.map((item) => {
-              const Icon = LAYER_ICONS[item.layer];
+              const Icon =
+                item.type === "LOCATION" ? MapPin : LAYER_ICONS[item.layer];
               return (
                 <button
                   key={item.key}
@@ -877,6 +908,11 @@ export function HomeCareLaunchpad({
                   role="option"
                   aria-selected={false}
                   onClick={() => {
+                    if (item.type === "LOCATION") {
+                      handleLocationJump(item.match);
+                      setSearchDropdownOpen(false);
+                      return;
+                    }
                     setActiveLayer(item.layer);
                     if (item.type === "FACILITY") {
                       setSelectedDoctorId(null);
@@ -954,25 +990,15 @@ export function HomeCareLaunchpad({
         </div>
       </div>
 
-      {/* Emergency Dispatch Strip */}
-      <div className="flex items-center justify-between gap-2 border-t border-[#E8F1FA] pt-3">
+      {/* Emergency Dispatch Strip — full-width single CTA, zero split gap */}
+      <div className="border-t border-[#E8F1FA] pt-2.5">
         <Link
           href={withCountry("/map?fastBook=1")}
-          className="inline-flex h-10 flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl bg-[#DC2626] px-3.5 text-xs font-bold text-white shadow-[0_8px_20px_-6px_rgba(220,38,38,0.45)] transition hover:bg-[#B91C1C] active:scale-[0.98]"
+          className="inline-flex h-10 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-xl bg-[#DC2626] px-3.5 text-xs font-bold text-white shadow-[0_8px_20px_-6px_rgba(220,38,38,0.45)] transition hover:bg-[#B91C1C] active:scale-[0.98]"
         >
           <Ambulance className="h-4 w-4 shrink-0" aria-hidden="true" />
           <span>{copy.fastBookCta}</span>
         </Link>
-        <div
-          dir="ltr"
-          className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border border-[#D7E4F2] bg-[#F3F8FD] px-3 font-mono-tabular text-[11px] font-semibold text-[#4A627D]"
-        >
-          <span className="text-[#0066CC]">{facilities.length}</span>
-          <span>{copy.hubsWord}</span>
-          <span className="text-[#B7CDE4]">·</span>
-          <span className="text-[#0F243E]">{liveDrivers.length}</span>
-          <span>{copy.unitsWord}</span>
-        </div>
       </div>
     </div>
   );
@@ -981,7 +1007,7 @@ export function HomeCareLaunchpad({
     <div
       role="group"
       aria-label={copy.layerBarAria}
-      className="flex items-center gap-1 overflow-x-auto atlas-no-scrollbar"
+      className="flex flex-wrap items-center gap-1"
     >
       {copy.layers.map((layer) => {
         const Icon = LAYER_ICONS[layer.id];
@@ -995,7 +1021,7 @@ export function HomeCareLaunchpad({
               setActiveLayer(layer.id);
               clearSelection();
             }}
-            className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-[11.5px] font-semibold transition-colors xl:px-3 ${
+            className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-[11.5px] font-semibold transition-colors active:scale-[0.98] ${
               active
                 ? "bg-[#0066CC] text-white shadow-xs"
                 : "text-[#3B5570] hover:bg-[#EBF4FF] hover:text-[#0052A3]"
@@ -1013,23 +1039,16 @@ export function HomeCareLaunchpad({
   );
 
   const citySelector = (
-    <UiSelect
-      aria-label={copy.cityAria}
-      selectSize="sm"
-      wrapperClassName="w-[146px] shrink-0"
-      startIcon={
-        <MapPin className="h-3.5 w-3.5 text-[#0066CC]" aria-hidden="true" />
-      }
-      className="h-8 rounded-full border-[#D7E4F2] bg-[#F3F8FD] text-xs font-semibold text-[#0F243E]"
+    <MoroccanPlacePicker
       value={selectedCityId}
-      onChange={(e) => handleCitySelect(e.target.value)}
-    >
-      {MOROCCO_CITIES.map((city) => (
-        <option key={city.id} value={city.id}>
-          {city.city}
-        </option>
-      ))}
-    </UiSelect>
+      displayLabel={selectedPlaceLabel || undefined}
+      allowAll={false}
+      includePlaces
+      variant="pill"
+      align="end"
+      ariaLabel={copy.cityAria}
+      onSelect={handleLocationJump}
+    />
   );
 
   return (
@@ -1039,16 +1058,16 @@ export function HomeCareLaunchpad({
       className="relative isolate border-b border-[#D7E4F2] bg-white text-[#0F243E] lg:h-[calc(100dvh-3.5rem)] xl:h-[calc(100dvh-4rem)] lg:min-h-[520px] lg:max-h-[760px] lg:overflow-hidden lg:bg-[#edf1ee]"
     >
       {/* Single Command Card: Stacked cleanly on mobile (< lg), floating white medical card on desktop (lg+) */}
-      <aside className="relative z-30 border-b border-[#D7E4F2] bg-white px-4 py-4 sm:px-5 lg:pointer-events-auto lg:absolute lg:top-3.5 lg:start-3.5 lg:w-[372px] lg:rounded-2xl lg:border lg:bg-white/96 lg:p-4 lg:shadow-[0_22px_54px_-14px_rgba(0,102,204,0.18)] lg:backdrop-blur-xl xl:top-5 xl:start-5 xl:w-[420px] xl:p-5">
+      <aside className="relative z-30 border-b border-[#D7E4F2] bg-white px-4 py-4 sm:px-5 lg:pointer-events-auto lg:absolute lg:top-3.5 lg:start-3.5 lg:w-[368px] lg:rounded-2xl lg:border lg:bg-white/96 lg:p-4 lg:shadow-[0_22px_54px_-14px_rgba(0,102,204,0.18)] lg:backdrop-blur-xl xl:top-5 xl:start-5 xl:w-[412px] xl:p-5">
         {commandCardBody}
       </aside>
 
-      {/* Single Map Layer & City Pill Bar */}
-      <div className="relative z-20 flex items-center justify-between gap-2 border-b border-[#D7E4F2] bg-[#F3F8FD] px-3 py-1.5 lg:pointer-events-auto lg:absolute lg:top-3.5 lg:end-3.5 lg:z-30 lg:max-w-[calc(100%-25.5rem)] lg:rounded-full lg:border lg:bg-white/96 lg:p-1 lg:shadow-[0_12px_32px_-8px_rgba(15,36,62,0.14)] lg:backdrop-blur-xl xl:top-5 xl:end-5 xl:max-w-[calc(100%-28.5rem)] xl:p-1.5">
-        <div className="min-w-0 flex-1">{mapLayerControls}</div>
+      {/* Single Map Layer & All-Morocco City/Place Pill Bar (compact wrap — zero clipped labels, zero dead voids) */}
+      <div className="relative z-30 flex flex-wrap items-center gap-1.5 border-b border-[#D7E4F2] bg-[#F3F8FD] px-3 py-2 lg:pointer-events-auto lg:absolute lg:top-3.5 lg:end-3.5 lg:max-w-[calc(100%-25.25rem)] lg:rounded-2xl lg:border lg:bg-white/96 lg:px-2 lg:py-1.5 lg:shadow-[0_12px_32px_-8px_rgba(15,36,62,0.14)] lg:backdrop-blur-xl xl:top-5 xl:end-5 xl:max-w-[calc(100%-28rem)]">
+        {mapLayerControls}
         <span
           aria-hidden="true"
-          className="hidden h-5 w-px shrink-0 bg-[#D7E4F2] lg:block"
+          className="hidden h-5 w-px shrink-0 bg-[#D7E4F2] xl:block"
         />
         {citySelector}
       </div>

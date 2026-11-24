@@ -716,83 +716,84 @@ export function LabWorkbench({ packs, apiBaseUrl }: LabWorkbenchProps) {
               ]}
             />
 
-            {/* Industrial Bench Control Bar: Search + Board/List + 1-Tap Sign-off Result Chips */}
+            {/* Industrial Bench Control Bar: Row 1 (Title + Badge + Board/List), Row 2 (Search + Status Pills) */}
             <section className="space-y-3 rounded-2xl border border-[#D7E4F2] bg-white p-4 shadow-[0_6px_22px_-12px_rgba(15,36,62,0.08)]">
-              <div className="flex flex-wrap items-center justify-between gap-2.5">
+              <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex flex-wrap items-center gap-2">
                   <h2 className="font-editorial text-sm font-bold text-[#0F243E]">
                     {c.queueHeading(filteredOrders.length)}
                   </h2>
                   <MoroccanComplianceBadge domain="lab" locale={locale} />
-                  <div className="relative flex items-center">
-                    <Search
-                      className="pointer-events-none absolute start-2.5 h-3.5 w-3.5 text-[#6B829D]"
-                      aria-hidden="true"
-                    />
-                    <input
-                      type="search"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder={ui.searchPlaceholder}
-                      className="h-9 w-52 rounded-xl border border-[#D7E4F2] bg-[#F8FBFE] pe-3 ps-8 text-xs text-[#0F243E] focus:border-[#0066CC] focus:bg-white focus:outline-none"
-                    />
-                  </div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
-                  {viewMode === "LIST" ? (
-                    <div className="flex flex-wrap gap-1">
-                      {(
-                        [
-                          { id: "ALL" as const, label: c.filterAll },
-                          { id: "ORDERED" as const, label: c.filterOrdered },
-                          { id: "SAMPLE_COLLECTED" as const, label: c.filterCollected },
-                          { id: "COMPLETED" as const, label: c.filterCompleted },
-                        ] as const
-                      ).map((f) => (
-                        <button
-                          key={f.id}
-                          type="button"
-                          onClick={() => setStatusFilter(f.id)}
-                          className={`min-h-[32px] rounded-full border px-3 text-[11px] font-semibold transition-colors ${
-                            statusFilter === f.id
-                              ? "border-[#0052A3] bg-[#0066CC] text-white"
-                              : "border-[#CBDDF0] bg-[#F3F8FD] text-[#4A627D] hover:bg-white"
-                          }`}
-                        >
-                          {f.label}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-
-                  <div className="inline-flex rounded-xl border border-[#D7E4F2] bg-[#F3F8FD] p-1">
-                    <button
-                      type="button"
-                      onClick={() => setViewMode("BOARD")}
-                      className={`inline-flex min-h-[32px] items-center gap-1 rounded-lg px-2.5 text-[11px] font-semibold transition-colors ${
-                        viewMode === "BOARD"
-                          ? "bg-[#0066CC] text-white"
-                          : "text-[#4A627D] hover:text-[#0F243E]"
-                      }`}
-                    >
-                      <Columns3 className="h-3.5 w-3.5" aria-hidden="true" />
-                      <span>{ui.board}</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setViewMode("LIST")}
-                      className={`inline-flex min-h-[32px] items-center gap-1 rounded-lg px-2.5 text-[11px] font-semibold transition-colors ${
-                        viewMode === "LIST"
-                          ? "bg-[#0066CC] text-white"
-                          : "text-[#4A627D] hover:text-[#0F243E]"
-                      }`}
-                    >
-                      <List className="h-3.5 w-3.5" aria-hidden="true" />
-                      <span>{ui.list}</span>
-                    </button>
-                  </div>
+                <div className="inline-flex w-fit shrink-0 rounded-xl border border-[#D7E4F2] bg-[#F3F8FD] p-1">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("BOARD")}
+                    className={`inline-flex min-h-[32px] items-center gap-1 rounded-lg px-2.5 text-[11px] font-semibold transition-colors ${
+                      viewMode === "BOARD"
+                        ? "bg-[#0066CC] text-white"
+                        : "text-[#4A627D] hover:text-[#0F243E]"
+                    }`}
+                  >
+                    <Columns3 className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>{ui.board}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("LIST")}
+                    className={`inline-flex min-h-[32px] items-center gap-1 rounded-lg px-2.5 text-[11px] font-semibold transition-colors ${
+                      viewMode === "LIST"
+                        ? "bg-[#0066CC] text-white"
+                        : "text-[#4A627D] hover:text-[#0F243E]"
+                    }`}
+                  >
+                    <List className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>{ui.list}</span>
+                  </button>
                 </div>
+              </div>
+
+              <div className="flex flex-col gap-2 border-t border-[#E8F1FA] pt-2.5 md:flex-row md:items-center">
+                <div className="relative flex min-w-0 flex-1 items-center">
+                  <Search
+                    className="pointer-events-none absolute start-2.5 h-3.5 w-3.5 text-[#6B829D]"
+                    aria-hidden="true"
+                  />
+                  <input
+                    type="search"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder={ui.searchPlaceholder}
+                    className="h-9 w-full rounded-xl border border-[#D7E4F2] bg-[#F8FBFE] pe-3 ps-8 text-xs text-[#0F243E] focus:border-[#0066CC] focus:bg-white focus:outline-none"
+                  />
+                </div>
+
+                {viewMode === "LIST" ? (
+                  <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                    {(
+                      [
+                        { id: "ALL" as const, label: c.filterAll },
+                        { id: "ORDERED" as const, label: c.filterOrdered },
+                        { id: "SAMPLE_COLLECTED" as const, label: c.filterCollected },
+                        { id: "COMPLETED" as const, label: c.filterCompleted },
+                      ] as const
+                    ).map((f) => (
+                      <button
+                        key={f.id}
+                        type="button"
+                        onClick={() => setStatusFilter(f.id)}
+                        className={`min-h-[32px] rounded-full border px-3 text-[11px] font-semibold transition-colors ${
+                          statusFilter === f.id
+                            ? "border-[#0052A3] bg-[#0066CC] text-white"
+                            : "border-[#CBDDF0] bg-[#F3F8FD] text-[#4A627D] hover:bg-white"
+                        }`}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
 
               {/* 1-Tap Sign-Off Result Chips + Editable Result Summary */}

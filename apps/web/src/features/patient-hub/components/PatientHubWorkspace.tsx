@@ -59,6 +59,7 @@ import {
 } from "@/shared/config/deployment";
 import {
   expandMoroccanCityKeywords,
+  isNursingSpecialty,
   normalizeCityText,
 } from "@/shared/config/morocco-standards";
 import { useLocale } from "@/shared/i18n/locale-store";
@@ -85,7 +86,13 @@ import {
   isPendingStaffVerification,
 } from "@/shared/ui/VerificationGateNotice";
 import { WorkspaceHeader, useToastSetter } from "@/shared/ui/primitives";
-import { Ambulance, Compass, MapPin } from "lucide-react";
+import {
+  Ambulance,
+  CalendarClock,
+  FileText,
+  MapPin,
+  Search,
+} from "lucide-react";
 import {
   formatPlainSpecialty,
   getPatientUiCopy,
@@ -377,10 +384,6 @@ function buildStaticCareResults(
       imageSrc: "/media/scenes/diagnostic-imaging-lab.webp",
     },
   ];
-}
-
-function isNurseSpecialty(specialty: string): boolean {
-  return /nursing|infirmier|nurse/i.test(specialty);
 }
 
 /**
@@ -684,7 +687,7 @@ export function PatientHubWorkspace({
           : "Ready nearby";
 
     for (const doc of directoryDoctors) {
-      const isNurse = isNurseSpecialty(doc.specialty);
+      const isNurse = isNursingSpecialty(doc.specialty);
       const specLabel = isNurse
         ? copy.requestNurseLabel
         : formatSpecialtyLabel(doc.specialty, locale);
@@ -912,36 +915,74 @@ export function PatientHubWorkspace({
       >
         <VerificationGateNotice user={session?.user} compact />
 
-        {/* Wrap-safe Page Menu without misleading /map highlight or clipped pills */}
+        {/* Compact Single-Row In-Page Care Quick-Jumps (no ClinicalOsRail route duplication, zero trailing void) */}
         <nav
           aria-label="Patient homepage menu"
-          className="flex flex-wrap items-center gap-1.5"
+          className="grid grid-cols-2 gap-1.5 rounded-2xl border border-[#D7E4F2] bg-white p-1.5 sm:grid-cols-4"
         >
-          {copy.navItems.map((item) => {
-            const isMapLink = item.href.startsWith("/map");
+          {(
+            [
+              {
+                href: "#patient-search",
+                label:
+                  locale === "ar"
+                    ? "ابحث عن رعاية"
+                    : locale === "fr"
+                      ? "Rechercher un soin"
+                      : "Search Care",
+                icon: Search,
+              },
+              {
+                href: "#patient-nearby",
+                label:
+                  locale === "ar"
+                    ? "رعاية قريبة منك"
+                    : locale === "fr"
+                      ? "Soins à proximité"
+                      : "Nearby Care",
+                icon: MapPin,
+              },
+              {
+                href: "#patient-activity",
+                label:
+                  locale === "ar"
+                    ? "مواعيدي والرحلات"
+                    : locale === "fr"
+                      ? "Rendez-vous & Trajets"
+                      : "Visits & Rides",
+                icon: CalendarClock,
+              },
+              {
+                href: "#patient-folder",
+                label:
+                  locale === "ar"
+                    ? "ملفي الصحي"
+                    : locale === "fr"
+                      ? "Dossier Médical"
+                      : "Health Folder",
+                icon: FileText,
+              },
+            ] as const
+          ).map((jump) => {
+            const Icon = jump.icon;
             return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`inline-flex h-9 items-center gap-1.5 rounded-xl px-3.5 text-xs font-semibold transition-colors ${
-                  item.isCurrent
-                    ? "bg-[#0066CC] text-white"
-                    : "bg-slate-100/90 text-slate-700 hover:bg-emerald-50 hover:text-[#0066CC]"
-                }`}
+              <a
+                key={jump.href}
+                href={jump.href}
+                className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-xl bg-[#F3F8FD] px-3 text-xs font-semibold text-[#0F243E] transition-colors hover:bg-[#EBF4FF] hover:text-[#0066CC]"
               >
-                {item.isCurrent ? (
-                  <Compass className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                ) : isMapLink ? (
-                  <MapPin className="h-3.5 w-3.5 shrink-0 text-[#0066CC]" aria-hidden="true" />
-                ) : null}
-                <span>{item.label}</span>
-              </Link>
+                <Icon
+                  className="h-3.5 w-3.5 shrink-0 text-[#0066CC]"
+                  aria-hidden="true"
+                />
+                <span className="truncate">{jump.label}</span>
+              </a>
             );
           })}
         </nav>
 
         {/* 1. Visual "What Do You Need Today?" Picture Guide */}
-        <CareGuideGrid copy={copy} emergencyHotline={hotline} />
+        <CareGuideGrid copy={copy} />
 
         {/* 2. Plain-Language Universal Search */}
         <PatientSearchSection

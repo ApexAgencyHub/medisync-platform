@@ -64,6 +64,7 @@ import {
   resolveActivePack,
   resolveEffectiveCountryCode,
 } from "@/shared/config/deployment";
+import { isNursingSpecialty } from "@/shared/config/morocco-standards";
 import {
   UiButton,
   UiTabBar,
@@ -183,14 +184,12 @@ interface ClinicalWorkspaceProps {
   packs: readonly CountryPack[];
   apiBaseUrl: string;
   initialTab?: ClinicalTab;
-  roleFocus?: "DOCTOR" | "LAB_TECH";
 }
 
 export function ClinicalWorkspace({
   packs,
   apiBaseUrl,
   initialTab,
-  roleFocus,
 }: ClinicalWorkspaceProps) {
   const { locale, t, isRtl } = useLocale();
   const c = CLINICAL_COPY[locale];
@@ -289,9 +288,7 @@ export function ClinicalWorkspace({
         setFeeMinorInput("20000");
         setSchedMode("HOME_VISIT");
       }
-      if (roleFocus === "LAB_TECH" || stored.user.role === "LAB_TECH") {
-        setActiveTab("labs");
-      } else if (
+      if (
         !initialTab &&
         (stored.user.role === "DOCTOR" ||
           stored.user.role === "NURSE" ||
@@ -1213,8 +1210,7 @@ export function ClinicalWorkspace({
     }
     return Boolean(
       currentUser.role === "DOCTOR" &&
-        signedInDirectorySpecialty &&
-        /nursing|infirmier|nurse/i.test(signedInDirectorySpecialty),
+        isNursingSpecialty(signedInDirectorySpecialty),
     );
   }, [currentUser, signedInDirectorySpecialty]);
 
@@ -1225,21 +1221,18 @@ export function ClinicalWorkspace({
           /home|domicile/i.test(signedInDirectorySpecialty))),
   );
 
-  const visibleTabs = useMemo<readonly ClinicalTab[]>(() => {
-    void roleFocus;
-    return ["calendar", "doctor", "schedule", "labs", "papers"];
-  }, [roleFocus]);
+  const visibleTabs = useMemo<readonly ClinicalTab[]>(
+    () => ["calendar", "doctor", "schedule", "labs", "papers"],
+    [],
+  );
 
-  const headerTitle =
-    roleFocus === "LAB_TECH" || currentUser?.role === "LAB_TECH"
-      ? t("lab.heading")
-      : isHomeNursePractitioner
-        ? c.header.homeNursingTitle
-        : isNursePractitioner
-          ? c.header.nursingTitle
-          : currentUser?.role === "DOCTOR"
-            ? c.header.doctorTitle
-            : t("clinical.heading");
+  const headerTitle = isHomeNursePractitioner
+    ? c.header.homeNursingTitle
+    : isNursePractitioner
+      ? c.header.nursingTitle
+      : currentUser?.role === "DOCTOR"
+        ? c.header.doctorTitle
+        : t("clinical.heading");
 
   function handleSignOut() {
     revokeClientSession(apiBaseUrl);
@@ -1267,11 +1260,9 @@ export function ClinicalWorkspace({
         emergencyHotline={activePack?.emergencyHotlines.ambulance ?? ""}
         user={currentUser}
         guestLabel={
-          roleFocus === "LAB_TECH" || currentUser?.role === "LAB_TECH"
-            ? c.header.guestLab
-            : isNursePractitioner
-              ? c.header.guestNursing
-              : c.header.guestClinical
+          isNursePractitioner
+            ? c.header.guestNursing
+            : c.header.guestClinical
         }
         onSignOut={handleSignOut}
         actions={
@@ -1294,16 +1285,8 @@ export function ClinicalWorkspace({
         user={currentUser}
         hydrated={sessionHydrated}
         allowedRoles={allowedWorkspaceRoles}
-        workspaceTitle={
-          roleFocus === "LAB_TECH"
-            ? c.header.guardLabTitle
-            : c.header.guardClinicalTitle
-        }
-        requiredRoleDescription={
-          roleFocus === "LAB_TECH"
-            ? c.header.guardLabRoles
-            : c.header.guardClinicalRoles
-        }
+        workspaceTitle={c.header.guardClinicalTitle}
+        requiredRoleDescription={c.header.guardClinicalRoles}
         allowPendingMatchingRole
       >
       <UiTabBar
@@ -1407,7 +1390,7 @@ export function ClinicalWorkspace({
               publishWeekdays={publishWeekdays}
               onSpecialtyChange={(next) => {
                 setSpecialtyInput(next);
-                if (/nursing|infirmier|nurse/i.test(next)) {
+                if (isNursingSpecialty(next)) {
                   setSchedMode("HOME_VISIT");
                 } else if (schedMode === "HOME_VISIT") {
                   setSchedMode("IN_PERSON");
@@ -1472,7 +1455,6 @@ export function ClinicalWorkspace({
           {activeTab === "labs" ? (
             <ClinicalLabsImagingDesk
               currentUser={currentUser}
-              roleFocus={roleFocus}
               selectedCountry={selectedCountry}
               patientOptions={patientPickerOptions}
               patientUuid={patientUuid}
@@ -1508,9 +1490,7 @@ export function ClinicalWorkspace({
               facilityKind={
                 facilities.find((f) => f.id === currentUser.facilityId)?.kind ??
                 directoryClinics.find((f) => f.id === currentUser.facilityId)?.kind ??
-                (roleFocus === "LAB_TECH" || currentUser.role === "LAB_TECH"
-                  ? "DIAGNOSTIC_LAB"
-                  : "CLINIC")
+                "CLINIC"
               }
               userDocs={userDocs}
               facilityDocs={facilityDocs}
@@ -1586,69 +1566,38 @@ export function ClinicalWorkspace({
 
           <section className="rounded-2xl border border-[#D7E4F2] bg-white p-5 shadow-[0_6px_22px_-12px_rgba(15,36,62,0.08)]">
             <h2 className="pb-3 font-editorial text-sm font-bold text-[#0F243E]">
-              {roleFocus === "LAB_TECH"
-                ? c.aside.labMetricsTitle
-                : c.aside.clinicalMetricsTitle}
+              {c.aside.clinicalMetricsTitle}
             </h2>
-            {roleFocus === "LAB_TECH" ? (
-              <dl className="grid grid-cols-2 gap-2.5 text-xs">
-                <div className="rounded-xl border border-[#E8F1FA] bg-[#F8FBFE] p-3.5">
-                  <dt className="text-[11px] text-[#556E89]">{c.aside.orderedQueue}</dt>
-                  <dd className="mt-1 font-mono-tabular text-xl font-bold text-[#0F243E]">
-                    {labOrders.filter((o) => o.status === "ORDERED").length}
-                  </dd>
-                </div>
-                <div className="rounded-xl border border-[#E8F1FA] bg-[#F8FBFE] p-3.5">
-                  <dt className="text-[11px] text-[#556E89]">{c.aside.inProcessing}</dt>
-                  <dd className="mt-1 font-mono-tabular text-xl font-bold text-[#0F243E]">
-                    {labOrders.filter((o) => o.status === "SAMPLE_COLLECTED").length}
-                  </dd>
-                </div>
-                <div className="rounded-xl border border-[#E8F1FA] bg-[#F8FBFE] p-3.5">
-                  <dt className="text-[11px] text-[#556E89]">{c.aside.completedPanels}</dt>
-                  <dd className="mt-1 font-mono-tabular text-xl font-bold text-[#0066CC]">
-                    {labOrders.filter((o) => o.status === "COMPLETED").length}
-                  </dd>
-                </div>
-                <div className="rounded-xl border border-[#E8F1FA] bg-[#F8FBFE] p-3.5">
-                  <dt className="text-[11px] text-[#556E89]">{c.aside.uploadedScans}</dt>
-                  <dd className="mt-1 font-mono-tabular text-xl font-bold text-[#0066CC]">
-                    {mediaObjects.length}
-                  </dd>
-                </div>
-              </dl>
-            ) : (
-              <dl className="grid grid-cols-2 gap-2.5 text-xs">
-                <div className="rounded-xl border border-[#E8F1FA] bg-[#F8FBFE] p-3.5">
-                  <dt className="text-[11px] text-[#556E89]">{c.aside.scheduledVisits}</dt>
-                  <dd className="mt-1 font-mono-tabular text-xl font-bold text-[#0F243E]">
-                    {
-                      appointments.filter(
-                        (a) => a.status === "CONFIRMED" || a.status === "CHECKED_IN",
-                      ).length
-                    }
-                  </dd>
-                </div>
-                <div className="rounded-xl border border-[#E8F1FA] bg-[#F8FBFE] p-3.5">
-                  <dt className="text-[11px] text-[#556E89]">{c.aside.activeLabs}</dt>
-                  <dd className="mt-1 font-mono-tabular text-xl font-bold text-[#0066CC]">
-                    {labOrders.length}
-                  </dd>
-                </div>
-                <div className="rounded-xl border border-[#E8F1FA] bg-[#F8FBFE] p-3.5">
-                  <dt className="text-[11px] text-[#556E89]">{c.aside.ePrescriptions}</dt>
-                  <dd className="mt-1 font-mono-tabular text-xl font-bold text-[#0F243E]">
-                    {prescriptions.length}
-                  </dd>
-                </div>
-                <div className="rounded-xl border border-[#E8F1FA] bg-[#F8FBFE] p-3.5">
-                  <dt className="text-[11px] text-[#556E89]">{c.aside.uploadedScans}</dt>
-                  <dd className="mt-1 font-mono-tabular text-xl font-bold text-[#0F243E]">
-                    {mediaObjects.length}
-                  </dd>
-                </div>
-              </dl>
-            )}
+            <dl className="grid grid-cols-2 gap-2.5 text-xs">
+              <div className="rounded-xl border border-[#E8F1FA] bg-[#F8FBFE] p-3.5">
+                <dt className="text-[11px] text-[#556E89]">{c.aside.scheduledVisits}</dt>
+                <dd className="mt-1 font-mono-tabular text-xl font-bold text-[#0F243E]">
+                  {
+                    appointments.filter(
+                      (a) => a.status === "CONFIRMED" || a.status === "CHECKED_IN",
+                    ).length
+                  }
+                </dd>
+              </div>
+              <div className="rounded-xl border border-[#E8F1FA] bg-[#F8FBFE] p-3.5">
+                <dt className="text-[11px] text-[#556E89]">{c.aside.activeLabs}</dt>
+                <dd className="mt-1 font-mono-tabular text-xl font-bold text-[#0066CC]">
+                  {labOrders.length}
+                </dd>
+              </div>
+              <div className="rounded-xl border border-[#E8F1FA] bg-[#F8FBFE] p-3.5">
+                <dt className="text-[11px] text-[#556E89]">{c.aside.ePrescriptions}</dt>
+                <dd className="mt-1 font-mono-tabular text-xl font-bold text-[#0F243E]">
+                  {prescriptions.length}
+                </dd>
+              </div>
+              <div className="rounded-xl border border-[#E8F1FA] bg-[#F8FBFE] p-3.5">
+                <dt className="text-[11px] text-[#556E89]">{c.aside.uploadedScans}</dt>
+                <dd className="mt-1 font-mono-tabular text-xl font-bold text-[#0F243E]">
+                  {mediaObjects.length}
+                </dd>
+              </div>
+            </dl>
             {canManageSchedule ? (
               <UiButton
                 variant="secondary"

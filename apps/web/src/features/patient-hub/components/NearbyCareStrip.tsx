@@ -7,6 +7,7 @@ import type {
   LocaleCode,
 } from "@medisync/contracts";
 import { ArrowRight, MapPin, Stethoscope, Video } from "lucide-react";
+import { isNursingSpecialty } from "@/shared/config/morocco-standards";
 import { UiBadge } from "@/shared/ui/primitives";
 import {
   resolveDefaultAvatar,
@@ -22,7 +23,7 @@ interface NearbyCareStripProps {
 }
 
 function isNurseRole(item: Pick<DirectoryDoctorSummary, "role" | "specialty">): boolean {
-  return item.role === "NURSE" || /nursing|infirmier|nurse/i.test(item.specialty);
+  return item.role === "NURSE" || isNursingSpecialty(item.specialty);
 }
 
 /** Shows real verified clinicians & nearby open clinics/pharmacies with borderless sky-ice studio portrait frames. */
@@ -127,7 +128,13 @@ export function NearbyCareStrip({
                       {copy.requestNurseLabel}
                     </Link>
                   ) : (
-                    <div className="grid grid-cols-2 gap-1.5">
+                    <div
+                      className={`grid gap-1.5 ${
+                        doc.telehealthEnabled
+                          ? "grid-cols-1 sm:grid-cols-2"
+                          : "grid-cols-1"
+                      }`}
+                    >
                       <Link
                         href={workplaceHref}
                         className="inline-flex min-h-[34px] items-center justify-center gap-1 rounded-xl bg-[#0066CC] px-2.5 text-[11px] font-semibold text-white transition hover:bg-[#0052A3] active:scale-[0.99]"
@@ -154,7 +161,15 @@ export function NearbyCareStrip({
       ) : null}
 
       {featuredFacilities.length > 0 ? (
-        <div className="grid gap-3 pt-1 sm:grid-cols-3">
+        <div
+          className={`grid gap-3 pt-1 ${
+            featuredFacilities.length === 1
+              ? "grid-cols-1"
+              : featuredFacilities.length === 2
+                ? "grid-cols-1 sm:grid-cols-2"
+                : "grid-cols-1 sm:grid-cols-3"
+          }`}
+        >
           {featuredFacilities.map((fac) => {
             const isPharmacy = fac.kind === "PHARMACY";
             const href = isPharmacy

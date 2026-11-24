@@ -14,6 +14,7 @@ import {
   type DirectorySearchQuery,
   type VehicleType,
 } from "@medisync/contracts";
+import { getMoroccanCityAliasTerms } from "@medisync/country-packs";
 import type { AuthTokenClaims } from "../foundation/index.js";
 import { readDriverStatuses } from "../maps-dispatch/index.js";
 import {
@@ -25,15 +26,6 @@ const SQL_FOLD_FROM =
   "àâäáãåçéèêëíìîïñóòôöõúùûüýÿÀÂÄÁÃÅÇÉÈÊËÍÌÎÏÑÓÒÔÖÕÚÙÛÜÝ";
 const SQL_FOLD_TO =
   "aaaaaaceeeeiiiinooooouuuuyyAAAAAACEEEEIIIINOOOOOUUUUY";
-
-const MOROCCAN_CITY_ALIAS_GROUPS: readonly (readonly string[])[] = [
-  ["casablanca", "casa", "الدار البيضاء"],
-  ["rabat", "الرباط"],
-  ["marrakech", "marrakesh", "مراكش"],
-  ["tangier", "tanger", "طنجة"],
-  ["fes", "fez", "فاس"],
-  ["agadir", "أكادير"],
-];
 
 function foldAccentText(value: string): string {
   return value
@@ -47,12 +39,8 @@ function buildAccentAwarePatterns(raw: string | undefined): string[] | null {
   if (!raw) return null;
   const folded = foldAccentText(raw);
   if (!folded) return null;
-  const group = MOROCCAN_CITY_ALIAS_GROUPS.find((aliases) =>
-    aliases.some((alias) => foldAccentText(alias) === folded),
-  );
-  const terms = group
-    ? Array.from(new Set([folded, ...group.map(foldAccentText)]))
-    : [folded];
+  const expanded = getMoroccanCityAliasTerms(raw);
+  const terms = Array.from(new Set([folded, ...expanded.map(foldAccentText)]));
   return terms.map((term) => `%${term}%`);
 }
 

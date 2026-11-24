@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import { z } from "zod";
+import { findMoroccanCity } from "@medisync/country-packs";
 import {
   AuthenticatedUserSchema,
   FacilitySummarySchema,
@@ -502,10 +503,19 @@ export async function insertFacility(
   input: CreateFacilityInput,
   ownerUserId: string,
 ): Promise<FacilitySummary> {
+  const countryCode = input.countryCode.trim().toUpperCase();
+  const explicitCity = input.city?.trim() || null;
+  const inferredCity =
+    explicitCity ??
+    (countryCode === "MA"
+      ? (findMoroccanCity(input.address)?.name ?? null)
+      : null);
+
   try {
     const res = await pool.query(
       `INSERT INTO facilities (
          country_code,
+         city,
          kind,
          name,
          license_number,
@@ -520,17 +530,19 @@ export async function insertFacility(
          $2,
          $3,
          $4,
-         ST_SetSRID(ST_MakePoint($6, $5), 4326)::geography,
          $5,
+         ST_SetSRID(ST_MakePoint($7, $6), 4326)::geography,
          $6,
          $7,
-         $8
+         $8,
+         $9
        )
        RETURNING
          id,
          name,
          kind,
          country_code AS "countryCode",
+         city,
          license_number AS "licenseNumber",
          verification_status AS "verificationStatus",
          lat,
@@ -539,7 +551,8 @@ export async function insertFacility(
          owner_user_id AS "ownerUserId",
          to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAtIso"`,
       [
-        input.countryCode.trim().toUpperCase(),
+        countryCode,
+        inferredCity,
         input.kind,
         input.name.trim(),
         input.licenseNumber.trim().toUpperCase(),
@@ -576,6 +589,7 @@ export async function listFacilitiesScoped(
        name,
        kind,
        country_code AS "countryCode",
+       city,
        license_number AS "licenseNumber",
        verification_status AS "verificationStatus",
        lat,
@@ -621,6 +635,7 @@ export async function updateFacilityVerification(
        name,
        kind,
        country_code AS "countryCode",
+       city,
        license_number AS "licenseNumber",
        verification_status AS "verificationStatus",
        lat,

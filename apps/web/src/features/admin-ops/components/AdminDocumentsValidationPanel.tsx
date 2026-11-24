@@ -289,42 +289,44 @@ export function AdminDocumentsValidationPanel({
         <MoroccanComplianceBadge domain="admin" locale={locale} />
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="flex h-9 min-w-[210px] flex-1 items-center gap-1.5 rounded-lg border border-[#D8DFDC] bg-[#F3F8FD] px-3 focus-within:border-[#0066CC] focus-within:bg-white">
-          <Search className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
-          <input
-            type="search"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder={c.searchPlaceholder}
-            className="min-w-0 flex-1 bg-transparent text-xs text-[#0F243E] focus:outline-none"
-          />
+      <div className="space-y-2.5">
+        <div className="flex flex-col gap-2 md:flex-row md:items-center">
+          <div className="flex h-9 min-w-0 flex-1 items-center gap-1.5 rounded-lg border border-[#D8DFDC] bg-[#F3F8FD] px-3 focus-within:border-[#0066CC] focus-within:bg-white">
+            <Search className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={c.searchPlaceholder}
+              className="min-w-0 flex-1 bg-transparent text-xs text-[#0F243E] focus:outline-none"
+            />
+          </div>
+
+          <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+            {(
+              [
+                { id: "ALL", label: c.filterSourceAll },
+                { id: "USER", label: c.filterSourceUsers },
+                { id: "FACILITY", label: c.filterSourceFacilities },
+              ] as const
+            ).map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => setSourceFilter(opt.id)}
+                className={`h-8 rounded-lg px-3 text-[11px] font-semibold transition ${
+                  sourceFilter === opt.id
+                    ? "bg-[#0066CC] text-white"
+                    : "border border-[#CBDDF0] bg-[#F3F8FD] text-slate-700 hover:bg-white hover:text-[#0066CC]"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="flex flex-wrap gap-1">
-          {(
-            [
-              { id: "ALL", label: c.filterSourceAll },
-              { id: "USER", label: c.filterSourceUsers },
-              { id: "FACILITY", label: c.filterSourceFacilities },
-            ] as const
-          ).map((opt) => (
-            <button
-              key={opt.id}
-              type="button"
-              onClick={() => setSourceFilter(opt.id)}
-              className={`h-8 rounded-lg px-3 text-[11px] font-semibold transition ${
-                sourceFilter === opt.id
-                  ? "bg-[#0066CC] text-white"
-                  : "border border-[#CBDDF0] bg-[#F3F8FD] text-slate-700 hover:bg-white hover:text-[#0066CC]"
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex flex-wrap gap-1">
+        <div className="flex flex-wrap items-center gap-1.5">
           {(
             [
               { id: "ALL", label: c.filterAllStatuses },

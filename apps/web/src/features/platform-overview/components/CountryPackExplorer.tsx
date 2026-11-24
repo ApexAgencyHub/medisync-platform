@@ -4,7 +4,6 @@ import Link from "next/link";
 import type { CountryPack } from "@medisync/contracts";
 import { ArrowRight } from "lucide-react";
 import {
-  ACTIVE_COUNTRY_CODE,
   resolveActivePack,
 } from "@/shared/config/deployment";
 import { formatCountryDisplayName } from "@/shared/i18n/human-labels";
@@ -18,7 +17,6 @@ interface CountryPackExplorerProps {
 export function CountryPackExplorer({ packs }: CountryPackExplorerProps) {
   const { locale, t, isRtl } = useLocale();
   const activePack = resolveActivePack(packs);
-  const countryCode = activePack?.code ?? ACTIVE_COUNTRY_CODE;
   const countryDisplayName = activePack
     ? formatCountryDisplayName(activePack.code, activePack.name, locale)
     : "Morocco";
@@ -73,25 +71,10 @@ export function CountryPackExplorer({ packs }: CountryPackExplorerProps) {
           ) : null}
         </div>
 
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-2.5 text-xs font-medium text-[#4A627D]">
-          <Link href={`/map?country=${countryCode}`} className="hover:text-[#0066CC]">
-            {t("nav.map")}
-          </Link>
-          <Link href={`/booking?country=${countryCode}`} className="hover:text-[#0066CC]">
-            {t("nav.booking")}
-          </Link>
-          <Link href={`/pharmacy?country=${countryCode}`} className="hover:text-[#0066CC]">
-            {t("nav.pharmacy")}
-          </Link>
-          <Link href="/profiles" className="hover:text-[#0066CC]">
-            {t("nav.profiles")}
-          </Link>
-          <Link href="/portal" className="hover:text-[#0066CC]">
-            {t("nav.portal")}
-          </Link>
+        <div className="flex flex-wrap items-center gap-3 text-xs font-medium text-[#4A627D]">
           <Link
             href="/pro"
-            className="inline-flex items-center gap-1.5 rounded-xl bg-[#0066CC] px-3.5 py-2 font-semibold text-white shadow-xs hover:bg-[#0052A3]"
+            className="inline-flex items-center gap-1.5 rounded-xl bg-[#0066CC] px-3.5 py-2 font-semibold text-white shadow-xs transition hover:bg-[#0052A3] active:scale-[0.98]"
           >
             <span>{partnerCtaLabel}</span>
             <ArrowRight className="h-3.5 w-3.5 rtl:rotate-180" aria-hidden="true" />

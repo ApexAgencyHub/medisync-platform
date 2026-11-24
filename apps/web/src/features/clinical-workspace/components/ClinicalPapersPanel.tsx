@@ -163,7 +163,7 @@ export function ClinicalPapersPanel({
 
   return (
     <div className="space-y-6">
-      {isPractitioner ? (
+      {isPractitioner && !isPendingStaff ? (
         <section className="rounded-2xl border border-[#D7E4F2] bg-white p-5">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#D7E4F2] pb-3">
             <h2 className="flex items-center gap-2 text-base font-bold text-[#0F243E]">
@@ -179,15 +179,10 @@ export function ClinicalPapersPanel({
             />
           </div>
 
-          {isPendingStaff ? (
-            <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs font-medium text-amber-900">
-              {c.pendingHint}
-            </p>
-          ) : (
-            <form
-              onSubmit={(e) => void onSavePracticeProfile(e)}
-              className="mt-4 space-y-4"
-            >
+          <form
+            onSubmit={(e) => void onSavePracticeProfile(e)}
+            className="mt-4 space-y-4"
+          >
               <div className="space-y-2">
                 <label className="block text-xs font-semibold text-[#0F243E]">
                   {c.specialtyLabel}
@@ -286,7 +281,6 @@ export function ClinicalPapersPanel({
                 </UiButton>
               </div>
             </form>
-          )}
         </section>
       ) : null}
 

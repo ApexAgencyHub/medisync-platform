@@ -21,6 +21,7 @@ import {
 import { formatVisitMode } from "@/shared/i18n/human-labels";
 import { useLocale } from "@/shared/i18n/locale-store";
 import { formatSpecialtyLabel } from "@/shared/i18n/specialties";
+import { isNursingSpecialty } from "@/shared/config/morocco-standards";
 import { EntityAvatar } from "@/shared/ui/EntityAvatar";
 import { UiBadge, UiButton, UiInput } from "@/shared/ui/primitives";
 import { BOOKING_COPY } from "../booking-i18n";
@@ -166,9 +167,7 @@ export function BookingScheduleModal({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [busy, onClose]);
 
-  const isHomeVisitSpecialty = /nursing|infirmier|nurse/i.test(
-    practitioner.specialty,
-  );
+  const isHomeVisitSpecialty = isNursingSpecialty(practitioner.specialty);
   const hasHomeVisitSlots =
     slots.some((s) => s.visitMode === "HOME_VISIT") || isHomeVisitSpecialty;
 
@@ -409,7 +408,9 @@ export function BookingScheduleModal({
               <span className="block text-[11px] font-bold uppercase tracking-wider text-slate-500">
                 {copy.modalHowToSeeDoctor}
               </span>
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <div
+                className={`grid grid-cols-1 gap-2 ${allowTelehealth ? "sm:grid-cols-2" : ""}`}
+              >
                 <button
                   type="button"
                   aria-pressed={selectedDoctorMode === "IN_PERSON"}

@@ -30,6 +30,7 @@ export async function listPharmacyProducts(
 > {
   const qs = new URLSearchParams();
   if (query.countryCode) qs.set("countryCode", query.countryCode);
+  if (query.city) qs.set("city", query.city);
   if (query.facilityId) qs.set("facilityId", query.facilityId);
   if (query.category) qs.set("category", query.category);
   if (query.q) qs.set("q", query.q);

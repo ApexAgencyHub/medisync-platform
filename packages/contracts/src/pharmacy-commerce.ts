@@ -53,6 +53,7 @@ export const PharmacyProductSummarySchema = z.object({
   countryCode: z.string().regex(/^[A-Z]{2,4}$/),
   facilityId: z.string().uuid(),
   facilityName: z.string(),
+  facilityCity: z.string().nullable().optional(),
   sku: z.string(),
   name: z.string(),
   genericName: z.string().nullable(),
@@ -73,6 +74,7 @@ export type PharmacyProductSummary = z.infer<
 
 export const ListPharmacyProductsQuerySchema = z.object({
   countryCode: z.string().regex(/^[A-Z]{2,4}$/).optional(),
+  city: z.string().trim().max(64).optional(),
   facilityId: z.string().uuid().optional(),
   category: PharmacyProductCategorySchema.optional(),
   q: z.string().trim().max(120).optional(),
@@ -84,7 +86,7 @@ export const ListPharmacyProductsQuerySchema = z.object({
     .union([z.boolean(), z.enum(["true", "false"])])
     .optional()
     .transform((v) => (v === "true" || v === true ? true : undefined)),
-  limit: z.coerce.number().int().min(1).max(100).default(50),
+  limit: z.coerce.number().int().min(1).max(250).default(100),
 });
 export type ListPharmacyProductsQuery = z.infer<
   typeof ListPharmacyProductsQuerySchema

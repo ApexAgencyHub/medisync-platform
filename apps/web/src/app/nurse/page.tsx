@@ -19,7 +19,6 @@ export default function NurseWorkspacePage() {
   return (
     <WorkspaceShell
       activeRoute="/nurse"
-      statusPill="nav.nurse"
       maxWidthClass="max-w-[1560px]"
     >
       <NurseWorkspace packs={packs} apiBaseUrl={apiBaseUrl} />

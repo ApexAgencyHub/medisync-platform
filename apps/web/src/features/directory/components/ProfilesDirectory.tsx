@@ -64,10 +64,11 @@ import {
 } from "@/shared/config/deployment";
 import {
   expandMoroccanCityKeywords,
+  isNursingSpecialty,
   matchesAccentInsensitiveQuery,
   matchesMoroccanCity,
-  MOROCCAN_CITIES,
 } from "@/shared/config/morocco-standards";
+import { MoroccanPlacePicker } from "@/shared/ui/MoroccanPlacePicker";
 import {
   UiBadge,
   UiSelect,
@@ -83,10 +84,6 @@ type DirectoryCategory =
   | "NURSES"
   | "DRIVERS"
   | "FACILITIES";
-
-function isNurseSpecialty(specialty: string): boolean {
-  return /nursing|infirmier|nurse/i.test(specialty);
-}
 
 function formatMoney(minor: number, currencyCode: string): string {
   const major = (minor / 100).toFixed(0);
@@ -236,9 +233,9 @@ export function ProfilesDirectory({
     setLoading(true);
 
     Promise.all([
-      fetchDirectoryDoctors(apiBaseUrl, { countryCode, limit: 100 }),
-      fetchDirectoryDrivers(apiBaseUrl, { countryCode, limit: 100 }),
-      fetchDirectoryFacilities(apiBaseUrl, { countryCode, limit: 100 }),
+      fetchDirectoryDoctors(apiBaseUrl, { countryCode, limit: 150 }),
+      fetchDirectoryDrivers(apiBaseUrl, { countryCode, limit: 150 }),
+      fetchDirectoryFacilities(apiBaseUrl, { countryCode, limit: 150 }),
     ])
       .then(([docRes, drvRes, facRes]) => {
         if (!active) return;
@@ -262,7 +259,7 @@ export function ProfilesDirectory({
   }, [apiOnline, apiBaseUrl, countryCode, session, sessionHydrated, showToast]);
 
   function isNurseItem(item: DirectoryDoctorSummary): boolean {
-    return item.role === "NURSE" || isNurseSpecialty(item.specialty);
+    return item.role === "NURSE" || isNursingSpecialty(item.specialty);
   }
 
   function openPractitionerDossier(item: DirectoryDoctorSummary) {
@@ -475,11 +472,11 @@ export function ProfilesDirectory({
 
   const currencyCode = activePack?.currencyCode ?? "MAD";
   const hasPopoverFilter =
-    Boolean(cityFilter) ||
     openOnly ||
-    specialtyFilter !== "ALL" ||
     facilityKindFilter !== "ALL" ||
     countryCode !== (defaultPack?.code ?? ACTIVE_COUNTRY_CODE);
+  const hasAnyFilter =
+    hasPopoverFilter || Boolean(cityFilter) || specialtyFilter !== "ALL";
 
   const showDoctors = category === "ALL" || category === "DOCTORS";
   const showNurses = category === "ALL" || category === "NURSES";
@@ -513,175 +510,143 @@ export function ProfilesDirectory({
         surfaceTitle={copy.surfaceTitle}
         onSignOut={() => setSession(null)}
       >
-      {/* Streamlined Search + Specialty Dropdown + Filters Popover + Category Pills */}
-      <section className="flex flex-wrap items-center gap-2">
-        <div
-          ref={searchContainerRef}
-          className="relative flex min-w-0 w-full items-center sm:w-auto sm:flex-1 sm:max-w-[320px]"
-        >
-          <div className="flex h-10 w-full min-w-0 items-center gap-1 rounded-xl bg-[#F3F8FD] border border-[#D7E4F2] ps-3.5 pe-1.5">
-            <Search
-              className="h-4 w-4 shrink-0 text-[#0066CC]"
-              aria-hidden="true"
-            />
-            <input
-              type="search"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={copy.searchPlaceholder}
-              aria-label={copy.searchAria}
-              className="min-w-0 flex-1 bg-transparent px-1 text-xs font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none"
-            />
-            {searchQuery ? (
-              <button
-                type="button"
-                aria-label={copy.clearSearchAria}
-                onClick={() => setSearchQuery("")}
-                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-              >
-                <X className="h-3.5 w-3.5" aria-hidden="true" />
-              </button>
-            ) : null}
-            <span className="h-5 w-px shrink-0 bg-slate-200" aria-hidden="true" />
-            <button
-              type="button"
-              aria-expanded={filtersOpen}
-              aria-label={copy.toggleFiltersAria}
-              onClick={() => setFiltersOpen((prev) => !prev)}
-              className={`inline-flex h-7 shrink-0 items-center gap-1 rounded-full px-2.5 text-[11px] font-semibold transition-colors ${
-                filtersOpen || hasPopoverFilter
-                  ? "bg-[#0066CC] text-white"
-                  : "text-slate-700 hover:bg-[#E1EBF2]"
-              }`}
-            >
-              <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
-              <span className="hidden sm:inline">{copy.filtersLabel}</span>
-            </button>
-          </div>
-
-          {filtersOpen ? (
-            <div
-              role="dialog"
-              aria-label={copy.filtersDialogAria}
-              className={`absolute top-full z-40 mt-2 w-[min(320px,calc(100vw-1.5rem))] space-y-3 rounded-2xl border border-slate-200 bg-white/98 p-3.5 shadow-2xl backdrop-blur-xl ${
-                isRtl ? "right-0" : "left-0"
-              }`}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-bold text-slate-900">
-                  {copy.filtersTitle}
-                </span>
-                <button
-                  type="button"
-                  aria-label={copy.closeFiltersAria}
-                  onClick={() => setFiltersOpen(false)}
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"
-                >
-                  <X className="h-4 w-4" aria-hidden="true" />
-                </button>
-              </div>
-
-              <MoroccanComplianceBadge domain="patient" locale={locale} />
-
-              <div className="space-y-1.5">
-                <span className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                  {copy.cityLabel}
-                </span>
-                <div
-                  id="dir-city-filter"
-                  role="radiogroup"
-                  aria-label={copy.cityLabel}
-                  className="flex flex-wrap gap-1.5"
-                >
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={cityFilter === ""}
-                    onClick={() => setCityFilter("")}
-                    className={`h-7 rounded-full border px-2.5 text-[11px] font-semibold transition ${
-                      cityFilter === ""
-                        ? "border-[#0066CC] bg-[#0066CC] text-white"
-                        : "border-[#D7E4F2] bg-[#F3F8FD] text-[#2F4661] hover:border-[#0066CC]"
-                    }`}
-                  >
-                    {copy.allCitiesOption}
-                  </button>
-                  {MOROCCAN_CITIES.map((city) => {
-                    const selected = cityFilter === city.name;
-                    return (
-                      <button
-                        key={city.id}
-                        type="button"
-                        role="radio"
-                        aria-checked={selected}
-                        onClick={() => setCityFilter(city.name)}
-                        className={`h-7 rounded-full border px-2.5 text-[11px] font-semibold transition ${
-                          selected
-                            ? "border-[#0066CC] bg-[#0066CC] text-white"
-                            : "border-[#D7E4F2] bg-[#F3F8FD] text-[#2F4661] hover:border-[#0066CC]"
-                        }`}
-                      >
-                        {city.labels[locale]}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <UiSwitch
-                checked={openOnly}
-                onChange={setOpenOnly}
-                label={copy.openNowOnlyLabel}
+      {/* Two-Row Balanced Toolbar: Row 1 = Search + MoroccanPlacePicker + Specialty; Row 2 = Equal-Fit 5 Category Tabs */}
+      <section className="space-y-2.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <div
+            ref={searchContainerRef}
+            className="relative flex min-w-0 flex-1 basis-full items-center sm:basis-0 sm:min-w-[220px]"
+          >
+            <div className="flex h-10 w-full min-w-0 items-center gap-1 rounded-xl border border-[#D7E4F2] bg-[#F3F8FD] ps-3.5 pe-1.5">
+              <Search
+                className="h-4 w-4 shrink-0 text-[#0066CC]"
+                aria-hidden="true"
               />
-
-              {hasPopoverFilter ? (
+              <input
+                type="search"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={copy.searchPlaceholder}
+                aria-label={copy.searchAria}
+                className="min-w-0 flex-1 bg-transparent px-1 text-xs font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none"
+              />
+              {searchQuery ? (
                 <button
                   type="button"
-                  onClick={() => {
-                    setCityFilter("");
-                    setOpenOnly(false);
-                    setSpecialtyFilter("ALL");
-                    setFacilityKindFilter("ALL");
-                    setCountryCode(defaultPack?.code ?? ACTIVE_COUNTRY_CODE);
-                  }}
-                  className="w-full rounded-xl border border-slate-200 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                  aria-label={copy.clearSearchAria}
+                  onClick={() => setSearchQuery("")}
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700"
                 >
-                  {copy.resetFilters}
+                  <X className="h-3.5 w-3.5" aria-hidden="true" />
                 </button>
               ) : null}
+              <span className="h-5 w-px shrink-0 bg-slate-200" aria-hidden="true" />
+              <button
+                type="button"
+                aria-expanded={filtersOpen}
+                aria-label={copy.toggleFiltersAria}
+                onClick={() => setFiltersOpen((prev) => !prev)}
+                className={`inline-flex h-7 shrink-0 items-center gap-1 rounded-full px-2.5 text-[11px] font-semibold transition-colors ${
+                  filtersOpen || hasPopoverFilter
+                    ? "bg-[#0066CC] text-white"
+                    : "text-slate-700 hover:bg-[#E1EBF2]"
+                }`}
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
+                <span className="hidden sm:inline">{copy.filtersLabel}</span>
+              </button>
             </div>
-          ) : null}
-        </div>
 
-        <UiSelect
-          aria-label={copy.specialtyAria}
-          selectSize="sm"
-          wrapperClassName="min-w-[160px] flex-1 sm:w-[215px] sm:flex-initial shrink-0"
-          startIcon={
-            <Stethoscope className="h-4 w-4 text-[#0066CC]" aria-hidden="true" />
-          }
-          className="h-10 rounded-xl border-transparent bg-white px-3 text-xs font-semibold text-slate-900 shadow-2xs"
-          value={specialtyFilter}
-          onChange={(e) => {
-            const next = e.target.value;
-            setSpecialtyFilter(next);
-            if (next !== "ALL") {
-              setCategory("DOCTORS");
+            {filtersOpen ? (
+              <div
+                role="dialog"
+                aria-label={copy.filtersDialogAria}
+                className={`absolute top-full z-40 mt-2 w-[min(320px,calc(100vw-1.5rem))] space-y-3 rounded-2xl border border-slate-200 bg-white/98 p-3.5 shadow-2xl backdrop-blur-xl ${
+                  isRtl ? "right-0" : "left-0"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-slate-900">
+                    {copy.filtersTitle}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={copy.closeFiltersAria}
+                    onClick={() => setFiltersOpen(false)}
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"
+                  >
+                    <X className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+
+                <MoroccanComplianceBadge domain="patient" locale={locale} />
+
+                <UiSwitch
+                  checked={openOnly}
+                  onChange={setOpenOnly}
+                  label={copy.openNowOnlyLabel}
+                />
+
+                {hasAnyFilter ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCityFilter("");
+                      setOpenOnly(false);
+                      setSpecialtyFilter("ALL");
+                      setFacilityKindFilter("ALL");
+                      setCountryCode(defaultPack?.code ?? ACTIVE_COUNTRY_CODE);
+                    }}
+                    className="w-full rounded-xl border border-slate-200 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                  >
+                    {copy.resetFilters}
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+
+          <MoroccanPlacePicker
+            value={cityFilter}
+            allowAll
+            includePlaces
+            align="start"
+            variant="toolbar"
+            ariaLabel={copy.cityLabel}
+            onSelect={(match) => setCityFilter(match?.cityName ?? "")}
+            className="shrink-0 [&>button]:h-10"
+          />
+
+          <UiSelect
+            aria-label={copy.specialtyAria}
+            selectSize="sm"
+            wrapperClassName="min-w-[160px] flex-1 sm:w-[215px] sm:flex-initial shrink-0"
+            startIcon={
+              <Stethoscope className="h-4 w-4 text-[#0066CC]" aria-hidden="true" />
             }
-          }}
-        >
-          <option value="ALL">{copy.allSpecialtiesOption}</option>
-          {specialtyOptions.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </UiSelect>
+            className="h-10 rounded-xl border-transparent bg-white px-3 text-xs font-semibold text-slate-900 shadow-2xs"
+            value={specialtyFilter}
+            onChange={(e) => {
+              const next = e.target.value;
+              setSpecialtyFilter(next);
+              if (next !== "ALL") {
+                setCategory("DOCTORS");
+              }
+            }}
+          >
+            <option value="ALL">{copy.allSpecialtiesOption}</option>
+            {specialtyOptions.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </UiSelect>
+        </div>
 
         <div
           role="tablist"
           aria-label={copy.tabsAria}
-          className="flex w-full min-w-0 flex-wrap items-center gap-1 lg:w-auto lg:flex-1"
+          className="grid grid-cols-2 gap-1.5 sm:grid-cols-5"
         >
           {(
             [
@@ -697,7 +662,7 @@ export function ProfilesDirectory({
                 label: `${copy.tabFacilities} (${filteredFacilities.length})`,
               },
             ] as const
-          ).map((tab) => {
+          ).map((tab, idx) => {
             const active = category === tab.id;
             return (
               <button
@@ -712,13 +677,13 @@ export function ProfilesDirectory({
                     setSpecialtyFilter("ALL");
                   }
                 }}
-                className={
+                className={`${idx === 4 ? "col-span-2 sm:col-span-1" : ""} ${
                   active
-                    ? "inline-flex h-10 shrink-0 items-center rounded-xl bg-[#0066CC] px-3.5 text-xs font-semibold text-white shadow-2xs"
-                    : "inline-flex h-10 shrink-0 items-center rounded-xl bg-white px-3.5 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-emerald-50 hover:text-[#0066CC]"
-                }
+                    ? "inline-flex h-10 w-full items-center justify-center truncate rounded-xl bg-[#0066CC] px-3 text-xs font-semibold text-white shadow-2xs"
+                    : "inline-flex h-10 w-full items-center justify-center truncate rounded-xl border border-[#D7E4F2] bg-white px-3 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-[#EBF4FF] hover:text-[#0066CC]"
+                }`}
               >
-                {tab.label}
+                <span className="truncate">{tab.label}</span>
               </button>
             );
           })}

@@ -34,7 +34,7 @@ export async function queryViewportFacilities(
     minLat: String(box.minLat),
     maxLng: String(box.maxLng),
     maxLat: String(box.maxLat),
-    limit: "50",
+    limit: "80",
   });
   if (options.kind) params.set("kind", options.kind);
   if (options.openNow) params.set("openNow", "true");
@@ -56,7 +56,7 @@ export async function queryNearbyDrivers(
     lat: String(paramsInput.lat),
     lng: String(paramsInput.lng),
     radiusKm: String(paramsInput.radiusKm),
-    limit: "25",
+    limit: "50",
   });
   return requestTyped(
     `${apiBaseUrl}/v1/dispatch/drivers/nearby?${params.toString()}`,

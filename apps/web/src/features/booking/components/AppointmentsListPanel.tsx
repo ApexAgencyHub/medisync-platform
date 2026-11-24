@@ -36,7 +36,6 @@ interface AppointmentsListPanelProps {
   hasSession: boolean;
   canManageStatus: boolean;
   busy: boolean;
-  onRefresh: () => void;
   onTransitionStatus: (appointmentId: string, status: AppointmentStatus) => void;
   onRemoveGuestPass: (id: string) => void;
   onBrowseSlots: () => void;
@@ -52,7 +51,6 @@ export function AppointmentsListPanel({
   hasSession,
   canManageStatus,
   busy,
-  onRefresh,
   onTransitionStatus,
   onRemoveGuestPass,
   onBrowseSlots,
@@ -121,23 +119,14 @@ export function AppointmentsListPanel({
             </div>
           ) : null}
 
-          {hasSession ? (
-            <UiButton
-              size="sm"
-              variant="secondary"
-              disabled={busy}
-              onClick={onRefresh}
-            >
-              {copy.refreshLabel}
-            </UiButton>
-          ) : (
+          {!hasSession ? (
             <Link
               href="/portal"
-              className="inline-flex min-h-[34px] items-center rounded-xl bg-[#F3F8FD] border border-[#D7E4F2] px-3.5 py-1.5 text-xs font-semibold text-slate-800 transition hover:bg-[#E1EBF2] hover:text-[#0066CC]"
+              className="inline-flex min-h-[34px] items-center rounded-xl border border-[#D7E4F2] bg-[#F3F8FD] px-3.5 py-1.5 text-xs font-semibold text-slate-800 transition hover:bg-[#E1EBF2] hover:text-[#0066CC]"
             >
               {copy.portalSignInCta}
             </Link>
-          )}
+          ) : null}
         </div>
       </div>
 

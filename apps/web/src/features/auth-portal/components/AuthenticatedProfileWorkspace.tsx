@@ -12,14 +12,9 @@ import {
 } from "@medisync/contracts";
 import {
   ArrowRight,
-  CalendarClock,
   Camera,
   CheckCircle2,
   Clock3,
-  HeartHandshake,
-  LogOut,
-  MapPin,
-  Pill,
   RefreshCw,
   ShieldAlert,
   ShieldCheck,
@@ -422,8 +417,12 @@ export function AuthenticatedProfileWorkspace({
               </div>
               <div className="flex items-center justify-between gap-2">
                 <dt>{copy.guestRegionLabel}</dt>
-                <dd className="font-semibold text-[#DC2626]">
-                  {activeCountryCode} · {copy.guestEmergencyShort}
+                <dd className="font-semibold text-[#0F243E]">
+                  {formatCountryDisplayName(
+                    activeCountryCode,
+                    resolvedCountryPack?.name ?? activeCountryCode,
+                    locale,
+                  )}
                 </dd>
               </div>
             </dl>
@@ -611,16 +610,6 @@ export function AuthenticatedProfileWorkspace({
                 aria-hidden="true"
               />
             </UiLinkButton>
-
-            <UiButton
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleSignOut}
-            >
-              <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>{copy.signOutBtn}</span>
-            </UiButton>
           </div>
         </div>
       </section>
@@ -697,91 +686,7 @@ export function AuthenticatedProfileWorkspace({
                 />
               </div>
             </section>
-          ) : (
-            <section className="rounded-2xl border border-[#D7E4F2] bg-white p-5 sm:p-6">
-              <h2 className="border-b border-[#D7E4F2] pb-3 text-sm font-bold text-[#0F243E]">
-                {copy.careShortcutsTitle}
-              </h2>
-
-              <div className="mt-3.5 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-1">
-                <UiLinkButton
-                  href="/patient#patient-safety-profile"
-                  variant="outline"
-                  size="md"
-                  className="justify-between px-3.5"
-                >
-                  <span className="inline-flex items-center gap-2">
-                    <HeartHandshake
-                      className="h-4 w-4 text-[#0066CC]"
-                      aria-hidden="true"
-                    />
-                    <span>{copy.shortcutSafety}</span>
-                  </span>
-                  <ArrowRight
-                    className="h-3.5 w-3.5 text-[#8E8A80] rtl:rotate-180"
-                    aria-hidden="true"
-                  />
-                </UiLinkButton>
-
-                <UiLinkButton
-                  href={`/booking?country=${encodeURIComponent(user.countryCode)}`}
-                  variant="outline"
-                  size="md"
-                  className="justify-between px-3.5"
-                >
-                  <span className="inline-flex items-center gap-2">
-                    <CalendarClock
-                      className="h-4 w-4 text-[#0066CC]"
-                      aria-hidden="true"
-                    />
-                    <span>{copy.shortcutBooking}</span>
-                  </span>
-                  <ArrowRight
-                    className="h-3.5 w-3.5 text-[#8E8A80] rtl:rotate-180"
-                    aria-hidden="true"
-                  />
-                </UiLinkButton>
-
-                <UiLinkButton
-                  href={`/pharmacy?country=${encodeURIComponent(user.countryCode)}`}
-                  variant="outline"
-                  size="md"
-                  className="justify-between px-3.5"
-                >
-                  <span className="inline-flex items-center gap-2">
-                    <Pill
-                      className="h-4 w-4 text-[#0066CC]"
-                      aria-hidden="true"
-                    />
-                    <span>{copy.shortcutPharmacy}</span>
-                  </span>
-                  <ArrowRight
-                    className="h-3.5 w-3.5 text-[#8E8A80] rtl:rotate-180"
-                    aria-hidden="true"
-                  />
-                </UiLinkButton>
-
-                <UiLinkButton
-                  href={`/map?country=${encodeURIComponent(user.countryCode)}`}
-                  variant="outline"
-                  size="md"
-                  className="justify-between px-3.5"
-                >
-                  <span className="inline-flex items-center gap-2">
-                    <MapPin
-                      className="h-4 w-4 text-[#0066CC]"
-                      aria-hidden="true"
-                    />
-                    <span>{copy.shortcutMap}</span>
-                  </span>
-                  <ArrowRight
-                    className="h-3.5 w-3.5 text-[#8E8A80] rtl:rotate-180"
-                    aria-hidden="true"
-                  />
-                </UiLinkButton>
-              </div>
-            </section>
-          )}
+          ) : null}
 
           {/* Account & Session Ledger */}
           <section className="rounded-2xl border border-[#D7E4F2] bg-white p-5 sm:p-6">

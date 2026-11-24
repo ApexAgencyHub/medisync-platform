@@ -766,7 +766,7 @@ export function DriverDispatchHud({
               onClick={onSyncGps}
               aria-label={copy.syncGpsAria}
               title={copy.syncGpsAria}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#D7E4F2] bg-[#F3F8FD] text-[#0066CC] transition hover:border-[#0066CC] hover:bg-white disabled:opacity-50 sm:hidden"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#D7E4F2] bg-[#F3F8FD] text-[#0066CC] transition hover:border-[#0066CC] hover:bg-white disabled:opacity-50"
             >
               <LocateFixed className="h-3.5 w-3.5" aria-hidden="true" />
             </button>
@@ -777,7 +777,7 @@ export function DriverDispatchHud({
               aria-label={copy.autoGpsAria}
               title={copy.autoGpsAria}
               onClick={onToggleAutoGps}
-              className={`inline-flex h-8 w-8 items-center justify-center rounded-full border transition disabled:opacity-50 sm:hidden ${
+              className={`inline-flex h-8 w-8 items-center justify-center rounded-full border transition disabled:opacity-50 ${
                 autoGpsActive
                   ? "border-[#0F9D88] bg-[#E6F7F4] text-[#0F9D88]"
                   : "border-[#D7E4F2] bg-[#F3F8FD] text-[#556E89] hover:border-[#0066CC] hover:text-[#0066CC]"
@@ -795,7 +795,7 @@ export function DriverDispatchHud({
               className="inline-flex h-8 items-center gap-1 whitespace-nowrap rounded-full border border-[#D7E4F2] bg-[#F3F8FD] px-2.5 text-[11px] font-semibold text-[#4A627D] transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-50"
             >
               <Power className="h-3 w-3" aria-hidden="true" />
-              <span className="hidden sm:inline">{copy.offDutyBtn}</span>
+              <span>{copy.offDutyBtn}</span>
             </button>
           </div>
         </div>

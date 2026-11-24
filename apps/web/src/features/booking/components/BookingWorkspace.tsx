@@ -289,8 +289,8 @@ export function BookingWorkspace({
     let active = true;
 
     Promise.all([
-      fetchDirectoryDoctors(apiBaseUrl, { countryCode: selectedCountry, limit: 100 }),
-      fetchDirectoryFacilities(apiBaseUrl, { countryCode: selectedCountry, limit: 100 }),
+      fetchDirectoryDoctors(apiBaseUrl, { countryCode: selectedCountry, limit: 150 }),
+      fetchDirectoryFacilities(apiBaseUrl, { countryCode: selectedCountry, limit: 150 }),
       fetchSchedules(apiBaseUrl, { countryCode: selectedCountry }),
       fetchDoctorProfiles(apiBaseUrl, selectedCountry),
     ]).then(([docsRes, facsRes, schedRes, profRes]) => {
@@ -700,7 +700,6 @@ export function BookingWorkspace({
     currentUser?.countryCode ?? defaultCode,
   );
   const hasPopoverFilter =
-    Boolean(cityFilter) ||
     Boolean(insuranceFilter) ||
     !includeBooked ||
     selectedCountry !== defaultCountryForUser ||
@@ -708,6 +707,7 @@ export function BookingWorkspace({
     Boolean(facilityFilterId);
   const hasActiveFilter = Boolean(
     searchQuery.trim() ||
+      cityFilter ||
       hasPopoverFilter ||
       visitModeFilter !== "ALL" ||
       providerFilter !== "ALL" ||
@@ -859,7 +859,6 @@ export function BookingWorkspace({
             hasSession={Boolean(session)}
             canManageStatus={canManageStatus}
             busy={busy}
-            onRefresh={() => void refreshSlotsAndAppointments()}
             onTransitionStatus={(id, status) =>
               void handleTransitionStatus(id, status)
             }

@@ -12,8 +12,8 @@ import {
   X,
 } from "lucide-react";
 import { useLocale } from "@/shared/i18n/locale-store";
-import { MOROCCAN_CITIES } from "@/shared/config/morocco-standards";
 import type { SpecialtyOption } from "@/shared/i18n/specialties";
+import { MoroccanPlacePicker } from "@/shared/ui/MoroccanPlacePicker";
 import { UiSelect, UiSwitch } from "@/shared/ui/primitives";
 import { MoroccanComplianceBadge, TactilePillGroup } from "@/shared/ui/TactileControls";
 import { BOOKING_COPY } from "../booking-i18n";
@@ -102,11 +102,11 @@ export function BookingToolbar({
       dir={isRtl ? "rtl" : "ltr"}
       className="space-y-3 rounded-2xl border border-[#D7E4F2] bg-white p-4 sm:p-5"
     >
-      {/* Row 1: Search, More Filters Popover, Practitioner Track, Specialty & View Tabs */}
+      {/* Row 1: Search, Moroccan City/Place Picker, Specialty & View Switcher */}
       <div className="flex flex-wrap items-center gap-2">
         <div
           ref={searchContainerRef}
-          className="relative flex min-w-0 flex-1 items-center basis-full sm:basis-auto sm:min-w-[230px]"
+          className="relative flex min-w-0 flex-1 basis-full items-center md:basis-0 md:min-w-[220px]"
         >
           <div className="flex h-10 w-full min-w-0 items-center gap-1.5 rounded-xl border border-slate-200/90 bg-white ps-3.5 pe-1.5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] transition-all focus-within:border-emerald-700 focus-within:ring-2 focus-within:ring-emerald-700/15">
             <Search
@@ -179,65 +179,6 @@ export function BookingToolbar({
 
               <MoroccanComplianceBadge domain="patient" locale={locale} />
 
-              <div className="space-y-1.5">
-                <span className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                  {locale === "fr"
-                    ? "Ville (Maroc)"
-                    : locale === "ar"
-                      ? "المدينة (المغرب)"
-                      : "City (Morocco)"}
-                </span>
-                <div
-                  id="booking-city-filter"
-                  role="radiogroup"
-                  aria-label={
-                    locale === "fr"
-                      ? "Filtrer par ville"
-                      : locale === "ar"
-                        ? "تصفية حسب المدينة"
-                        : "Filter by city"
-                  }
-                  className="flex flex-wrap gap-1.5"
-                >
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={cityFilter === ""}
-                    onClick={() => onCityFilterChange("")}
-                    className={`h-7 rounded-full border px-2.5 text-[11px] font-semibold transition ${
-                      cityFilter === ""
-                        ? "border-[#0066CC] bg-[#0066CC] text-white"
-                        : "border-[#D7E4F2] bg-[#F3F8FD] text-[#2F4661] hover:border-[#0066CC]"
-                    }`}
-                  >
-                    {locale === "fr"
-                      ? "Toutes les villes"
-                      : locale === "ar"
-                        ? "كل المدن"
-                        : "All cities"}
-                  </button>
-                  {MOROCCAN_CITIES.map((city) => {
-                    const selected = cityFilter === city.name;
-                    return (
-                      <button
-                        key={city.id}
-                        type="button"
-                        role="radio"
-                        aria-checked={selected}
-                        onClick={() => onCityFilterChange(city.name)}
-                        className={`h-7 rounded-full border px-2.5 text-[11px] font-semibold transition ${
-                          selected
-                            ? "border-[#0066CC] bg-[#0066CC] text-white"
-                            : "border-[#D7E4F2] bg-[#F3F8FD] text-[#2F4661] hover:border-[#0066CC]"
-                        }`}
-                      >
-                        {city.labels[locale]}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
               {availableInsurances.length > 0 ? (
                 <div className="space-y-1.5">
                   <span className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
@@ -303,30 +244,22 @@ export function BookingToolbar({
           ) : null}
         </div>
 
-        {/* Tactile Practitioner Track Segmented Pill Toggle */}
-        <TactilePillGroup
-          ariaLabel={copy.practitionerTypeAria}
-          size="xs"
-          layout="segmented"
-          value={providerFilter}
-          onChange={(next) => {
-            onProviderFilterChange(next);
-            if (next === "NURSES") {
-              onSpecialtyFilterChange("ALL");
-            }
-          }}
-          options={[
-            { value: "ALL", label: copy.allPractitionersOption },
-            { value: "DOCTORS", label: copy.doctorsSpecialistsOption },
-            { value: "NURSES", label: copy.nursesOption },
-          ]}
+        {/* All-Morocco City & Neighborhood Filter */}
+        <MoroccanPlacePicker
+          value={cityFilter}
+          allowAll
+          includePlaces
+          align="start"
+          variant="toolbar"
+          onSelect={(match) => onCityFilterChange(match?.cityName ?? "")}
+          className="shrink-0 [&>button]:h-10"
         />
 
         {/* Doctor Specialty Dropdown */}
         <UiSelect
           aria-label={copy.specialtyAria}
           selectSize="sm"
-          wrapperClassName="min-w-[155px] flex-1 sm:w-[215px] sm:flex-initial shrink-0"
+          wrapperClassName="min-w-[155px] flex-1 sm:w-[196px] sm:flex-initial shrink-0"
           startIcon={
             <Stethoscope className="h-4 w-4 text-teal-800" aria-hidden="true" />
           }
@@ -348,18 +281,18 @@ export function BookingToolbar({
           ))}
         </UiSelect>
 
-        {/* View Switcher: Open Slots vs My Visits */}
+        {/* View Switcher: Open Slots vs My Visits (no orphan ms-auto void) */}
         <div
           role="tablist"
           aria-label={copy.viewsAria}
-          className="grid h-10 w-full shrink-0 grid-cols-2 items-center rounded-xl bg-white p-1 shadow-2xs sm:ms-auto sm:inline-flex sm:w-auto"
+          className="grid h-10 w-full shrink-0 grid-cols-2 items-center rounded-xl border border-[#D7E4F2] bg-[#F3F8FD] p-1 sm:inline-flex sm:w-auto"
         >
           <button
             type="button"
             role="tab"
             aria-selected={activeTab === "PRACTITIONERS"}
             onClick={() => onSelectTab("PRACTITIONERS")}
-            className={`inline-flex h-8 items-center justify-center rounded-full px-3.5 text-xs font-semibold transition ${
+            className={`inline-flex h-8 items-center justify-center whitespace-nowrap rounded-lg px-3 text-xs font-semibold transition ${
               activeTab === "PRACTITIONERS"
                 ? "bg-[#0066CC] text-white shadow-2xs"
                 : "text-slate-600 hover:text-slate-950"
@@ -372,7 +305,7 @@ export function BookingToolbar({
             role="tab"
             aria-selected={activeTab === "APPOINTMENTS"}
             onClick={() => onSelectTab("APPOINTMENTS")}
-            className={`inline-flex h-8 items-center justify-center rounded-full px-3.5 text-xs font-semibold transition ${
+            className={`inline-flex h-8 items-center justify-center whitespace-nowrap rounded-lg px-3 text-xs font-semibold transition ${
               activeTab === "APPOINTMENTS"
                 ? "bg-[#0066CC] text-white shadow-2xs"
                 : "text-slate-600 hover:text-slate-950"
@@ -384,8 +317,29 @@ export function BookingToolbar({
         </div>
       </div>
 
-      {/* Row 2: Direct Visit Format Chips + Rolling 5-Day Clinic Strip */}
-      <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5">
+      {/* Row 2: Practitioner Track + Visit Format Chips + Rolling 5-Day Clinic Strip (tightly packed, zero justify-between chasm) */}
+      <div className="flex flex-wrap items-center gap-2 border-t border-[#E8F1FA] pt-2.5">
+        {/* Tactile Practitioner Track Segmented Pill Toggle */}
+        <TactilePillGroup
+          ariaLabel={copy.practitionerTypeAria}
+          size="xs"
+          layout="segmented"
+          value={providerFilter}
+          onChange={(next) => {
+            onProviderFilterChange(next);
+            if (next === "NURSES") {
+              onSpecialtyFilterChange("ALL");
+            }
+          }}
+          options={[
+            { value: "ALL", label: copy.allPractitionersOption },
+            { value: "DOCTORS", label: copy.doctorsSpecialistsOption },
+            { value: "NURSES", label: copy.nursesOption },
+          ]}
+        />
+
+        <span className="hidden h-5 w-px bg-[#D7E4F2] sm:inline-block" aria-hidden="true" />
+
         <div className="flex flex-wrap items-center gap-1.5">
           {(
             [
@@ -413,10 +367,10 @@ export function BookingToolbar({
                       : VisitModeSchema.parse(mode.value),
                   )
                 }
-                className={`inline-flex h-8 items-center gap-1.5 rounded-full px-3.5 text-xs font-semibold transition active:scale-[0.98] ${
+                className={`inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold transition active:scale-[0.98] ${
                   active
-                    ? "bg-[#0066CC] text-white shadow-2xs"
-                    : "bg-white text-slate-700 hover:bg-[#E1EBF2] hover:text-[#0066CC]"
+                    ? "border-[#0066CC] bg-[#0066CC] text-white shadow-2xs"
+                    : "border-[#D7E4F2] bg-[#F8FBFE] text-slate-700 hover:border-[#0066CC] hover:bg-[#EBF4FF] hover:text-[#0066CC]"
                 }`}
               >
                 {Icon ? (
@@ -432,7 +386,7 @@ export function BookingToolbar({
         </div>
 
         {/* Rolling 5-Day Weekday Strip + Compact Date Input */}
-        <div className="flex w-full items-center gap-1.5 overflow-x-auto pb-0.5 sm:w-auto [scrollbar-width:none]">
+        <div className="flex w-full flex-wrap items-center gap-1.5 border-t border-[#E8F1FA] pt-2">
           {rollingDates.map((preset) => {
             const active = selectedDate === preset.value;
             return (
@@ -444,10 +398,10 @@ export function BookingToolbar({
                   onSelectDate(preset.value);
                   onSelectTab("PRACTITIONERS");
                 }}
-                className={`flex shrink-0 flex-col items-center rounded-xl px-3.5 py-1.5 text-center transition active:scale-[0.98] ${
+                className={`flex shrink-0 flex-col items-center rounded-xl border px-3 py-1.5 text-center transition active:scale-[0.98] ${
                   active
-                    ? "bg-[#0066CC] text-white shadow-sm"
-                    : "bg-white text-slate-700 hover:bg-[#E1EBF2]"
+                    ? "border-[#0066CC] bg-[#0066CC] text-white shadow-sm"
+                    : "border-[#D7E4F2] bg-[#F8FBFE] text-slate-700 hover:border-[#0066CC] hover:bg-[#EBF4FF]"
                 }`}
               >
                 <span className="text-[11px] font-bold leading-tight">
@@ -455,7 +409,7 @@ export function BookingToolbar({
                 </span>
                 <span
                   className={`font-mono-tabular text-[10px] leading-tight ${
-                    active ? "text-emerald-100" : "text-slate-500"
+                    active ? "text-sky-100" : "text-slate-500"
                   }`}
                 >
                   {preset.sublabel}
@@ -464,7 +418,7 @@ export function BookingToolbar({
             );
           })}
 
-          <label className="relative inline-flex h-[40px] shrink-0 cursor-pointer items-center gap-1.5 rounded-xl bg-white px-3 text-xs font-semibold text-slate-700 ring-1 ring-slate-900/[0.07] hover:bg-emerald-50">
+          <label className="relative inline-flex h-[40px] shrink-0 cursor-pointer items-center gap-1.5 rounded-xl border border-[#D7E4F2] bg-white px-3 text-xs font-semibold text-slate-700 hover:border-[#0066CC] hover:bg-[#F8FBFE]">
             <Calendar className="h-3.5 w-3.5 text-[#0066CC]" aria-hidden="true" />
             <input
               id="booking-date"

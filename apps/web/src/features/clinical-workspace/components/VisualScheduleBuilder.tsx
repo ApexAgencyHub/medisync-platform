@@ -1508,7 +1508,13 @@ export function VisualScheduleBuilder({
                 <span className="block text-xs font-bold text-[#0F243E]">
                   {sc.stepMode}
                 </span>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                <div
+                  className={`grid gap-2 ${
+                    allowedModes.length === 2
+                      ? "grid-cols-2"
+                      : "grid-cols-1 sm:grid-cols-3"
+                  }`}
+                >
                   {allowedModes.map((mode) => {
                     const selected = schedMode === mode;
                     const Icon =
@@ -1701,7 +1707,13 @@ export function VisualScheduleBuilder({
                 ))}
               </div>
 
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <div
+                className={`grid gap-2 ${
+                  allowedModes.length === 2
+                    ? "grid-cols-2"
+                    : "grid-cols-1 sm:grid-cols-3"
+                }`}
+              >
                 {allowedModes.map((mode) => (
                   <button
                     key={mode}

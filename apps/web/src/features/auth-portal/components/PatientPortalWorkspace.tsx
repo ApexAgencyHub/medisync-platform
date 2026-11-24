@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ALLOWED_AVATAR_MIME_TYPES,
@@ -13,12 +12,7 @@ import {
 import {
   ArrowRight,
   Building2,
-  CalendarCheck2,
   Camera,
-  HeartHandshake,
-  LogOut,
-  MapPin,
-  Pill,
   ShieldCheck,
   UserCheck,
 } from "lucide-react";
@@ -232,7 +226,7 @@ export function PatientPortalWorkspace({
       <div dir={isRtl ? "rtl" : "ltr"} className="mx-auto max-w-5xl py-2 sm:py-5">
         <div className="grid overflow-hidden rounded-2xl border border-[#D7E4F2] bg-white shadow-[0_14px_36px_-16px_rgba(15,36,62,0.12)] lg:grid-cols-12">
           {/* Pure White / Soft Clinical Sky Care Column */}
-          <aside className="atlas-ice-grid flex flex-col justify-between border-b border-[#D7E4F2] text-[#0F243E] lg:col-span-5 lg:border-e lg:border-b-0">
+          <aside className="atlas-ice-grid flex flex-col justify-start gap-6 border-b border-[#D7E4F2] text-[#0F243E] lg:col-span-5 lg:border-e lg:border-b-0">
             <div className="p-6 sm:p-7">
               <p className="inline-flex items-center gap-2 rounded-full border border-[#BFDBFE] bg-[#EBF4FF] px-3 py-1 text-xs font-semibold text-[#0052A3]">
                 <span className="h-2 w-2 rounded-full bg-[#0066CC]" />
@@ -261,13 +255,6 @@ export function PatientPortalWorkspace({
                     : locale === "fr"
                       ? "SMS OTP · Google"
                       : "Phone OTP · Google"}
-                </span>
-                <span className="rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-[#DC2626]">
-                  {locale === "ar"
-                    ? `الطوارئ ${resolvedCountryPack?.emergencyHotlines.ambulance ?? "141"}`
-                    : locale === "fr"
-                      ? `Urgences SAMU ${resolvedCountryPack?.emergencyHotlines.ambulance ?? "141"}`
-                      : `Emergency ${resolvedCountryPack?.emergencyHotlines.ambulance ?? "141"}`}
                 </span>
               </div>
             </div>
@@ -483,62 +470,6 @@ export function PatientPortalWorkspace({
                 <UserCheck className="h-3.5 w-3.5" aria-hidden="true" />
                 <span>{consumer.openProfileCta}</span>
               </UiLinkButton>
-              <button
-                type="button"
-                onClick={handleSignOut}
-                className="inline-flex h-8 items-center gap-1.5 rounded-full bg-slate-100 px-3 text-xs font-semibold text-slate-700 transition hover:bg-rose-50 hover:text-rose-700"
-              >
-                <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>{copy.aside.signOutBtn}</span>
-              </button>
-            </div>
-          </section>
-
-          <section className="rounded-2xl border border-[#D7E4F2] bg-white p-5 sm:p-6">
-            <h2 className="text-sm font-bold text-[#0F243E]">
-              {consumer.careCardTitle}
-            </h2>
-            <div className="mt-4 grid gap-2">
-              <Link
-                href="/patient"
-                className="flex items-center justify-between rounded-lg border border-[#D7E4F2] bg-[#F3F8FD] px-3.5 py-2.5 text-xs font-semibold text-[#0F243E] transition hover:bg-white hover:text-[#0066CC]"
-              >
-                <span className="inline-flex items-center gap-2">
-                  <HeartHandshake className="h-4 w-4 text-[#0066CC]" aria-hidden="true" />
-                  <span>{consumer.shortcutPatient}</span>
-                </span>
-                <ArrowRight className="h-3.5 w-3.5 rtl:rotate-180" aria-hidden="true" />
-              </Link>
-              <Link
-                href="/booking"
-                className="flex items-center justify-between rounded-lg border border-[#D7E4F2] bg-[#F3F8FD] px-3.5 py-2.5 text-xs font-semibold text-[#0F243E] transition hover:bg-white hover:text-[#0066CC]"
-              >
-                <span className="inline-flex items-center gap-2">
-                  <CalendarCheck2 className="h-4 w-4 text-[#0066CC]" aria-hidden="true" />
-                  <span>{consumer.shortcutBooking}</span>
-                </span>
-                <ArrowRight className="h-3.5 w-3.5 rtl:rotate-180" aria-hidden="true" />
-              </Link>
-              <Link
-                href="/map"
-                className="flex items-center justify-between rounded-lg border border-[#D7E4F2] bg-[#F3F8FD] px-3.5 py-2.5 text-xs font-semibold text-[#0F243E] transition hover:bg-white hover:text-[#0066CC]"
-              >
-                <span className="inline-flex items-center gap-2">
-                  <MapPin className="h-4 w-4 text-[#0066CC]" aria-hidden="true" />
-                  <span>{consumer.shortcutMap}</span>
-                </span>
-                <ArrowRight className="h-3.5 w-3.5 rtl:rotate-180" aria-hidden="true" />
-              </Link>
-              <Link
-                href="/pharmacy"
-                className="flex items-center justify-between rounded-lg border border-[#D7E4F2] bg-[#F3F8FD] px-3.5 py-2.5 text-xs font-semibold text-[#0F243E] transition hover:bg-white hover:text-[#0066CC]"
-              >
-                <span className="inline-flex items-center gap-2">
-                  <Pill className="h-4 w-4 text-[#0066CC]" aria-hidden="true" />
-                  <span>{consumer.shortcutPharmacy}</span>
-                </span>
-                <ArrowRight className="h-3.5 w-3.5 rtl:rotate-180" aria-hidden="true" />
-              </Link>
             </div>
           </section>
         </aside>

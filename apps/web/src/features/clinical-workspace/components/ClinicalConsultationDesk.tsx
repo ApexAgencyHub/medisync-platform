@@ -527,14 +527,16 @@ export function ClinicalConsultationDesk({
 
       {/* 2. Clinical Encounter Editor: Live Vitals + SOAP Note + ICD-10 Chips */}
       <section className="rounded-2xl border border-[#D7E4F2] bg-white p-4 shadow-[0_6px_22px_-12px_rgba(15,36,62,0.08)] sm:p-6">
-        <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-[#E8F1FA] pb-3.5">
-          <div className="flex flex-wrap items-center gap-2.5">
-            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#EBF4FF] text-[#0066CC]">
-              <Stethoscope className="h-4.5 w-4.5" aria-hidden="true" />
-            </span>
-            <h2 className="font-editorial text-base font-bold text-[#0F243E]">
-              {isNurse ? ui.nurseHeading : c.doctorTab.heading}
-            </h2>
+        <div className="space-y-2.5 border-b border-[#E8F1FA] pb-3.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#EBF4FF] text-[#0066CC]">
+                <Stethoscope className="h-4.5 w-4.5" aria-hidden="true" />
+              </span>
+              <h2 className="font-editorial text-base font-bold text-[#0F243E]">
+                {isNurse ? ui.nurseHeading : c.doctorTab.heading}
+              </h2>
+            </div>
             <MoroccanComplianceBadge
               domain={isNurse ? "nurse" : "doctor"}
               locale={locale}

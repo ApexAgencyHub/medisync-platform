@@ -1,4 +1,33 @@
 import type { LocaleCode } from "@medisync/contracts";
+import {
+  MOROCCAN_CITIES_CATALOG,
+  MOROCCAN_REGIONS,
+  expandMoroccanCityKeywords,
+  findMoroccanCity,
+  matchesMoroccanCity,
+  normalizeLocationText,
+  searchMoroccanLocations,
+  type MoroccanCityDefinition,
+  type MoroccanLocationMatch,
+  type MoroccanPlaceDefinition,
+  type MoroccanRegionCode,
+  type MoroccanRegionDefinition,
+} from "@medisync/country-packs";
+
+export {
+  MOROCCAN_CITIES_CATALOG,
+  MOROCCAN_REGIONS,
+  expandMoroccanCityKeywords,
+  findMoroccanCity,
+  matchesMoroccanCity,
+  normalizeLocationText,
+  searchMoroccanLocations,
+  type MoroccanCityDefinition,
+  type MoroccanLocationMatch,
+  type MoroccanPlaceDefinition,
+  type MoroccanRegionCode,
+  type MoroccanRegionDefinition,
+};
 
 export interface MoroccanCityPreset {
   id: string;
@@ -8,149 +37,46 @@ export interface MoroccanCityPreset {
   lat: number;
   lng: number;
   region: string;
+  regionCode: MoroccanRegionCode;
+  isMajorHub?: boolean;
 }
 
-export const MOROCCAN_CITIES: readonly MoroccanCityPreset[] = [
-  {
-    id: "casablanca",
-    name: "Casablanca",
-    aliases: ["casablanca", "casa", "anfa", "maarif", "الدار البيضاء"],
-    labels: { en: "Casablanca", fr: "Casablanca", ar: "الدار البيضاء" },
-    lat: 33.5731,
-    lng: -7.5898,
-    region: "Casablanca-Settat",
-  },
-  {
-    id: "rabat",
-    name: "Rabat",
-    aliases: ["rabat", "agdal", "souissi", "الرباط"],
-    labels: { en: "Rabat", fr: "Rabat", ar: "الرباط" },
-    lat: 34.0209,
-    lng: -6.8416,
-    region: "Rabat-Salé-Kénitra",
-  },
-  {
-    id: "marrakech",
-    name: "Marrakech",
-    aliases: ["marrakech", "marrakesh", "gueliz", "مراكش"],
-    labels: { en: "Marrakech", fr: "Marrakech", ar: "مراكش" },
-    lat: 31.6295,
-    lng: -7.9811,
-    region: "Marrakech-Safi",
-  },
-  {
-    id: "tangier",
-    name: "Tangier",
-    aliases: ["tangier", "tanger", "detroit", "طنجة"],
-    labels: { en: "Tangier", fr: "Tanger", ar: "طنجة" },
-    lat: 35.7595,
-    lng: -5.834,
-    region: "Tanger-Tétouan-Al Hoceïma",
-  },
-  {
-    id: "fes",
-    name: "Fes",
-    aliases: ["fes", "fez", "saiss", "فاس"],
-    labels: { en: "Fes", fr: "Fès", ar: "فاس" },
-    lat: 34.0181,
-    lng: -5.0078,
-    region: "Fès-Meknès",
-  },
-  {
-    id: "agadir",
-    name: "Agadir",
-    aliases: ["agadir", "souss", "أكادير"],
-    labels: { en: "Agadir", fr: "Agadir", ar: "أكادير" },
-    lat: 30.4278,
-    lng: -9.5981,
-    region: "Souss-Massa",
-  },
-] as const;
+export const MOROCCAN_CITIES: readonly MoroccanCityPreset[] =
+  MOROCCAN_CITIES_CATALOG.map((city) => ({
+    id: city.id,
+    name: city.name,
+    aliases: city.aliases,
+    labels: city.labels,
+    lat: city.lat,
+    lng: city.lng,
+    region: city.region,
+    regionCode: city.regionCode,
+    ...(city.isMajorHub ? { isMajorHub: true } : {}),
+  }));
 
 export function normalizeCityText(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toLowerCase();
+  return normalizeLocationText(value);
 }
 
-export function expandMoroccanCityKeywords(
-  city: string | null | undefined,
-): string {
-  if (!city) return "";
-  const needle = normalizeCityText(city);
-  if (!needle) return "";
-  const preset = MOROCCAN_CITIES.find(
-    (c) =>
-      normalizeCityText(c.name) === needle ||
-      normalizeCityText(c.id) === needle ||
-      c.aliases.some((alias) => normalizeCityText(alias) === needle),
-  );
-  if (!preset) return needle;
-  return Array.from(
-    new Set([
-      normalizeCityText(preset.name),
-      ...preset.aliases.map(normalizeCityText),
-    ]),
-  ).join(" ");
+export function isNursingSpecialty(value: string | null | undefined): boolean {
+  if (!value) return false;
+  return /nursing|infirmier|nurse|تمريض|ممرض/i.test(value);
 }
 
 export function matchesAccentInsensitiveQuery(
   rawQuery: string,
   fields: readonly (string | null | undefined)[],
 ): boolean {
-  const normalized = normalizeCityText(rawQuery);
+  const normalized = normalizeLocationText(rawQuery);
   if (!normalized) return true;
   const tokens = normalized.split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return true;
   const haystack = fields
     .filter((f): f is string => typeof f === "string" && f.length > 0)
-    .map(normalizeCityText)
+    .map(normalizeLocationText)
     .join(" ");
   if (!haystack) return false;
   return tokens.every((token) => haystack.includes(token));
-}
-
-export function matchesMoroccanCity(
-  selectedCity: string,
-  primaryCity: string | null | undefined,
-  fallbackFields: readonly (string | null | undefined)[] = [],
-): boolean {
-  const needle = normalizeCityText(selectedCity);
-  if (!needle) return true;
-  const preset = MOROCCAN_CITIES.find(
-    (c) =>
-      normalizeCityText(c.name) === needle ||
-      normalizeCityText(c.id) === needle ||
-      c.aliases.some((alias) => normalizeCityText(alias) === needle),
-  );
-  const tokens = preset
-    ? Array.from(
-        new Set([
-          normalizeCityText(preset.name),
-          ...preset.aliases.map(normalizeCityText),
-        ]),
-      )
-    : [needle];
-
-  // When structured city metadata exists, trust it authoritatively so street names
-  // like "Route de Rabat, Tanger" never falsely leak into Rabat filters.
-  const normalizedPrimary =
-    typeof primaryCity === "string" ? normalizeCityText(primaryCity) : "";
-  if (normalizedPrimary.length > 0) {
-    return tokens.some(
-      (token) =>
-        normalizedPrimary === token || normalizedPrimary.includes(token),
-    );
-  }
-
-  const haystack = fallbackFields
-    .filter((f): f is string => typeof f === "string" && f.length > 0)
-    .map(normalizeCityText)
-    .join(" ");
-  if (!haystack) return false;
-  return tokens.some((token) => haystack.includes(token));
 }
 
 export interface MoroccanInsurerPreset {

@@ -26,10 +26,7 @@ import { requestTyped } from "@/shared/api/http-client";
 import { useLocale } from "@/shared/i18n/locale-store";
 import { EntityPicker } from "@/shared/ui/EntityPicker";
 import { UiBadge, UiButton, UiInput, useToastSetter } from "@/shared/ui/primitives";
-import {
-  ClinicalStepper,
-  MoroccanComplianceBadge,
-} from "@/shared/ui/TactileControls";
+import { ClinicalStepper } from "@/shared/ui/TactileControls";
 
 const InvoicesListResponseSchema = {
   safeParse(
@@ -507,7 +504,6 @@ export function HospitalBillingPanel({
           </span>
           <h2 className="font-editorial text-base font-bold text-[#0F243E]">{c.title}</h2>
         </div>
-        <MoroccanComplianceBadge domain="hospital" locale={locale} />
       </div>
 
       <div className="mt-4 space-y-4">

@@ -80,17 +80,6 @@ const ROLE_GUARD_COPY = {
   },
 } as const;
 
-const HOME_CTA_MAP: Record<string, { fr: string; ar: string }> = {
-  "/clinical": { fr: "Ouvrir l'Espace Médecin", ar: "فتح فضاء الطبيب" },
-  "/nurse": { fr: "Ouvrir le Poste Infirmier", ar: "فتح محطة التمريض" },
-  "/driver": { fr: "Ouvrir l'Espace Chauffeur", ar: "فتح فضاء السائق" },
-  "/pharmacy": { fr: "Ouvrir le Comptoir Pharmacie", ar: "فتح مكتب الصيدلية" },
-  "/hospital": { fr: "Ouvrir l'Accueil Hôpital", ar: "فتح استقبال المستشفى" },
-  "/lab": { fr: "Ouvrir le Bureau Labo", ar: "فتح مكتب المختبر" },
-  "/admin": { fr: "Ouvrir l'Administration", ar: "فتح لوحة الإدارة" },
-  "/patient": { fr: "Ouvrir Mon Espace Santé", ar: "فتح ملفي الصحي" },
-};
-
 /**
  * Frontend route guard enforcing role isolation across English, French, and Arabic RTL.
  */
@@ -203,10 +192,6 @@ export function WorkspaceRoleGuard({
 
   if (!roleAllowed || pendingBlocked) {
     const home = getPrimaryWorkspaceForUser(user, locale);
-    const localizedHomeCta =
-      locale === "en"
-        ? home.label
-        : HOME_CTA_MAP[home.href]?.[locale] ?? home.label;
     const roleLabel = formatRoleLabel(user.role, locale);
 
     return (
@@ -256,7 +241,7 @@ export function WorkspaceRoleGuard({
                 href={home.href}
                 className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-[#0066CC] px-4 text-xs font-semibold text-white transition-colors hover:bg-[#0052A3]"
               >
-                <span>{localizedHomeCta}</span>
+                <span>{home.label}</span>
                 <ArrowRight
                   className="h-3.5 w-3.5 rtl:rotate-180"
                   aria-hidden="true"

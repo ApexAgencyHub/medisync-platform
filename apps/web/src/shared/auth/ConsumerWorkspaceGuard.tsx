@@ -48,18 +48,6 @@ const GUARD_COPY = {
   },
 } as const;
 
-const WORKSPACE_CTA_LOCALIZED: Record<string, { fr: string; ar: string }> = {
-  "/clinical": { fr: "Ouvrir l'Espace Médecin", ar: "فتح فضاء الطبيب" },
-  "/nurse": { fr: "Ouvrir le Poste Infirmier", ar: "فتح محطة التمريض" },
-  "/driver": { fr: "Ouvrir l'Espace Chauffeur", ar: "فتح فضاء السائق" },
-  "/pharmacy": { fr: "Ouvrir le Comptoir Pharmacie", ar: "فتح مكتب الصيدلية" },
-  "/hospital": { fr: "Ouvrir l'Accueil Hôpital", ar: "فتح استقبال المستشفى" },
-  "/lab": { fr: "Ouvrir le Bureau Labo", ar: "فتح مكتب المختبر" },
-  "/admin": { fr: "Ouvrir l'Administration", ar: "فتح لوحة الإدارة" },
-  "/pro": { fr: "Ouvrir MediSync Pro", ar: "فتح بوابة المهنيين Pro" },
-  "/patient": { fr: "Ouvrir Mon Espace Santé", ar: "فتح ملفي الصحي" },
-};
-
 /**
  * Prevents non-patient professionals (active or pending verification) from mixing into Consumer/Patient UIs.
  */
@@ -83,10 +71,6 @@ export function ConsumerWorkspaceGuard({
   if (isStaff && user) {
     const home = getPrimaryWorkspaceForUser(user, locale);
     const localizedRole = formatRoleLabel(user.role, locale);
-    const localizedCta =
-      locale === "en"
-        ? home.label
-        : WORKSPACE_CTA_LOCALIZED[home.href]?.[locale] ?? home.label;
 
     return (
       <section
@@ -127,7 +111,7 @@ export function ConsumerWorkspaceGuard({
                 href={home.href}
                 className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-[#0066CC] px-4 text-xs font-semibold text-white transition-colors hover:bg-[#0052A3]"
               >
-                <span>{localizedCta}</span>
+                <span>{home.label}</span>
                 <ArrowRight
                   className="h-3.5 w-3.5 rtl:rotate-180"
                   aria-hidden="true"

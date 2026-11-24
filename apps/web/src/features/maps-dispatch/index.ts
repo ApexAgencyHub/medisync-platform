@@ -10,6 +10,7 @@ export {
   getCityPresetById,
   getPresetForCountry,
   getViewportCenter,
+  locationMatchToViewportBox,
   panViewport,
   toViewportBox,
   zoomViewport,

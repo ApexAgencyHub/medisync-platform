@@ -54,8 +54,10 @@ import {
   ACTIVE_COUNTRY_CODE,
   resolveActivePack,
 } from "@/shared/config/deployment";
+import { matchesMoroccanCity } from "@/shared/config/morocco-standards";
 import { EntityAvatar } from "@/shared/ui/EntityAvatar";
 import { useImageLightbox } from "@/shared/ui/ImageLightboxProvider";
+import { MoroccanPlacePicker } from "@/shared/ui/MoroccanPlacePicker";
 import {
   StatStrip,
   UiTabBar,
@@ -244,6 +246,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
 
   // Facility & Dispute Filtering State
   const [facilitySearchQuery, setFacilitySearchQuery] = useState("");
+  const [facilityCityFilter, setFacilityCityFilter] = useState("");
   const [facilityStatusFilter, setFacilityStatusFilter] = useState<
     "ALL" | "PENDING_REVIEW" | "VERIFIED" | "SUSPENDED"
   >("ALL");
@@ -1022,14 +1025,13 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
     });
   }
 
-  async function handleFilterAudit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function runAuditFilterQuery(nextAction: string, nextResource: string) {
     if (!sessionToken || !isAdminViewer) return;
     setBusy(true);
     const res = await fetchAdminAuditEvents(apiBaseUrl, sessionToken, {
       countryCode: effectiveCountryQuery,
-      action: auditActionFilter.trim() || undefined,
-      resourceType: auditResourceFilter.trim() || undefined,
+      action: nextAction.trim() || undefined,
+      resourceType: nextResource.trim() || undefined,
       limit: 50,
     });
     setBusy(false);
@@ -1070,14 +1072,30 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
       if (facilityKindFilter !== "ALL" && fac.kind !== facilityKindFilter) {
         return false;
       }
+      if (
+        facilityCityFilter &&
+        !matchesMoroccanCity(facilityCityFilter, fac.city, [
+          fac.address,
+          fac.name,
+        ])
+      ) {
+        return false;
+      }
       if (!q) return true;
       return (
         fac.name.toLowerCase().includes(q) ||
         fac.licenseNumber.toLowerCase().includes(q) ||
-        fac.address.toLowerCase().includes(q)
+        fac.address.toLowerCase().includes(q) ||
+        (fac.city?.toLowerCase().includes(q) ?? false)
       );
     });
-  }, [facilities, facilityKindFilter, facilitySearchQuery, facilityStatusFilter]);
+  }, [
+    facilities,
+    facilityCityFilter,
+    facilityKindFilter,
+    facilitySearchQuery,
+    facilityStatusFilter,
+  ]);
 
   const filteredUsers = useMemo(() => {
     const q = userSearchQuery.trim().toLowerCase();
@@ -1372,6 +1390,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
           activeTab={activeTab}
           onSelect={setActiveTab}
           ariaLabel={a.header.tabsAria}
+          className="[&_[role=tablist]]:md:flex-wrap [&_[role=tablist]]:md:overflow-visible [&_[role=tablist]]:md:pe-1"
         />
 
           {activeTab === "overview" ? (
@@ -1593,8 +1612,8 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
               </div>
 
               <div className="space-y-2.5">
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="flex h-9 min-w-[200px] flex-1 items-center gap-1.5 rounded-xl border border-[#D7E4F2] bg-[#F8FBFE] px-3.5 focus-within:border-[#0066CC] focus-within:bg-white">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <div className="flex h-9 min-w-0 flex-1 items-center gap-1.5 rounded-xl border border-[#D7E4F2] bg-[#F8FBFE] px-3.5 focus-within:border-[#0066CC] focus-within:bg-white">
                     <Search className="h-3.5 w-3.5 shrink-0 text-slate-500" aria-hidden="true" />
                     <input
                       type="search"
@@ -1605,7 +1624,26 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                       className="min-w-0 flex-1 bg-transparent text-xs text-slate-900 focus:outline-none"
                     />
                   </div>
-                  <div className="flex flex-wrap gap-1">
+                  <MoroccanPlacePicker
+                    value={facilityCityFilter}
+                    variant="toolbar"
+                    allowAll
+                    includePlaces={false}
+                    align="end"
+                    ariaLabel={
+                      locale === "ar"
+                        ? "تصفية المؤسسات حسب المدينة المغربية"
+                        : locale === "fr"
+                          ? "Filtrer les établissements par ville marocaine"
+                          : "Filter facilities by Moroccan city"
+                    }
+                    onSelect={(match) =>
+                      setFacilityCityFilter(match ? match.cityName : "")
+                    }
+                  />
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap gap-1.5">
                     {(["ALL", "PENDING_REVIEW", "VERIFIED", "SUSPENDED"] as const).map(
                       (st) => (
                         <button
@@ -1629,21 +1667,21 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                       ),
                     )}
                   </div>
+                  <TactilePillGroup
+                    ariaLabel={a.facilities.kindAria}
+                    size="xs"
+                    layout="segmented"
+                    value={facilityKindFilter}
+                    onChange={setFacilityKindFilter}
+                    options={[
+                      { value: "ALL", label: a.facilities.allTypesOption },
+                      { value: "HOSPITAL", label: a.facilities.hospitalsOption },
+                      { value: "CLINIC", label: a.facilities.clinicsOption },
+                      { value: "PHARMACY", label: a.facilities.pharmaciesOption },
+                      { value: "DIAGNOSTIC_LAB", label: a.facilities.labsOption },
+                    ]}
+                  />
                 </div>
-                <TactilePillGroup
-                  ariaLabel={a.facilities.kindAria}
-                  size="xs"
-                  layout="segmented"
-                  value={facilityKindFilter}
-                  onChange={setFacilityKindFilter}
-                  options={[
-                    { value: "ALL", label: a.facilities.allTypesOption },
-                    { value: "HOSPITAL", label: a.facilities.hospitalsOption },
-                    { value: "CLINIC", label: a.facilities.clinicsOption },
-                    { value: "PHARMACY", label: a.facilities.pharmaciesOption },
-                    { value: "DIAGNOSTIC_LAB", label: a.facilities.labsOption },
-                  ]}
-                />
               </div>
 
               {filteredFacilities.length === 0 ? (
@@ -1842,7 +1880,7 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                       onChange={(e) => setRoleReason(e.target.value)}
                       aria-label={a.users.roleReasonAria}
                       placeholder={a.users.roleReasonPlaceholder}
-                      className="h-9 rounded-xl border border-transparent bg-white px-3.5 py-1.5 text-xs text-slate-800 shadow-2xs"
+                      className="h-9 rounded-xl border border-[#CBDDF0] bg-white px-3.5 py-1.5 text-xs text-slate-800 shadow-2xs focus:border-[#0066CC] focus:outline-none"
                     />
                     <button
                       type="button"
@@ -1894,19 +1932,22 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                     )}
                   </div>
                 </div>
-                <TactilePillGroup
-                  ariaLabel={a.users.roleFilterAria}
-                  size="xs"
-                  value={userRoleFilter}
-                  onChange={(next) => setUserRoleFilter(next)}
-                  options={[
-                    { value: "ALL" as const, label: a.users.allRolesOption },
-                    ...ALL_ROLES.map((r) => ({
-                      value: r,
-                      label: formatRoleLabel(r, locale),
-                    })),
-                  ]}
-                />
+                <div className="rounded-xl border border-[#E8F1FA] bg-[#F8FBFE] p-2">
+                  <TactilePillGroup
+                    ariaLabel={a.users.roleFilterAria}
+                    size="xs"
+                    className="gap-1"
+                    value={userRoleFilter}
+                    onChange={(next) => setUserRoleFilter(next)}
+                    options={[
+                      { value: "ALL" as const, label: a.users.allRolesOption },
+                      ...ALL_ROLES.map((r) => ({
+                        value: r,
+                        label: formatRoleLabel(r, locale),
+                      })),
+                    ]}
+                  />
+                </div>
               </div>
 
               {filteredUsers.length === 0 ? (
@@ -2640,86 +2681,103 @@ export function AdminWorkspace({ packs, apiBaseUrl }: AdminWorkspaceProps) {
                 </button>
               </div>
 
-              <div className="flex flex-wrap gap-1.5">
-                {[
-                  "",
-                  "USER_LOGIN",
-                  "USER_ROLE_UPDATED",
-                  "USER_STATUS_UPDATED",
-                  "USER_PROVISIONED_BY_ADMIN",
-                  "USER_PASSWORD_CHANGED",
-                  "USER_SESSIONS_REVOKED",
-                  "FACILITY_VERIFICATION_UPDATED",
-                  "ADMIN_DISPATCH_OVERRIDE",
-                ].map((act) => (
-                  <button
-                    key={act || "ALL"}
-                    type="button"
-                    onClick={() => setAuditActionFilter(act)}
-                    className={`h-7 rounded-full px-3 font-mono-tabular text-[11px] font-semibold transition ${
-                      auditActionFilter === act
-                        ? "bg-[#0066CC] text-white"
-                        : "bg-white text-slate-700 shadow-2xs hover:text-[#0066CC]"
-                    }`}
-                  >
-                    {act || a.audit.allActionsBtn}
-                  </button>
-                ))}
-              </div>
+              <div className="space-y-2.5 rounded-xl border border-[#E8F1FA] bg-[#F8FBFE] p-3.5">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="me-1 text-[10.5px] font-bold uppercase tracking-wider text-[#556E89]">
+                    {locale === "ar"
+                      ? "الإجراء"
+                      : locale === "fr"
+                        ? "Action"
+                        : "Action"}
+                  </span>
+                  {[
+                    "",
+                    "USER_LOGIN",
+                    "USER_ROLE_UPDATED",
+                    "USER_STATUS_UPDATED",
+                    "USER_PROVISIONED_BY_ADMIN",
+                    "USER_PASSWORD_CHANGED",
+                    "USER_SESSIONS_REVOKED",
+                    "FACILITY_VERIFICATION_UPDATED",
+                    "ADMIN_DISPATCH_OVERRIDE",
+                  ].map((act) => (
+                    <button
+                      key={act || "ALL"}
+                      type="button"
+                      disabled={busy || !isAdminViewer}
+                      onClick={() => {
+                        setAuditActionFilter(act);
+                        void runAuditFilterQuery(act, auditResourceFilter);
+                      }}
+                      className={`h-7 rounded-full border px-2.5 font-mono-tabular text-[11px] font-semibold transition disabled:opacity-50 ${
+                        auditActionFilter === act
+                          ? "border-[#0066CC] bg-[#0066CC] text-white"
+                          : "border-[#D7E4F2] bg-white text-slate-700 hover:border-[#0066CC] hover:text-[#0066CC]"
+                      }`}
+                    >
+                      {act || a.audit.allActionsBtn}
+                    </button>
+                  ))}
+                </div>
 
-              <div className="flex flex-wrap gap-1.5">
-                {[
-                  "",
-                  "USER",
-                  "FACILITY",
-                  "DISPATCH",
-                  "PRESCRIPTION",
-                  "PHARMACY_ORDER",
-                  "APPOINTMENT",
-                ].map((resType) => (
-                  <button
-                    key={resType || "ALL_RES"}
-                    type="button"
-                    onClick={() => setAuditResourceFilter(resType)}
-                    className={`h-7 rounded-full border px-3 font-mono-tabular text-[11px] font-semibold transition ${
-                      auditResourceFilter === resType
-                        ? "border-[#0F9D88] bg-[#0F9D88] text-white"
-                        : "border-[#D7E4F2] bg-[#F3F8FD] text-[#2F4661] hover:border-[#0066CC] hover:bg-white"
-                    }`}
-                  >
-                    {resType || (locale === "fr" ? "Toutes ressources" : locale === "ar" ? "كل الموارد" : "All Resources")}
-                  </button>
-                ))}
-              </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#E8F1FA] pt-2.5">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="me-1 text-[10.5px] font-bold uppercase tracking-wider text-[#556E89]">
+                      {locale === "ar"
+                        ? "المورد"
+                        : locale === "fr"
+                          ? "Ressource"
+                          : "Resource"}
+                    </span>
+                    {[
+                      "",
+                      "USER",
+                      "FACILITY",
+                      "DISPATCH",
+                      "PRESCRIPTION",
+                      "PHARMACY_ORDER",
+                      "APPOINTMENT",
+                    ].map((resType) => (
+                      <button
+                        key={resType || "ALL_RES"}
+                        type="button"
+                        disabled={busy || !isAdminViewer}
+                        onClick={() => {
+                          setAuditResourceFilter(resType);
+                          void runAuditFilterQuery(auditActionFilter, resType);
+                        }}
+                        className={`h-7 rounded-full border px-2.5 font-mono-tabular text-[11px] font-semibold transition disabled:opacity-50 ${
+                          auditResourceFilter === resType
+                            ? "border-[#0F9D88] bg-[#0F9D88] text-white"
+                            : "border-[#D7E4F2] bg-white text-[#2F4661] hover:border-[#0066CC] hover:text-[#0066CC]"
+                        }`}
+                      >
+                        {resType ||
+                          (locale === "fr"
+                            ? "Toutes ressources"
+                            : locale === "ar"
+                              ? "كل الموارد"
+                              : "All Resources")}
+                      </button>
+                    ))}
+                  </div>
 
-              <form
-                onSubmit={handleFilterAudit}
-                className="grid gap-2 sm:grid-cols-3"
-              >
-                <input
-                  type="text"
-                  dir="ltr"
-                  value={auditActionFilter}
-                  onChange={(e) => setAuditActionFilter(e.target.value)}
-                  placeholder={a.audit.actionInputPlaceholder}
-                  className="min-h-[38px] rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-mono-tabular text-xs text-slate-900"
-                />
-                <input
-                  type="text"
-                  dir="ltr"
-                  value={auditResourceFilter}
-                  onChange={(e) => setAuditResourceFilter(e.target.value)}
-                  placeholder={a.audit.resourceInputPlaceholder}
-                  className="min-h-[38px] rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-mono-tabular text-xs text-slate-900"
-                />
-                <button
-                  type="submit"
-                  disabled={busy || !isAdminViewer}
-                  className="min-h-[38px] rounded-xl bg-[#0066CC] px-4 py-1.5 text-xs font-semibold text-white hover:bg-[#0052A3] disabled:opacity-50"
-                >
-                  {a.audit.applyFilterBtn}
-                </button>
-              </form>
+                  <button
+                    type="button"
+                    disabled={busy || !isAdminViewer}
+                    onClick={() =>
+                      void runAuditFilterQuery(
+                        auditActionFilter,
+                        auditResourceFilter,
+                      )
+                    }
+                    className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-[#0066CC] px-3 text-xs font-semibold text-white hover:bg-[#0052A3] disabled:opacity-50"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>{a.audit.applyFilterBtn}</span>
+                  </button>
+                </div>
+              </div>
 
               {auditLogs.length === 0 ? (
                 <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">

@@ -130,6 +130,7 @@ export function PharmacyStorefront({
   const [selectedCategory, setSelectedCategory] = useState<
     PharmacyProductCategory | "ALL"
   >("ALL");
+  const [selectedCity, setSelectedCity] = useState<string>("");
   const [selectedFacilityId, setSelectedFacilityId] = useState<string>("");
   const [searchText, setSearchText] = useState("");
   const [safetyFilter, setSafetyFilter] = useState<CatalogSafetyFilter>("ALL");
@@ -254,6 +255,7 @@ export function PharmacyStorefront({
       facilityFilter: string,
       categoryFilter: PharmacyProductCategory | "ALL",
       queryText: string,
+      cityFilter = "",
     ) => {
       setLoadingCatalog(true);
       try {
@@ -274,15 +276,18 @@ export function PharmacyStorefront({
           fetchDirectoryFacilities(apiBaseUrl, {
             countryCode,
             kind: "PHARMACY",
+            limit: 150,
           }),
           listPharmacyProducts(
             apiBaseUrl,
             {
               countryCode,
+              ...(cityFilter.trim() ? { city: cityFilter.trim() } : {}),
               ...(facilityFilter ? { facilityId: facilityFilter } : {}),
               ...(categoryFilter !== "ALL" ? { category: categoryFilter } : {}),
               ...(queryText.trim() ? { q: queryText.trim() } : {}),
               ...(canViewInactive ? { includeInactive: true } : {}),
+              limit: 200,
             },
             activeSession?.token,
           ),
@@ -683,6 +688,7 @@ export function PharmacyStorefront({
         selectedFacilityId,
         selectedCategory,
         searchText,
+        selectedCity,
       );
     } finally {
       actionLockRef.current = false;
@@ -776,6 +782,7 @@ export function PharmacyStorefront({
         selectedFacilityId,
         selectedCategory,
         searchText,
+        selectedCity,
       );
       return true;
     } finally {
@@ -812,6 +819,7 @@ export function PharmacyStorefront({
         selectedFacilityId,
         selectedCategory,
         searchText,
+        selectedCity,
       );
     } finally {
       actionLockRef.current = false;
@@ -933,6 +941,7 @@ export function PharmacyStorefront({
         selectedFacilityId,
         selectedCategory,
         searchText,
+        selectedCity,
       );
     } finally {
       actionLockRef.current = false;
@@ -1001,6 +1010,7 @@ export function PharmacyStorefront({
                   selectedFacilityId,
                   selectedCategory,
                   searchText,
+                  selectedCity,
                 )
               }
               aria-label={copy.refreshAria}
@@ -1067,6 +1077,7 @@ export function PharmacyStorefront({
                       selectedFacilityId,
                       selectedCategory,
                       searchText,
+                      selectedCity,
                     )
                   }
                   className="rounded-full bg-amber-900 px-3 py-1 text-[11px] font-semibold text-white hover:bg-amber-950"
@@ -1133,6 +1144,7 @@ export function PharmacyStorefront({
               effectiveCountry={effectiveCountry}
               loadingCatalog={loadingCatalog}
               searchText={searchText}
+              selectedCity={selectedCity}
               selectedFacilityId={selectedFacilityId}
               selectedCategory={selectedCategory}
               safetyFilter={safetyFilter}
@@ -1147,6 +1159,19 @@ export function PharmacyStorefront({
                   selectedFacilityId,
                   selectedCategory,
                   next,
+                  selectedCity,
+                );
+              }}
+              onCityChange={(nextCity) => {
+                setSelectedCity(nextCity);
+                setSelectedFacilityId("");
+                void loadCatalogAndOrders(
+                  effectiveCountry,
+                  session,
+                  "",
+                  selectedCategory,
+                  searchText,
+                  nextCity,
                 );
               }}
               onFacilityChange={(nextFac) => {
@@ -1157,6 +1182,7 @@ export function PharmacyStorefront({
                   nextFac,
                   selectedCategory,
                   searchText,
+                  selectedCity,
                 );
               }}
               onCategoryChange={(nextCat) => {
@@ -1167,6 +1193,7 @@ export function PharmacyStorefront({
                   selectedFacilityId,
                   nextCat,
                   searchText,
+                  selectedCity,
                 );
               }}
               onSafetyFilterChange={setSafetyFilter}

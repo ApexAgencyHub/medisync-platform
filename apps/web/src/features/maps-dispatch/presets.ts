@@ -1,3 +1,8 @@
+import {
+  MOROCCAN_CITIES_CATALOG,
+  type MoroccanLocationMatch,
+} from "@medisync/country-packs";
+
 export interface ViewportBox {
   districtLabel: string;
   minLng: number;
@@ -10,76 +15,26 @@ export interface MapCityPreset extends ViewportBox {
   id: string;
   city: string;
   countryCode: string;
+  region?: string;
   group: "Morocco" | "International Hubs";
 }
 
+const MOROCCO_MAP_PRESETS: readonly MapCityPreset[] =
+  MOROCCAN_CITIES_CATALOG.map((city) => ({
+    id: city.id,
+    city: city.name,
+    countryCode: "MA",
+    region: city.region,
+    group: "Morocco" as const,
+    districtLabel: city.districtLabel,
+    minLng: city.bbox.minLng,
+    minLat: city.bbox.minLat,
+    maxLng: city.bbox.maxLng,
+    maxLat: city.bbox.maxLat,
+  }));
+
 export const MAP_CITY_PRESETS: readonly MapCityPreset[] = [
-  {
-    id: "casablanca",
-    city: "Casablanca",
-    countryCode: "MA",
-    group: "Morocco",
-    districtLabel: "Casablanca Central Metro",
-    minLng: -7.694,
-    minLat: 33.562,
-    maxLng: -7.596,
-    maxLat: 33.606,
-  },
-  {
-    id: "rabat",
-    city: "Rabat",
-    countryCode: "MA",
-    group: "Morocco",
-    districtLabel: "Rabat Agdal & Hassan",
-    minLng: -6.885,
-    minLat: 33.972,
-    maxLng: -6.795,
-    maxLat: 34.036,
-  },
-  {
-    id: "marrakech",
-    city: "Marrakech",
-    countryCode: "MA",
-    group: "Morocco",
-    districtLabel: "Marrakech Guéliz & Médina",
-    minLng: -8.048,
-    minLat: 31.602,
-    maxLng: -7.958,
-    maxLat: 31.662,
-  },
-  {
-    id: "tangier",
-    city: "Tangier",
-    countryCode: "MA",
-    group: "Morocco",
-    districtLabel: "Tangier Bay & Centre",
-    minLng: -5.858,
-    minLat: 35.742,
-    maxLng: -5.768,
-    maxLat: 35.798,
-  },
-  {
-    id: "fes",
-    city: "Fès",
-    countryCode: "MA",
-    group: "Morocco",
-    districtLabel: "Fès Ville Nouvelle",
-    minLng: -5.048,
-    minLat: 34.006,
-    maxLng: -4.958,
-    maxLat: 34.062,
-  },
-  {
-    id: "agadir",
-    city: "Agadir",
-    countryCode: "MA",
-    group: "Morocco",
-    districtLabel: "Agadir Centre & Bay",
-    minLng: -9.642,
-    minLat: 30.392,
-    maxLng: -9.552,
-    maxLat: 30.448,
-  },
+  ...MOROCCO_MAP_PRESETS,
   {
     id: "paris",
     city: "Paris",
@@ -114,6 +69,18 @@ export const MAP_CITY_PRESETS: readonly MapCityPreset[] = [
     maxLat: 40.776,
   },
 ];
+
+export function locationMatchToViewportBox(
+  match: MoroccanLocationMatch,
+): ViewportBox {
+  return {
+    districtLabel: match.districtLabel,
+    minLng: match.bbox.minLng,
+    minLat: match.bbox.minLat,
+    maxLng: match.bbox.maxLng,
+    maxLat: match.bbox.maxLat,
+  };
+}
 
 const CITY_PRESET_BY_ID = new Map(
   MAP_CITY_PRESETS.map((preset) => [preset.id, preset]),

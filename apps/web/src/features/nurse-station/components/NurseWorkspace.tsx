@@ -991,7 +991,7 @@ export function NurseWorkspace({ packs, apiBaseUrl }: NurseWorkspaceProps) {
                       : "Pain Score";
                 return (
                   <div className="mb-4 space-y-3">
-                    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-5">
+                    <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-5">
                       <ClinicalStepper
                         label={c.tempLabel}
                         value={tempC}
@@ -1053,21 +1053,23 @@ export function NurseWorkspace({ packs, apiBaseUrl }: NurseWorkspaceProps) {
                           { label: "98", value: "98" },
                         ]}
                       />
-                      <ClinicalStepper
-                        label="SpO2"
-                        value={spo2}
-                        onChange={setSpo2}
-                        step={1}
-                        min={50}
-                        max={100}
-                        unit="%"
-                        tone={o2Alert ? "alert" : "default"}
-                        presets={[
-                          { label: "99%", value: "99" },
-                          { label: "96%", value: "96" },
-                          { label: "92%", value: "92" },
-                        ]}
-                      />
+                      <div className="col-span-2 xl:col-span-1">
+                        <ClinicalStepper
+                          label="SpO2"
+                          value={spo2}
+                          onChange={setSpo2}
+                          step={1}
+                          min={50}
+                          max={100}
+                          unit="%"
+                          tone={o2Alert ? "alert" : "default"}
+                          presets={[
+                            { label: "99%", value: "99" },
+                            { label: "96%", value: "96" },
+                            { label: "92%", value: "92" },
+                          ]}
+                        />
+                      </div>
                     </div>
 
                     {/* Tactile Visual 0-10 Pain Scale Bar */}

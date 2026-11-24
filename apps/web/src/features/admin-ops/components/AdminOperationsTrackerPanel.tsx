@@ -255,8 +255,8 @@ export function AdminOperationsTrackerPanel({
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="flex flex-wrap gap-1 rounded-xl border border-[#D7E4F2] bg-[#E8F1FA] p-1">
+      <div className="flex flex-col gap-2.5">
+        <div className="grid grid-cols-2 gap-1 rounded-xl border border-[#D7E4F2] bg-[#E8F1FA] p-1 sm:flex sm:flex-wrap sm:items-center">
           {(
             [
               {
@@ -287,21 +287,21 @@ export function AdminOperationsTrackerPanel({
                 key={item.id}
                 type="button"
                 onClick={() => setSection(item.id)}
-                className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold ${
+                className={`inline-flex h-8 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-semibold whitespace-nowrap sm:justify-start ${
                   section === item.id
                     ? "bg-[#0F243E] text-white"
                     : "text-slate-700 hover:bg-white hover:text-[#0F243E]"
                 }`}
               >
-                <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>{item.label}</span>
+                <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                <span className="truncate">{item.label}</span>
               </button>
             );
           })}
         </div>
 
-        <div className="flex h-10 min-w-[200px] flex-1 items-center gap-2 rounded-lg border border-[#D8DFDC] bg-[#F3F8FD] px-3 focus-within:border-[#0066CC] focus-within:bg-white">
-          <Search className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
+        <div className="flex h-9 w-full items-center gap-2 rounded-lg border border-[#D8DFDC] bg-[#F3F8FD] px-3 focus-within:border-[#0066CC] focus-within:bg-white">
+          <Search className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
           <input
             type="search"
             value={query}

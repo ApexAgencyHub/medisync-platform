@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import Link from "next/link";
 import {
   DispatchStreamEventSchema,
   type AppointmentStatus,
@@ -27,7 +26,6 @@ import {
   Map as MapIcon,
   Phone,
   Search,
-  ShieldCheck,
   Siren,
   UserCheck,
   XCircle,
@@ -42,6 +40,7 @@ import {
   createDispatchRequest,
   getPresetForCountry,
   listDispatchRequests,
+  locationMatchToViewportBox,
   panViewport,
   queryViewportFacilities,
   updateDispatchStatus,
@@ -83,6 +82,7 @@ import {
   useToastSetter,
 } from "@/shared/ui/primitives";
 import { EntityPicker } from "@/shared/ui/EntityPicker";
+import { MoroccanPlacePicker } from "@/shared/ui/MoroccanPlacePicker";
 import { MoroccanComplianceBadge } from "@/shared/ui/TactileControls";
 import {
   isPendingStaffVerification,
@@ -166,6 +166,10 @@ export function HospitalReceptionWorkspace({
 
   const [viewport, setViewport] = useState<ViewportBox>(() =>
     getPresetForCountry(selectedCountry),
+  );
+  const [mapCity, setMapCity] = useState("Casablanca");
+  const [mapPlaceLabel, setMapPlaceLabel] = useState<string | undefined>(
+    undefined,
   );
   const [postgisMs, setPostgisMs] = useState<number | null>(null);
   const [showLiveMap, setShowLiveMap] = useState(false);
@@ -717,23 +721,14 @@ export function HospitalReceptionWorkspace({
         }}
         actions={
           currentUser && sessionToken && hasDeskRole && !isPendingStaff ? (
-            <div className="flex items-center gap-2">
-              <UiButton
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                onClick={() => void refreshHospitalDesk(sessionToken, currentUser)}
-              >
-                {h.header.syncBtn}
-              </UiButton>
-              <Link
-                href="/profile"
-                className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-[#CBDDF0] bg-[#F3F8FD] px-3 text-xs font-semibold text-[#0F243E] transition hover:bg-white hover:text-[#0066CC]"
-              >
-                <ShieldCheck className="h-3.5 w-3.5 text-[#0066CC]" aria-hidden="true" />
-                <span>{t("nav.profile")}</span>
-              </Link>
-            </div>
+            <UiButton
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={() => void refreshHospitalDesk(sessionToken, currentUser)}
+            >
+              {h.header.syncBtn}
+            </UiButton>
           ) : undefined
         }
       />
@@ -1406,32 +1401,66 @@ export function HospitalReceptionWorkspace({
             </div>
 
             {showLiveMap ? (
-              <div className="mt-4 overflow-hidden rounded-2xl border border-[#D7E4F2] bg-white shadow-xs">
-                <DynamicViewportVectorMap
-                  countryCode={selectedCountry}
-                  viewport={viewport}
-                  facilities={facilities}
-                  drivers={[]}
-                  clientPins={mapClientPins}
-                  activeLayer="HOSPITAL"
-                  selectedFacilityId={selectedFacility?.id ?? null}
-                  highlightedTargetFacilityId={selectedFacility?.id ?? null}
-                  postgisQueryMs={postgisMs}
-                  redisQueryMs={null}
-                  busy={busy}
-                  onSelectFacility={(id) => setSelectedFacilityId(id)}
-                  onZoom={(factor) =>
-                    setViewport((prev) => zoomViewport(prev, factor))
-                  }
-                  onPan={(dLat, dLng) =>
-                    setViewport((prev) => panViewport(prev, dLat, dLng))
-                  }
-                  onReset={() => setViewport(getPresetForCountry(selectedCountry))}
-                  onSearchViewport={() =>
-                    void refreshViewportFacilities(viewport)
-                  }
-                  onViewportChange={(next) => setViewport(next)}
-                />
+              <div className="mt-4 rounded-2xl border border-[#D7E4F2] bg-white shadow-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-t-2xl border-b border-[#E8F1FA] bg-[#F8FBFE] px-3.5 py-2">
+                  <MoroccanPlacePicker
+                    value={mapCity}
+                    {...(mapPlaceLabel ? { displayLabel: mapPlaceLabel } : {})}
+                    variant="pill"
+                    allowAll={false}
+                    includePlaces
+                    align="start"
+                    ariaLabel={
+                      locale === "ar"
+                        ? "الانتقال إلى مدينة أو حي على خريطة الإسعاف"
+                        : locale === "fr"
+                          ? "Aller à une ville ou un quartier sur la carte"
+                          : "Jump dispatch map to Moroccan city or district"
+                    }
+                    onSelect={(match) => {
+                      if (!match) return;
+                      setMapCity(match.cityName);
+                      setMapPlaceLabel(
+                        match.kind === "PLACE"
+                          ? `${match.labels[locale]} · ${match.cityLabels[locale]}`
+                          : undefined,
+                      );
+                      const nextBox = locationMatchToViewportBox(match);
+                      setViewport(nextBox);
+                      void refreshViewportFacilities(nextBox);
+                    }}
+                  />
+                  <span className="font-mono-tabular text-[11px] font-medium text-[#556E89]">
+                    {facilities.length} · {countryDisplayName}
+                  </span>
+                </div>
+                <div className="overflow-hidden rounded-b-2xl">
+                  <DynamicViewportVectorMap
+                    countryCode={selectedCountry}
+                    viewport={viewport}
+                    facilities={facilities}
+                    drivers={[]}
+                    clientPins={mapClientPins}
+                    activeLayer="HOSPITAL"
+                    selectedFacilityId={selectedFacility?.id ?? null}
+                    highlightedTargetFacilityId={selectedFacility?.id ?? null}
+                    postgisQueryMs={postgisMs}
+                    redisQueryMs={null}
+                    busy={busy}
+                    onSelectFacility={(id) => setSelectedFacilityId(id)}
+                    onZoom={(factor) =>
+                      setViewport((prev) => zoomViewport(prev, factor))
+                    }
+                    onPan={(dLat, dLng) =>
+                      setViewport((prev) => panViewport(prev, dLat, dLng))
+                    }
+                    onReset={() => setViewport(getPresetForCountry(selectedCountry))}
+                    onSearchViewport={() =>
+                      void refreshViewportFacilities(viewport)
+                    }
+                    onViewportChange={(next) => setViewport(next)}
+                  />
+                </div>
               </div>
             ) : null}
 
@@ -1439,11 +1468,11 @@ export function HospitalReceptionWorkspace({
               onSubmit={(e) => void handleRequestTransfer(e)}
               className="mt-4 space-y-3 rounded-2xl border border-[#D7E4F2] bg-[#F8FBFE] p-4"
             >
-              <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="space-y-2">
                 <div
                   role="radiogroup"
                   aria-label={h.ems.urgencyLabel}
-                  className="flex flex-wrap gap-1.5"
+                  className="flex flex-wrap items-center gap-1.5"
                 >
                   {(["EMERGENCY", "URGENT", "ROUTINE"] as const).map((urg) => {
                     const active = transferUrgency === urg;
@@ -1470,7 +1499,7 @@ export function HospitalReceptionWorkspace({
                   })}
                 </div>
 
-                <div className="flex flex-wrap gap-1.5">
+                <div className="flex flex-wrap items-center gap-1.5">
                   {TRANSFER_REASON_CHIPS_BY_LOCALE[locale].map((chip) => {
                     const active = transferNotes === chip;
                     return (
@@ -1492,7 +1521,7 @@ export function HospitalReceptionWorkspace({
               </div>
 
               <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-12">
-                <div className="sm:col-span-9">
+                <div className="sm:col-span-8">
                   <input
                     id="hospital-transfer-note"
                     type="text"
@@ -1503,7 +1532,7 @@ export function HospitalReceptionWorkspace({
                     className="min-h-[42px] w-full rounded-xl border border-[#CBDDF0] bg-white px-3.5 py-2 text-xs text-[#0F243E] focus:border-[#0066CC] focus:outline-none"
                   />
                 </div>
-                <div className="sm:col-span-3">
+                <div className="sm:col-span-4">
                   <UiButton
                     type="submit"
                     disabled={
